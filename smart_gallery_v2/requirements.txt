@@ -1,0 +1,44 @@
+# ─── Smart AI Gallery Organizer v2.0 · Requirements ──────────────────────────
+# pip install -r requirements.txt
+
+# ── UI ────────────────────────────────────────────────────────────────────────
+streamlit>=1.35.0
+
+# ── Computer Vision ───────────────────────────────────────────────────────────
+opencv-python-headless>=4.9.0
+Pillow>=10.3.0
+numpy>=1.26.0
+
+# ── IA / Detección ────────────────────────────────────────────────────────────
+ultralytics>=8.2.0           # YOLOv8 (fallback si no hay ONNX)
+deepface>=0.0.93             # ArcFace via DeepFace (fallback)
+# retinaface>=0.0.17         # Detector facial de precisión (opcional)
+
+# ── ONNX Runtime ─────────────────────────────────────────────────────────────
+onnxruntime>=1.18.0          # CPU
+# onnxruntime-gpu>=1.18.0    # GPU CUDA (descomentar si aplica)
+
+# ── CLIP (búsqueda semántica) ─────────────────────────────────────────────────
+open-clip-torch>=2.24.0
+# transformers>=4.40.0       # Alternativa Hugging Face
+
+# ── Vector Search ─────────────────────────────────────────────────────────────
+faiss-cpu>=1.8.0
+
+# ── Base de datos & datos ─────────────────────────────────────────────────────
+pandas>=2.2.0
+
+# ── Watchdog (filesystem events) ──────────────────────────────────────────────
+watchdog>=4.0.0
+
+# ── Clustering ────────────────────────────────────────────────────────────────
+scikit-learn>=1.4.0
+
+# ── Utilidades ────────────────────────────────────────────────────────────────
+tqdm>=4.66.0
+pytest>=7.0.0
+
+# ─── OCR / HASH ─────────────────────────────────────────────────────────────
+imagehash>=4.3.0
+pytesseract>=0.3.10
+easyocr>=1.6.0
