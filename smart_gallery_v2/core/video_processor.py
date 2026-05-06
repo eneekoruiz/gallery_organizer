@@ -25,7 +25,8 @@ def _hist_corr(a: np.ndarray, b: np.ndarray) -> float:
     for ch in range(3):
         ha = cv2.calcHist([hsv_a], [ch], None, [64], [0, 256])
         hb = cv2.calcHist([hsv_b], [ch], None, [64], [0, 256])
-        cv2.normalize(ha, ha); cv2.normalize(hb, hb)
+        cv2.normalize(ha, ha)
+        cv2.normalize(hb, hb)
         scores.append(float(cv2.compareHist(ha, hb, cv2.HISTCMP_CORREL)))
     return float(np.mean(scores))
 
@@ -36,11 +37,11 @@ def _ssim_fast(a: np.ndarray, b: np.ndarray) -> float:
     C1, C2 = 6.5025, 58.5225
     mu_a = cv2.GaussianBlur(a_l, (11, 11), 1.5)
     mu_b = cv2.GaussianBlur(b_l, (11, 11), 1.5)
-    s_a2 = cv2.GaussianBlur(a_l**2, (11,11), 1.5) - mu_a**2
-    s_b2 = cv2.GaussianBlur(b_l**2, (11,11), 1.5) - mu_b**2
-    s_ab = cv2.GaussianBlur(a_l*b_l, (11,11), 1.5) - mu_a*mu_b
-    num  = (2*mu_a*mu_b + C1) * (2*s_ab + C2)
-    den  = (mu_a**2 + mu_b**2 + C1) * (s_a2 + s_b2 + C2)
+    s_a2 = cv2.GaussianBlur(a_l**2, (11, 11), 1.5) - mu_a**2
+    s_b2 = cv2.GaussianBlur(b_l**2, (11, 11), 1.5) - mu_b**2
+    s_ab = cv2.GaussianBlur(a_l * b_l, (11, 11), 1.5) - mu_a * mu_b
+    num = (2 * mu_a * mu_b + C1) * (2 * s_ab + C2)
+    den = (mu_a**2 + mu_b**2 + C1) * (s_a2 + s_b2 + C2)
     return float((num / (den + 1e-8)).mean())
 
 
@@ -55,14 +56,14 @@ def _is_scene_change(prev: np.ndarray, curr: np.ndarray) -> bool:
 class VideoKeyframeExtractor:
     def __init__(self, sample_interval: int = 15, max_keyframes: int = 50) -> None:
         self._interval = sample_interval
-        self._max_kf   = max_keyframes
+        self._max_kf = max_keyframes
 
     def extract(self, video_path: str | Path) -> list[np.ndarray]:
         path = Path(video_path)
         if not path.exists():
             return []
         keyframes: list[np.ndarray] = []
-        prev: Optional[np.ndarray]  = None
+        prev: Optional[np.ndarray] = None
         idx = 0
         cap = cv2.VideoCapture(str(path))
         if not cap.isOpened():
@@ -88,7 +89,7 @@ class VideoKeyframeExtractor:
         cap = cv2.VideoCapture(str(video_path))
         if not cap.isOpened():
             return
-        fps   = cap.get(cv2.CAP_PROP_FPS) or 25.0
+        fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
         prev: Optional[np.ndarray] = None
         idx = kf_count = 0
         try:

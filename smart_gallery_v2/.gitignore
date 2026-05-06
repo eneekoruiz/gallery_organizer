@@ -1,0 +1,38 @@
+# SQLite
+gallery.db
+gallery.db-wal
+gallery.db-shm
+*.db
+*.db-wal
+*.db-shm
+
+# Caches & Runtime
+.thumbnails/
+.face_crops/
+__pycache__/
+*.log
+gallery.log
+.DS_Store
+
+# Data & Gallery (Local user data)
+Galería/
+logs/
+
+# Models
+models/onnx/*.onnx
+models/
+!models/.keep
+
+# Environments
+.venv/
+venv/
+env/
+.env
+
+# Python
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/

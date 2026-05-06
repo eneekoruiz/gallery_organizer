@@ -19,10 +19,18 @@ warnings.filterwarnings("ignore")
 log = logging.getLogger(__name__)
 
 from core.config import (
-    ARCFACE_DIM, BATCH_SIZE, CONF_HIGH, CONF_MEDIUM,
-    FACE_CONF_MIN, FAISS_THRESHOLD,
-    ONNX_ARCFACE, ONNX_CLIP_TXT, ONNX_CLIP_VIS, ONNX_YOLO,
-    YOLO_CLASSES, YOLO_CONF_MIN,
+    ARCFACE_DIM,
+    BATCH_SIZE,
+    CONF_HIGH,
+    CONF_MEDIUM,
+    FACE_CONF_MIN,
+    FAISS_THRESHOLD,
+    ONNX_ARCFACE,
+    ONNX_CLIP_TXT,
+    ONNX_CLIP_VIS,
+    ONNX_YOLO,
+    YOLO_CLASSES,
+    YOLO_CONF_MIN,
 )
 
 
@@ -30,19 +38,23 @@ from core.config import (
 def _load_ort(model_path: Path):
     try:
         import onnxruntime as ort
+
         opts = ort.SessionOptions()
-        opts.log_severity_level        = 3
-        opts.intra_op_num_threads      = 4
-        opts.graph_optimization_level  = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-        return ort.InferenceSession(str(model_path), sess_options=opts,
-                                    providers=["CPUExecutionProvider"])
+        opts.log_severity_level = 3
+        opts.intra_op_num_threads = 4
+        opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+        return ort.InferenceSession(
+            str(model_path), sess_options=opts, providers=["CPUExecutionProvider"]
+        )
     except Exception as exc:
         log.debug("ONNX no disponible %s: %s", model_path, exc)
         return None
 
+
 def _norm(v: np.ndarray) -> np.ndarray:
     n = np.linalg.norm(v)
     return v / (n + 1e-8)
+
 
 def _conf_to_tier(conf: float) -> str:
     if conf >= CONF_HIGH:
@@ -53,22 +65,33 @@ def _conf_to_tier(conf: float) -> str:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# YOLOv8 Engine
+# YOLOv8 Engine (Singleton)
 # ──────────────────────────────────────────────────────────────────────────────
 class YOLOEngine:
+    _instance: Optional[YOLOEngine] = None
     INPUT_SZ = 640
 
+    def __new__(cls) -> YOLOEngine:
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance._initialized = False
+        return cls._instance
+
     def __init__(self) -> None:
-        self._ort    = _load_ort(ONNX_YOLO)
+        if getattr(self, "_initialized", False):
+            return
+        self._ort = _load_ort(ONNX_YOLO)
         self._native = None
         if self._ort:
             self._inp = self._ort.get_inputs()[0].name
         else:
             self._load_native()
+        self._initialized = True
 
     def _load_native(self) -> None:
         try:
             from ultralytics import YOLO
+
             self._native = YOLO("yolov8n.pt", verbose=False)
             log.info("YOLOEngine: ultralytics nativo")
         except Exception as exc:
@@ -90,56 +113,77 @@ class YOLOEngine:
 
     def _infer_ort(self, img: np.ndarray) -> list[dict[str, Any]]:
         blob = self._preprocess(img)
-        out  = self._ort.run(None, {self._inp: blob})[0][0].T  # (8400,84)
+        out = self._ort.run(None, {self._inp: blob})[0][0].T  # (8400,84)
         h, w = img.shape[:2]
         dets: list[dict[str, Any]] = []
         for det in out:
-            cid  = int(np.argmax(det[4:]))
+            cid = int(np.argmax(det[4:]))
             conf = float(det[4 + cid])
             if conf < YOLO_CONF_MIN or cid not in YOLO_CLASSES:
                 continue
             cx, cy, bw, bh = det[:4]
             sx, sy = w / self.INPUT_SZ, h / self.INPUT_SZ
-            dets.append({"class": YOLO_CLASSES[cid], "conf": conf,
-                          "bbox": [int((cx-bw/2)*sx), int((cy-bh/2)*sy),
-                                   int((cx+bw/2)*sx), int((cy+bh/2)*sy)]})
+            dets.append(
+                {
+                    "class": YOLO_CLASSES[cid],
+                    "conf": conf,
+                    "bbox": [
+                        int((cx - bw / 2) * sx),
+                        int((cy - bh / 2) * sy),
+                        int((cx + bw / 2) * sx),
+                        int((cy + bh / 2) * sy),
+                    ],
+                }
+            )
         return dets
 
     def _infer_native(self, imgs: list[np.ndarray]) -> list[list[dict[str, Any]]]:
         results = []
-        for chunk in [imgs[i:i+BATCH_SIZE] for i in range(0, len(imgs), BATCH_SIZE)]:
+        for chunk in [imgs[i : i + BATCH_SIZE] for i in range(0, len(imgs), BATCH_SIZE)]:
             raw = self._native(chunk, verbose=False, classes=list(YOLO_CLASSES))
             for r in raw:
                 dets = []
                 for box in r.boxes:
-                    cid  = int(box.cls[0].item())
+                    cid = int(box.cls[0].item())
                     conf = float(box.conf[0].item())
                     if conf >= YOLO_CONF_MIN and cid in YOLO_CLASSES:
-                        dets.append({"class": YOLO_CLASSES[cid], "conf": conf,
-                                     "bbox": box.xyxy[0].tolist()})
+                        dets.append(
+                            {"class": YOLO_CLASSES[cid], "conf": conf, "bbox": box.xyxy[0].tolist()}
+                        )
                 results.append(dets)
         gc.collect()
         return results
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# ArcFace Engine
+# ArcFace Engine (Singleton)
 # ──────────────────────────────────────────────────────────────────────────────
 class ArcFaceEngine:
+    _instance: Optional[ArcFaceEngine] = None
     H = W = 112
 
+    def __new__(cls) -> ArcFaceEngine:
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance._initialized = False
+        return cls._instance
+
     def __init__(self) -> None:
-        self._ort   = _load_ort(ONNX_ARCFACE)
+        if getattr(self, "_initialized", False):
+            return
+        self._ort = _load_ort(ONNX_ARCFACE)
         self._df_ok = False
         if self._ort:
             self._inp = self._ort.get_inputs()[0].name
         else:
             try:
                 from deepface import DeepFace  # noqa: F401
+
                 self._df_ok = True
                 log.info("ArcFaceEngine: DeepFace nativo")
             except ImportError:
                 log.error("ArcFaceEngine: sin backend.")
+        self._initialized = True
 
     def get_faces(self, img_rgb: np.ndarray) -> list[tuple[dict[str, int], np.ndarray, float]]:
         """Devuelve [(bbox_dict, embedding_float32, confidence)]"""
@@ -149,27 +193,39 @@ class ArcFaceEngine:
             return self._faces_deepface(img_rgb)
         return []
 
-    def _faces_deepface(self, img_rgb: np.ndarray) -> list[tuple[dict[str, int], np.ndarray, float]]:
+    def _faces_deepface(
+        self, img_rgb: np.ndarray
+    ) -> list[tuple[dict[str, int], np.ndarray, float]]:
         from deepface import DeepFace
+
         try:
-            faces = DeepFace.represent(img_path=img_rgb, model_name="ArcFace",
-                                       detector_backend="retinaface", enforce_detection=False)
+            faces = DeepFace.represent(
+                img_path=img_rgb,
+                model_name="ArcFace",
+                detector_backend="retinaface",
+                enforce_detection=False,
+            )
         except Exception:
             return []
         out = []
         for f in faces:
             if f.get("face_confidence", 0) < FACE_CONF_MIN:
                 continue
-            fa   = f["facial_area"]
-            bbox = {"top": fa["y"], "right": fa["x"]+fa["w"],
-                    "bottom": fa["y"]+fa["h"], "left": fa["x"]}
-            emb  = _norm(np.array(f["embedding"], dtype=np.float32))
+            fa = f["facial_area"]
+            bbox = {
+                "top": fa["y"],
+                "right": fa["x"] + fa["w"],
+                "bottom": fa["y"] + fa["h"],
+                "left": fa["x"],
+            }
+            emb = _norm(np.array(f["embedding"], dtype=np.float32))
             out.append((bbox, emb, float(f["face_confidence"])))
         return out
 
     def _faces_ort(self, img_rgb: np.ndarray) -> list[tuple[dict[str, int], np.ndarray, float]]:
         try:
             from retinaface import RetinaFace  # type: ignore
+
             raw = RetinaFace.detect_faces(img_rgb)
         except Exception:
             return []
@@ -182,7 +238,7 @@ class ArcFaceEngine:
             conf = float(face.get("score", 1.0))
             if conf < FACE_CONF_MIN:
                 continue
-            crop = img_rgb[max(0,top):bottom, max(0,left):right]
+            crop = img_rgb[max(0, top) : bottom, max(0, left) : right]
             if crop.size == 0:
                 continue
             emb = self._embed_ort(crop)
@@ -196,22 +252,31 @@ class ArcFaceEngine:
         try:
             img = cv2.resize(crop_rgb, (self.W, self.H)).astype(np.float32)
             img = (img - 127.5) / 128.0
-            blob = img.transpose(2,0,1)[np.newaxis]
-            out  = self._ort.run(None, {self._inp: blob})[0][0]
+            blob = img.transpose(2, 0, 1)[np.newaxis]
+            out = self._ort.run(None, {self._inp: blob})[0][0]
             return _norm(out.astype(np.float32))
         except Exception:
             return None
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# CLIP Engine
+# CLIP Engine (Singleton)
 # ──────────────────────────────────────────────────────────────────────────────
 class CLIPEngine:
+    _instance: Optional[CLIPEngine] = None
     IMG_SZ = 224
     MEAN = np.array([0.48145466, 0.4578275, 0.40821073], dtype=np.float32)
-    STD  = np.array([0.26862954, 0.26130258, 0.27577711], dtype=np.float32)
+    STD = np.array([0.26862954, 0.26130258, 0.27577711], dtype=np.float32)
+
+    def __new__(cls) -> CLIPEngine:
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance._initialized = False
+        return cls._instance
 
     def __init__(self) -> None:
+        if getattr(self, "_initialized", False):
+            return
         self._vis = _load_ort(ONNX_CLIP_VIS)
         self._txt = _load_ort(ONNX_CLIP_TXT)
         self._native = None
@@ -219,20 +284,23 @@ class CLIPEngine:
             self._load_native()
         else:
             self._inp = self._vis.get_inputs()[0].name
+        self._initialized = True
 
     def _load_native(self) -> None:
         try:
             import open_clip  # type: ignore
+
             model, _, prep = open_clip.create_model_and_transforms("ViT-B-32", pretrained="openai")
             model.eval()
-            self._native     = model
-            self._prep       = prep
-            self._tokenizer  = open_clip.get_tokenizer("ViT-B-32")
+            self._native = model
+            self._prep = prep
+            self._tokenizer = open_clip.get_tokenizer("ViT-B-32")
             log.info("CLIPEngine: open_clip nativo")
         except Exception:
             try:
                 from transformers import CLIPModel, CLIPProcessor  # type: ignore
-                self._native    = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
+
+                self._native = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
                 self._tokenizer = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
                 log.info("CLIPEngine: transformers CLIP")
             except Exception as exc:
@@ -243,21 +311,50 @@ class CLIPEngine:
         return ((img - self.MEAN) / self.STD).transpose(2, 0, 1)
 
     def embed_image(self, img_rgb: np.ndarray) -> Optional[np.ndarray]:
+        res = self.embed_batch([img_rgb])
+        return res[0] if res else None
+
+    def embed_batch(self, images_rgb: list[np.ndarray]) -> list[np.ndarray]:
+        if not images_rgb:
+            return []
         if self._vis:
             try:
-                blob = self._pre_img(img_rgb)[np.newaxis]
-                out  = self._vis.run(None, {self._inp: blob})[0][0]
-                return _norm(out.astype(np.float32))
-            except Exception:
-                return None
+                blobs = [self._pre_img(img) for img in images_rgb]
+                inp_batch = np.stack(blobs)
+                outs = self._vis.run(None, {self._inp: inp_batch})[0]
+                return [_norm(out.astype(np.float32)) for out in outs]
+            except Exception as e:
+                log.error(f"CLIP ORT batch failed: {e}")
+                return []
         if self._native:
-            return self._embed_img_native(img_rgb)
-        return None
+            return self._embed_batch_native(images_rgb)
+        return []
+
+    def _embed_batch_native(self, images_rgb: list[np.ndarray]) -> list[np.ndarray]:
+        try:
+            import torch
+            from PIL import Image as _PIL
+
+            pils = [_PIL.fromarray(img) for img in images_rgb]
+            if hasattr(self, "_prep"):
+                t = torch.stack([self._prep(p) for p in pils])
+                with torch.no_grad():
+                    f = self._native.encode_image(t)
+                return [_norm(vec.numpy().astype(np.float32)) for vec in f]
+            else:
+                inp = self._tokenizer(images=pils, return_tensors="pt")
+                with torch.no_grad():
+                    f = self._native.get_image_features(**inp)
+                return [_norm(vec.numpy().astype(np.float32)) for vec in f]
+        except Exception as e:
+            log.error(f"CLIP native batch failed: {e}")
+            return []
 
     def _embed_img_native(self, img_rgb: np.ndarray) -> Optional[np.ndarray]:
         try:
             import torch
             from PIL import Image as _PIL
+
             pil = _PIL.fromarray(img_rgb)
             if hasattr(self, "_prep"):
                 t = self._prep(pil).unsqueeze(0)
@@ -277,7 +374,8 @@ class CLIPEngine:
             return None
         try:
             import torch
-            if hasattr(self, "_tokenizer") and callable(getattr(self._tokenizer, "__call__", None)):
+
+            if hasattr(self, "_tokenizer") and callable(self._tokenizer):
                 if hasattr(self, "_prep"):  # open_clip
                     tok = self._tokenizer([text])
                     with torch.no_grad():
@@ -299,12 +397,14 @@ class CLIPEngine:
 class FaissIndex:
     def __init__(self, dim: int = ARCFACE_DIM) -> None:
         import faiss
-        self._dim   = dim
+
+        self._dim = dim
         self._index = faiss.IndexFlatL2(dim)
         self._names: list[str] = []
 
     def rebuild(self, names: list[str], embeddings: np.ndarray) -> None:
         import faiss
+
         self._index = faiss.IndexFlatL2(self._dim)
         if embeddings.shape[0] > 0:
             self._index.add(embeddings.astype(np.float32))
@@ -318,17 +418,17 @@ class FaissIndex:
         """
         if self._index.ntotal == 0:
             return "Desconocido", 999.0, "unclassified"
-        q    = query.astype(np.float32).reshape(1, -1)
-        D, I = self._index.search(q, 1)
-        dist = float(D[0][0])
+        q = query.astype(np.float32).reshape(1, -1)
+        distances, indices = self._index.search(q, 1)
+        dist = float(distances[0][0])
 
         if dist > FAISS_THRESHOLD:
             return "Desconocido", dist, "unclassified"
 
         # Convertir distancia L2 a confidence normalizado [0,1]
         confidence = max(0.0, 1.0 - dist / FAISS_THRESHOLD)
-        tier       = _conf_to_tier(confidence)
-        name       = self._names[int(I[0][0])]
+        tier = _conf_to_tier(confidence)
+        name = self._names[int(indices[0][0])]
         return name, confidence, tier
 
     def add(self, name: str, embedding: np.ndarray) -> None:
@@ -338,3 +438,60 @@ class FaissIndex:
     @property
     def total(self) -> int:
         return self._index.ntotal
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Dedupe Engine — Vectorized Hamming Distance
+# ──────────────────────────────────────────────────────────────────────────────
+class DedupeEngine:
+    @staticmethod
+    def find_similar(
+        query_hash_hex: str, hash_list: list[tuple[int, str]], max_hamming: int = 8
+    ) -> list[int]:
+        """
+        Usa numpy para calcular Hamming distance en paralelo (vectorizado).
+        hash_list: [(id, phash_hex), ...]
+        """
+        if not query_hash_hex or not hash_list:
+            return []
+
+        # Convertir query hex a bit array (uint64)
+        q_val = np.uint64(int(query_hash_hex, 16))
+
+        # Convertir lista a array de uint64
+        ids = np.array([h[0] for h in hash_list], dtype=np.int64)
+        hashes = np.array([int(h[1], 16) for h in hash_list], dtype=np.uint64)
+
+        # XOR + bit_count (vectorizado)
+        # Note: bit_count() es Python 3.10+, para numpy usamos una técnica rápida
+        diff = hashes ^ q_val
+
+        # Contar bits (técnica de Brian Kernighan no es vectorizable fácil,
+        # usamos lookup o técnica bitwise para uint64)
+        # En sistemas modernos, numpy.unpackbits es lento para esto, mejor bit_count si es posible
+        # o una implementación de población de bits.
+        def _popcount_vec(n: np.ndarray) -> np.ndarray:
+            # Versión eficiente para uint64 en numpy
+            n = (n & np.uint64(0x5555555555555555)) + (
+                (n >> np.uint64(1)) & np.uint64(0x5555555555555555)
+            )
+            n = (n & np.uint64(0x3333333333333333)) + (
+                (n >> np.uint64(2)) & np.uint64(0x3333333333333333)
+            )
+            n = (n & np.uint64(0x0F0F0F0F0F0F0F0F)) + (
+                (n >> np.uint64(4)) & np.uint64(0x0F0F0F0F0F0F0F0F)
+            )
+            n = (n & np.uint64(0x00FF00FF00FF00FF)) + (
+                (n >> np.uint64(8)) & np.uint64(0x00FF00FF00FF00FF)
+            )
+            n = (n & np.uint64(0x0000FFFF0000FFFF)) + (
+                (n >> np.uint64(16)) & np.uint64(0x0000FFFF0000FFFF)
+            )
+            n = (n & np.uint64(0x00000000FFFFFFFF)) + (
+                (n >> np.uint64(32)) & np.uint64(0x00000000FFFFFFFF)
+            )
+            return n
+
+        dist = _popcount_vec(diff)
+        matches = ids[dist <= max_hamming]
+        return matches.tolist()

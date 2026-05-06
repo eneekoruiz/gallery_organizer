@@ -6,17 +6,21 @@ Métricas triage · Controles ▶⏸⏹ · Logs terminal · Watchdog status · S
 from __future__ import annotations
 
 import time
-from pathlib import Path
 from queue import Empty, Queue
 from typing import Optional
 
 import streamlit as st
 
-from core.config import DIR_ENTRADA, EXT_TODAS, EXT_VIDEO, CONTROL_STATE_KEY
+from core.config import CONTROL_STATE_KEY, DIR_ENTRADA, EXT_TODAS, EXT_VIDEO
 from core.database import DatabaseManager
 from core.watchdog_engine import FileSystemWatcher, make_db_callback
 from core.worker import ProcessingEngine
 from ui.styles import log_line, mc
+
+try:
+    from streamlit_autorefresh import st_autorefresh
+except Exception:
+    st_autorefresh = None
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -24,11 +28,11 @@ from ui.styles import log_line, mc
 # ──────────────────────────────────────────────────────────────────────────────
 def _boot(db: DatabaseManager) -> None:
     if "log_q" not in st.session_state:
-        st.session_state.log_q   = Queue(maxsize=600)
+        st.session_state.log_q = Queue(maxsize=600)
     if "logs" not in st.session_state:
-        st.session_state.logs    = []
+        st.session_state.logs = []
     if "engine" not in st.session_state:
-        st.session_state.engine  = ProcessingEngine(db, st.session_state.log_q)
+        st.session_state.engine = ProcessingEngine(db, st.session_state.log_q)
         # Restaurar estado persistente del motor
         try:
             state = db.get_control_state(CONTROL_STATE_KEY)
@@ -55,28 +59,28 @@ def _boot(db: DatabaseManager) -> None:
 # ──────────────────────────────────────────────────────────────────────────────
 def render_dashboard(db: DatabaseManager) -> None:
     _boot(db)
-    engine:  ProcessingEngine = st.session_state.engine
-    log_q:   Queue            = st.session_state.log_q
-    watcher: FileSystemWatcher= st.session_state.watcher
+    engine: ProcessingEngine = st.session_state.engine
+    log_q: Queue = st.session_state.log_q
+    watcher: FileSystemWatcher = st.session_state.watcher
 
     # ── Métricas ──────────────────────────────────────────────────────────
-    stats      = db.get_stats()
-    total      = stats.get("total",      0)
-    done       = stats.get("done",       0)
-    pending    = stats.get("pending",    0)
-    errors     = stats.get("errors",     0)
-    safe       = stats.get("safe",       0)
-    review     = stats.get("review",     0)
-    unclass    = stats.get("unclassified",0)
+    stats = _cached_stats(db)
+    total = stats.get("total", 0)
+    done = stats.get("done", 0)
+    pending = stats.get("pending", 0)
+    errors = stats.get("errors", 0)
+    safe = stats.get("safe", 0)
+    review = stats.get("review", 0)
+    unclass = stats.get("unclassified", 0)
 
-    c1,c2,c3,c4,c5,c6,c7 = st.columns(7)
-    c1.markdown(mc("Total",      total,   "c-purple"), unsafe_allow_html=True)
-    c2.markdown(mc("Procesados", done,    "c-teal"),   unsafe_allow_html=True)
-    c3.markdown(mc("Cola",       pending, "c-amber"),  unsafe_allow_html=True)
-    c4.markdown(mc("Errores",    errors,  "c-red"),    unsafe_allow_html=True)
-    c5.markdown(mc("✅ Seguros", safe,    "c-green"),  unsafe_allow_html=True)
-    c6.markdown(mc("🔶 Revisar", review,  "c-amber"),  unsafe_allow_html=True)
-    c7.markdown(mc("❓ Sin clas.",unclass,"c-blue"),   unsafe_allow_html=True)
+    c1, c2, c3, c4, c5, c6, c7 = st.columns(7)
+    c1.markdown(mc("Total", total, "c-purple"), unsafe_allow_html=True)
+    c2.markdown(mc("Procesados", done, "c-teal"), unsafe_allow_html=True)
+    c3.markdown(mc("Cola", pending, "c-amber"), unsafe_allow_html=True)
+    c4.markdown(mc("Errores", errors, "c-red"), unsafe_allow_html=True)
+    c5.markdown(mc("✅ Seguros", safe, "c-green"), unsafe_allow_html=True)
+    c6.markdown(mc("🔶 Revisar", review, "c-amber"), unsafe_allow_html=True)
+    c7.markdown(mc("❓ Sin clas.", unclass, "c-blue"), unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -86,11 +90,15 @@ def render_dashboard(db: DatabaseManager) -> None:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
+    # ── Guía contextual de uso ───────────────────────────────────────────
+    last_tx = db.get_last_tx()
+    _render_action_guide(last_tx)
+
     # ── Controles ─────────────────────────────────────────────────────────
     is_running = engine.is_running()
-    is_paused  = engine.is_paused()
+    is_paused = engine.is_paused()
 
-    ctrl = st.columns([2,2,2,2,3,3])
+    ctrl = st.columns([2, 2, 2, 2, 3, 3])
     with ctrl[0]:
         lbl = "▶ Reanudar" if is_paused else "▶ Iniciar"
         if st.button(lbl, type="primary", disabled=is_running and not is_paused):
@@ -122,17 +130,20 @@ def render_dashboard(db: DatabaseManager) -> None:
             n = _sync(db, log_q)
             st.toast(f"✔ {n} nuevos archivos en cola.")
     with ctrl[4]:
-        if st.button("↩ Deshacer último cambio"):
+        undo_disabled = last_tx is None or bool(last_tx.get("undone"))
+        if st.button("↩ Deshacer último cambio", disabled=undo_disabled):
             msg = db.undo_last()
             st.toast(msg or "Nada que deshacer.")
     with ctrl[5]:
         # Watchdog toggle
         if watcher.is_running():
             if st.button("👁 Watchdog activo — Desactivar"):
-                watcher.stop(); st.rerun()
+                watcher.stop()
+                st.rerun()
         else:
             if st.button("👁 Activar Watchdog", type="primary"):
-                watcher.start(); st.rerun()
+                watcher.start()
+                st.rerun()
 
     # ── Status badges ─────────────────────────────────────────────────────
     sb1, sb2 = st.columns(2)
@@ -159,8 +170,11 @@ def render_dashboard(db: DatabaseManager) -> None:
 
     # ── Auto-refresh si motor activo ──────────────────────────────────────
     if is_running and not is_paused:
-        time.sleep(0.7)
-        st.rerun()
+        if st_autorefresh is not None:
+            st_autorefresh(interval=1200, key="dashboard_refresh")
+        else:
+            time.sleep(0.15)
+            st.rerun()
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -186,3 +200,41 @@ def _drain(log_q: Queue) -> None:
             st.session_state.logs.append(log_line(tipo, str(msg)))
     except Empty:
         pass
+
+
+@st.cache_data(ttl=1.5, show_spinner=False)
+def _cached_stats(_db: DatabaseManager) -> dict[str, int]:
+    return _db.get_stats()
+
+
+def _render_action_guide(last_tx: Optional[dict]) -> None:
+    reversible = {
+        "VERIFY": "Validación de rostros seleccionados o confirmados en triaje.",
+        "RENAME": "Renombrado masivo o individual de identidades.",
+        "FACELESS": "Etiquetado manual de una persona sin rostro visible.",
+    }
+
+    if last_tx:
+        action = str(last_tx.get("action", ""))
+        detail = reversible.get(action, "Cambio reversible reciente.")
+        count = int(last_tx.get("before_count", 0) or 0)
+        status = "Disponible" if not last_tx.get("undone") else "Ya deshecho"
+        st.markdown(
+            f'<div style="background:linear-gradient(145deg,#10121a,#14172280);border:1px solid #1c1f2e;border-radius:16px;padding:16px 18px;margin:10px 0 14px">'
+            f'<div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap">'
+            f'<div><div style="font-size:12px;color:#7f88a8;text-transform:uppercase;letter-spacing:.12em">Ctrl+Z contextual</div>'
+            f'<div style="font-size:15px;color:#eef0f8;font-weight:700;margin-top:4px">Última acción: {action or "Ninguna"} · {count} elemento(s)</div>'
+            f'<div style="font-size:13px;color:#a6afc9;margin-top:6px">{detail}</div></div>'
+            f'<div><span style="display:inline-block;padding:6px 10px;border-radius:999px;background:rgba(99,102,241,.15);color:#8ea0ff;font-weight:700;font-size:12px">{status}</span></div>'
+            f"</div></div>",
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(
+            '<div style="background:linear-gradient(145deg,#10121a,#14172280);border:1px solid #1c1f2e;border-radius:16px;padding:16px 18px;margin:10px 0 14px">'
+            '<div style="font-size:12px;color:#7f88a8;text-transform:uppercase;letter-spacing:.12em">Ctrl+Z contextual</div>'
+            '<div style="font-size:15px;color:#eef0f8;font-weight:700;margin-top:4px">No hay una acción reversible reciente</div>'
+            '<div style="font-size:13px;color:#a6afc9;margin-top:6px">Usa el deshacer después de validar, renombrar o etiquetar manualmente. No revierte navegación ni cambios del sistema de archivos.</div>'
+            "</div>",
+            unsafe_allow_html=True,
+        )

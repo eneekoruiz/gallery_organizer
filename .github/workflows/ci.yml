@@ -11,14 +11,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+          
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r smart_gallery_v2/requirements.txt
+          pip install ruff black pytest
+          if [ -f smart_gallery_v2/requirements.txt ]; then pip install -r smart_gallery_v2/requirements.txt; fi
+          
+      - name: Lint with ruff
+        run: ruff check smart_gallery_v2
+        
+      - name: Check formatting with black
+        run: black --check smart_gallery_v2
+        
       - name: Run tests
         run: |
-          pytest -q
+          cd smart_gallery_v2
+          pytest

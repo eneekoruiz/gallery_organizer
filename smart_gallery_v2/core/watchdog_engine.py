@@ -8,17 +8,22 @@ from __future__ import annotations
 import gc
 import logging
 import threading
+import time
 from pathlib import Path
 from queue import Queue
-from typing import Callable, Optional
+from typing import TYPE_CHECKING, Callable, Optional
+
+if TYPE_CHECKING:
+    from core.database import DatabaseManager
 
 from watchdog.events import (
-    FileCreatedEvent, FileDeletedEvent,
-    FileMovedEvent, FileSystemEvent, FileSystemEventHandler,
+    FileMovedEvent,
+    FileSystemEvent,
+    FileSystemEventHandler,
 )
 from watchdog.observers import Observer
 
-from core.config import DIR_ENTRADA, EXT_TODAS, EXT_VIDEO
+from core.config import DIR_ENTRADA, DIR_RESULT, EXT_TODAS, EXT_VIDEO
 
 log = logging.getLogger(__name__)
 
@@ -32,7 +37,7 @@ DbCallback = Callable[[str, str, str], None]
 class _GalleryHandler(FileSystemEventHandler):
     def __init__(self, event_queue: Queue, db_callback: Optional[DbCallback] = None) -> None:
         super().__init__()
-        self._q  = event_queue
+        self._q = event_queue
         self._cb = db_callback
 
     def _is_media(self, path: str) -> bool:
@@ -58,8 +63,8 @@ class _GalleryHandler(FileSystemEventHandler):
         if self._cb:
             try:
                 self._cb(etype, src, dest)
-            except Exception as exc:
-                log.warning("Watchdog callback error: %s", exc)
+            except Exception:
+                log.exception("Watchdog callback error for %s -> %s", src, dest)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -72,25 +77,36 @@ class FileSystemWatcher:
     Propaga eventos al motor de procesamiento sin polling.
     """
 
-    def __init__(self, event_queue: Queue,
-                 watch_path: Path = DIR_ENTRADA,
-                 db_callback: Optional[DbCallback] = None,
-                 recursive: bool = True) -> None:
-        self._q          = event_queue
+    def __init__(
+        self,
+        event_queue: Queue,
+        watch_path: Path = DIR_ENTRADA,
+        db_callback: Optional[DbCallback] = None,
+        recursive: bool = True,
+        watch_results: bool = True,
+    ) -> None:
+        self._q = event_queue
         self._watch_path = watch_path
-        self._recursive  = recursive
-        self._handler    = _GalleryHandler(event_queue, db_callback)
+        self._recursive = recursive
+        self._handler = _GalleryHandler(event_queue, db_callback)
         self._observer: Optional[Observer] = None
-        self._active     = threading.Event()
+        self._active = threading.Event()
+        self._watch_results = watch_results
 
     def start(self) -> None:
         if self._active.is_set():
             return
         self._observer = Observer()
         self._observer.schedule(self._handler, str(self._watch_path), recursive=self._recursive)
+        if self._watch_results and DIR_RESULT != self._watch_path:
+            self._observer.schedule(self._handler, str(DIR_RESULT), recursive=self._recursive)
         self._observer.start()
         self._active.set()
-        log.info("Watchdog activo → %s", self._watch_path)
+        log.info(
+            "Watchdog activo → %s + %s",
+            self._watch_path,
+            DIR_RESULT if self._watch_results else "-",
+        )
 
     def stop(self) -> None:
         if not self._active.is_set():
@@ -116,17 +132,52 @@ class FileSystemWatcher:
 # ──────────────────────────────────────────────────────────────────────────────
 def make_db_callback(db: "DatabaseManager") -> DbCallback:  # type: ignore[name-defined]
     """Conecta eventos del SO con la capa de DB."""
+
+    def _norm(path: str) -> str:
+        try:
+            return str(Path(path).resolve(strict=False))
+        except Exception:
+            return path
+
+    def _is_result_path(path: str) -> bool:
+        try:
+            p = Path(path).resolve(strict=False)
+            return str(p).startswith(str(DIR_RESULT.resolve()))
+        except Exception:
+            log.debug("Failed to resolve result path check for %s", path)
+            return False
+
     def _cb(event_type: str, src: str, dest: str) -> None:
         db.log_fs_event(event_type, src, dest)
         if event_type == "created":
             p = Path(src)
-            db.upsert_file(src, p.name,
-                           media_type="video" if p.suffix.lower() in EXT_VIDEO else "image")
+            if _is_result_path(src):
+                return
+            # Debounce: esperar estabilidad inicial
+            time.sleep(0.5)
+            db.upsert_file(
+                src, p.name, media_type="video" if p.suffix.lower() in EXT_VIDEO else "image"
+            )
         elif event_type == "deleted":
-            db.delete_by_path(src)
+            if _is_result_path(src):
+                db.delete_file_identity_by_symlink_path(_norm(src))
+            else:
+                db.delete_by_path(src)
         elif event_type == "moved":
-            if Path(dest).suffix.lower() in EXT_TODAS:
+            time.sleep(0.1)  # Breve respiro para el SO
+            if _is_result_path(src) or _is_result_path(dest):
+                src_norm = _norm(src)
+                dest_norm = _norm(dest)
+                updated = db.update_symlink_path_by_path(src_norm, dest_norm)
+                if not updated:
+                    file_row = db.get_file_identity_by_symlink_path(src_norm)
+                    if file_row and (Path(dest).exists() or Path(dest).suffix.lower() in EXT_TODAS):
+                        db.update_symlink_path(file_row["file_id"], file_row["identity"], dest_norm)
+                    else:
+                        db.delete_file_identity_by_symlink_path(src_norm)
+            elif Path(dest).suffix.lower() in EXT_TODAS:
                 db.move_filepath(src, dest)
             else:
                 db.delete_by_path(src)
+
     return _cb

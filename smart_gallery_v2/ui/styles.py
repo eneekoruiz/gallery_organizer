@@ -10,6 +10,8 @@ PREMIUM_CSS = """
 /* ── Reset ─────────────────────────────────────────────────────────────────── */
 [data-testid="stAppViewContainer"] { background: #0a0c12; }
 [data-testid="stSidebar"]          { background: #10121a; border-right:1px solid #1c1f2e; }
+[data-testid="stSidebar"] [data-testid="stVerticalBlock"] { gap: 0.15rem; }
+[data-testid="stSidebar"] .block-container { padding:1.1rem 1rem 2rem; }
 .block-container { padding:1.5rem 2rem 3rem; max-width:1440px; }
 *, *::before, *::after { box-sizing:border-box; }
 
@@ -96,6 +98,33 @@ h1,h2,h3 { letter-spacing:-0.03em; color:#eef0f8; }
 /* ── Misc ───────────────────────────────────────────────────────────────────── */
 hr { border-color:#1c1f2e !important; }
 .stAlert { border-radius:12px !important; border:none !important; }
+
+/* ── Sidebar Help Panel ────────────────────────────────────────────────────── */
+[data-testid="stSidebar"] code {
+  background:#141722;
+  border:1px solid #1c1f2e;
+  color:#eef0f8;
+  border-radius:8px;
+  padding:1px 6px;
+}
+[data-testid="stSidebar"] .sidebar-help {
+  background: linear-gradient(145deg,#10121a,#14172280);
+  border:1px solid #1c1f2e;
+  border-radius:16px;
+  padding:14px;
+  margin: 0 0 10px 0;
+}
+[data-testid="stSidebar"] .sidebar-help h4 {
+  margin:0 0 4px 0;
+  font-size:14px;
+  color:#eef0f8;
+}
+[data-testid="stSidebar"] .sidebar-help p {
+  margin:0;
+  font-size:13px;
+  line-height:1.55;
+  color:#a6afc9;
+}
 </style>
 """
 
@@ -125,14 +154,17 @@ window.drawBBoxes = function(canvasId, bboxes, scaleX, scaleY) {
 
 # ── Helpers de render ─────────────────────────────────────────────────────────
 def mc(label: str, value, css: str = "") -> str:
-    return (f'<div class="mc"><div class="mc-l">{label}</div>'
-            f'<div class="mc-v {css}">{value}</div></div>')
+    return (
+        f'<div class="mc"><div class="mc-l">{label}</div>'
+        f'<div class="mc-v {css}">{value}</div></div>'
+    )
 
 
-LOG_CSS = {"INFO":"li","WARNING":"lw","ERROR":"le","PROCESS":"lp","DONE":"ld"}
-LOG_ICO = {"INFO":"ℹ","WARNING":"⚠","ERROR":"✗","PROCESS":"⚙","DONE":"✓"}
+LOG_CSS = {"INFO": "li", "WARNING": "lw", "ERROR": "le", "PROCESS": "lp", "DONE": "ld"}
+LOG_ICO = {"INFO": "ℹ", "WARNING": "⚠", "ERROR": "✗", "PROCESS": "⚙", "DONE": "✓"}
+
 
 def log_line(tipo: str, msg: str) -> str:
-    css = LOG_CSS.get(tipo,"li")
-    ico = LOG_ICO.get(tipo,"·")
+    css = LOG_CSS.get(tipo, "li")
+    ico = LOG_ICO.get(tipo, "·")
     return f'<span class="{css}">{ico} {msg}</span>'

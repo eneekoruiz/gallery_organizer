@@ -1,7 +1,6 @@
 import os
-import tempfile
+
 from core.database import DatabaseManager
-from core.config import DB_PATH
 
 
 def test_upsert_and_delete_file():

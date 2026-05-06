@@ -12,7 +12,10 @@ import os
 import platform
 import subprocess
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from core.database import DatabaseManager
 
 from core.config import DIR_RESULT
 
@@ -24,6 +27,7 @@ _IS_WINDOWS = platform.system() == "Windows"
 # ──────────────────────────────────────────────────────────────────────────────
 # Creación de Symlinks
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def _sanitize(name: str) -> str:
     """Sanea un string para usarlo como nombre de carpeta/symlink."""
@@ -48,7 +52,7 @@ def create_symlink(src_file: Path, identity: str) -> Optional[Path]:
     if link_path.exists() or link_path.is_symlink():
         try:
             if link_path.resolve() == src_file.resolve():
-                return link_path   # ya correcto
+                return link_path  # ya correcto
             # Diferente destino: eliminar y recrear
             link_path.unlink()
         except Exception as exc:
@@ -83,7 +87,9 @@ def _create_symlink_windows(src: Path, link: Path) -> Optional[Path]:
     try:
         result = subprocess.run(
             ["cmd", "/c", "mklink", str(link), str(src.resolve())],
-            capture_output=True, text=True, timeout=5
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         if result.returncode == 0:
             return link
@@ -110,6 +116,7 @@ def _fallback_hardlink(src: Path, link: Path) -> Optional[Path]:
 # ──────────────────────────────────────────────────────────────────────────────
 # Gestión de grupos (multi-tag)
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def create_group_symlinks(
     src_file: Path,
@@ -166,16 +173,9 @@ def create_faceless_symlink(
 
 def remove_symlinks_for_file(file_id: int, db: "DatabaseManager") -> None:  # type: ignore[name-defined]
     """Elimina todos los symlinks de un archivo (e.g., al borrar de la DB)."""
-    import sqlite3
-    from core.config import DB_PATH
-    conn = sqlite3.connect(str(DB_PATH))
-    rows = conn.execute(
-        "SELECT symlink_path FROM FileIdentities WHERE file_id=?", (file_id,)
-    ).fetchall()
-    conn.close()
+    paths = db.get_symlink_paths_for_file(file_id)
 
-    for row in rows:
-        sp = row[0]
+    for sp in paths:
         if sp:
             p = Path(sp)
             if p.is_symlink() or (p.exists() and not p.is_dir()):
