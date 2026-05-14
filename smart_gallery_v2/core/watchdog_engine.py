@@ -35,7 +35,9 @@ DbCallback = Callable[[str, str, str], None]
 # Handler de Eventos del SO
 # ──────────────────────────────────────────────────────────────────────────────
 class _GalleryHandler(FileSystemEventHandler):
-    def __init__(self, event_queue: Queue, db_callback: Optional[DbCallback] = None) -> None:
+    def __init__(
+        self, event_queue: Queue, db_callback: Optional[DbCallback] = None
+    ) -> None:
         super().__init__()
         self._q = event_queue
         self._cb = db_callback
@@ -97,9 +99,13 @@ class FileSystemWatcher:
         if self._active.is_set():
             return
         self._observer = Observer()
-        self._observer.schedule(self._handler, str(self._watch_path), recursive=self._recursive)
+        self._observer.schedule(
+            self._handler, str(self._watch_path), recursive=self._recursive
+        )
         if self._watch_results and DIR_RESULT != self._watch_path:
-            self._observer.schedule(self._handler, str(DIR_RESULT), recursive=self._recursive)
+            self._observer.schedule(
+                self._handler, str(DIR_RESULT), recursive=self._recursive
+            )
         self._observer.start()
         self._active.set()
         log.info(
@@ -156,7 +162,9 @@ def make_db_callback(db: "DatabaseManager") -> DbCallback:  # type: ignore[name-
             # Debounce: esperar estabilidad inicial
             time.sleep(0.5)
             db.upsert_file(
-                src, p.name, media_type="video" if p.suffix.lower() in EXT_VIDEO else "image"
+                src,
+                p.name,
+                media_type="video" if p.suffix.lower() in EXT_VIDEO else "image",
             )
         elif event_type == "deleted":
             if _is_result_path(src):
@@ -171,8 +179,12 @@ def make_db_callback(db: "DatabaseManager") -> DbCallback:  # type: ignore[name-
                 updated = db.update_symlink_path_by_path(src_norm, dest_norm)
                 if not updated:
                     file_row = db.get_file_identity_by_symlink_path(src_norm)
-                    if file_row and (Path(dest).exists() or Path(dest).suffix.lower() in EXT_TODAS):
-                        db.update_symlink_path(file_row["file_id"], file_row["identity"], dest_norm)
+                    if file_row and (
+                        Path(dest).exists() or Path(dest).suffix.lower() in EXT_TODAS
+                    ):
+                        db.update_symlink_path(
+                            file_row["file_id"], file_row["identity"], dest_norm
+                        )
                     else:
                         db.delete_file_identity_by_symlink_path(src_norm)
             elif Path(dest).suffix.lower() in EXT_TODAS:

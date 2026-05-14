@@ -46,9 +46,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--no-backup", action="store_true", help="Skip database backup before cleanup"
     )
-    parser.add_argument("--limit", type=int, default=1000, help="Max rows to process per operation")
     parser.add_argument(
-        "--log-file", type=str, default=None, help="Optional log file path with rotation"
+        "--limit", type=int, default=1000, help="Max rows to process per operation"
+    )
+    parser.add_argument(
+        "--log-file",
+        type=str,
+        default=None,
+        help="Optional log file path with rotation",
     )
     args = parser.parse_args(argv)
 

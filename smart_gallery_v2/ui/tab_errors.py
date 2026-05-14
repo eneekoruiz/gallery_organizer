@@ -40,7 +40,9 @@ def render_errors(db: DatabaseManager):
         if st.button("🔄 Reintentar todos los errores", type="primary"):
             # Cambiar status a PENDING y resetear retries
             conn = db._connect()
-            conn.execute("UPDATE FileQueue SET status='PENDING', retries=0 WHERE status='ERROR'")
+            conn.execute(
+                "UPDATE FileQueue SET status='PENDING', retries=0 WHERE status='ERROR'"
+            )
             conn.execute("DELETE FROM ProcessingErrors")
             conn.commit()
             conn.close()
@@ -67,9 +69,12 @@ def render_errors(db: DatabaseManager):
             if st.button("Reintentar este archivo", key=f"retry_{row['id']}"):
                 conn = db._connect()
                 conn.execute(
-                    "UPDATE FileQueue SET status='PENDING', retries=0 WHERE id=?", (row["file_id"],)
+                    "UPDATE FileQueue SET status='PENDING', retries=0 WHERE id=?",
+                    (row["file_id"],),
                 )
-                conn.execute("DELETE FROM ProcessingErrors WHERE file_id=?", (row["file_id"],))
+                conn.execute(
+                    "DELETE FROM ProcessingErrors WHERE file_id=?", (row["file_id"],)
+                )
                 conn.commit()
                 conn.close()
                 st.rerun()

@@ -20,7 +20,9 @@ log = logging.getLogger(__name__)
 
 
 def _hist_corr(a: np.ndarray, b: np.ndarray) -> float:
-    hsv_a, hsv_b = cv2.cvtColor(a, cv2.COLOR_BGR2HSV), cv2.cvtColor(b, cv2.COLOR_BGR2HSV)
+    hsv_a, hsv_b = cv2.cvtColor(a, cv2.COLOR_BGR2HSV), cv2.cvtColor(
+        b, cv2.COLOR_BGR2HSV
+    )
     scores = []
     for ch in range(3):
         ha = cv2.calcHist([hsv_a], [ch], None, [64], [0, 256])
@@ -85,7 +87,9 @@ class VideoKeyframeExtractor:
         log.info("Vídeo %s → %d keyframes", path.name, len(keyframes))
         return keyframes
 
-    def stream(self, video_path: str | Path) -> Generator[tuple[int, np.ndarray], None, None]:
+    def stream(
+        self, video_path: str | Path
+    ) -> Generator[tuple[int, np.ndarray], None, None]:
         cap = cv2.VideoCapture(str(video_path))
         if not cap.isOpened():
             return

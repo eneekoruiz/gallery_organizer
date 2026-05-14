@@ -4,27 +4,35 @@ __pycache__/
 *$py.class
 .pytest_cache/
 .ruff_cache/
+.mypy_cache/
 .ipynb_checkpoints/
 
-# Galería (Runtime data)
+# SQLite & Runtime Data
 gallery.db
 gallery.db-wal
 gallery.db-shm
+*.db
+*.db-wal
+*.db-shm
 gallery.log
+*.log
+logs/
+
+# Gallery & Cache (Local user data)
 .thumbnails/
 .face_crops/
 Galería/
-logs/
+Resultados/
 
-# Modelos (Grandes archivos binarios)
+# Models (Local binary assets)
 models/
-models/onnx/
+!models/.keep
 
 # OS
 .DS_Store
 Thumbs.db
 
-# Env
+# Environment
 .env
 .venv
 venv/

@@ -80,13 +80,18 @@ class YOLOEngine:
     def __init__(self) -> None:
         if getattr(self, "_initialized", False):
             return
-        self._ort = _load_ort(ONNX_YOLO)
+        self._ort = None
         self._native = None
+        self._initialized = True
+
+    def _ensure_loaded(self) -> None:
+        if self._ort or self._native:
+            return
+        self._ort = _load_ort(ONNX_YOLO)
         if self._ort:
             self._inp = self._ort.get_inputs()[0].name
         else:
             self._load_native()
-        self._initialized = True
 
     def _load_native(self) -> None:
         try:
@@ -98,6 +103,7 @@ class YOLOEngine:
             log.error("YOLOEngine sin backend: %s", exc)
 
     def detect_batch(self, imgs_bgr: list[np.ndarray]) -> list[list[dict[str, Any]]]:
+        self._ensure_loaded()
         if not imgs_bgr:
             return []
         if self._ort:
@@ -139,7 +145,9 @@ class YOLOEngine:
 
     def _infer_native(self, imgs: list[np.ndarray]) -> list[list[dict[str, Any]]]:
         results = []
-        for chunk in [imgs[i : i + BATCH_SIZE] for i in range(0, len(imgs), BATCH_SIZE)]:
+        for chunk in [
+            imgs[i : i + BATCH_SIZE] for i in range(0, len(imgs), BATCH_SIZE)
+        ]:
             raw = self._native(chunk, verbose=False, classes=list(YOLO_CLASSES))
             for r in raw:
                 dets = []
@@ -148,7 +156,11 @@ class YOLOEngine:
                     conf = float(box.conf[0].item())
                     if conf >= YOLO_CONF_MIN and cid in YOLO_CLASSES:
                         dets.append(
-                            {"class": YOLO_CLASSES[cid], "conf": conf, "bbox": box.xyxy[0].tolist()}
+                            {
+                                "class": YOLO_CLASSES[cid],
+                                "conf": conf,
+                                "bbox": box.xyxy[0].tolist(),
+                            }
                         )
                 results.append(dets)
         gc.collect()
@@ -171,8 +183,14 @@ class ArcFaceEngine:
     def __init__(self) -> None:
         if getattr(self, "_initialized", False):
             return
-        self._ort = _load_ort(ONNX_ARCFACE)
+        self._ort = None
         self._df_ok = False
+        self._initialized = True
+
+    def _ensure_loaded(self) -> None:
+        if self._ort or self._df_ok:
+            return
+        self._ort = _load_ort(ONNX_ARCFACE)
         if self._ort:
             self._inp = self._ort.get_inputs()[0].name
         else:
@@ -183,10 +201,12 @@ class ArcFaceEngine:
                 log.info("ArcFaceEngine: DeepFace nativo")
             except ImportError:
                 log.error("ArcFaceEngine: sin backend.")
-        self._initialized = True
 
-    def get_faces(self, img_rgb: np.ndarray) -> list[tuple[dict[str, int], np.ndarray, float]]:
+    def get_faces(
+        self, img_rgb: np.ndarray
+    ) -> list[tuple[dict[str, int], np.ndarray, float]]:
         """Devuelve [(bbox_dict, embedding_float32, confidence)]"""
+        self._ensure_loaded()
         if self._ort:
             return self._faces_ort(img_rgb)
         if self._df_ok:
@@ -222,7 +242,9 @@ class ArcFaceEngine:
             out.append((bbox, emb, float(f["face_confidence"])))
         return out
 
-    def _faces_ort(self, img_rgb: np.ndarray) -> list[tuple[dict[str, int], np.ndarray, float]]:
+    def _faces_ort(
+        self, img_rgb: np.ndarray
+    ) -> list[tuple[dict[str, int], np.ndarray, float]]:
         try:
             from retinaface import RetinaFace  # type: ignore
 
@@ -277,20 +299,28 @@ class CLIPEngine:
     def __init__(self) -> None:
         if getattr(self, "_initialized", False):
             return
+        self._vis = None
+        self._txt = None
+        self._native = None
+        self._initialized = True
+
+    def _ensure_loaded(self) -> None:
+        if self._vis or self._native:
+            return
         self._vis = _load_ort(ONNX_CLIP_VIS)
         self._txt = _load_ort(ONNX_CLIP_TXT)
-        self._native = None
         if self._vis is None:
             self._load_native()
         else:
             self._inp = self._vis.get_inputs()[0].name
-        self._initialized = True
 
     def _load_native(self) -> None:
         try:
             import open_clip  # type: ignore
 
-            model, _, prep = open_clip.create_model_and_transforms("ViT-B-32", pretrained="openai")
+            model, _, prep = open_clip.create_model_and_transforms(
+                "ViT-B-32", pretrained="openai"
+            )
             model.eval()
             self._native = model
             self._prep = prep
@@ -301,7 +331,9 @@ class CLIPEngine:
                 from transformers import CLIPModel, CLIPProcessor  # type: ignore
 
                 self._native = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
-                self._tokenizer = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+                self._tokenizer = CLIPProcessor.from_pretrained(
+                    "openai/clip-vit-base-patch32"
+                )
                 log.info("CLIPEngine: transformers CLIP")
             except Exception as exc:
                 log.warning("CLIPEngine sin backend: %s", exc)
@@ -317,6 +349,7 @@ class CLIPEngine:
     def embed_batch(self, images_rgb: list[np.ndarray]) -> list[np.ndarray]:
         if not images_rgb:
             return []
+        self._ensure_loaded()
         if self._vis:
             try:
                 blobs = [self._pre_img(img) for img in images_rgb]
@@ -495,3 +528,33 @@ class DedupeEngine:
         dist = _popcount_vec(diff)
         matches = ids[dist <= max_hamming]
         return matches.tolist()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# OCR Engine (Phase 4: Lazy Singleton)
+# ──────────────────────────────────────────────────────────────────────────────
+class OCREngine:
+    _instance: Optional[OCREngine] = None
+
+    def __new__(cls) -> OCREngine:
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance._initialized = False
+        return cls._instance
+
+    def __init__(self) -> None:
+        if getattr(self, "_initialized", False):
+            return
+        self._reader = None
+        self._initialized = True
+
+    def get_reader(self) -> Any:
+        if self._reader is None:
+            try:
+                import easyocr
+
+                self._reader = easyocr.Reader(["en", "es"], gpu=False)
+                log.info("OCR Engine: EasyOCR loaded.")
+            except Exception as e:
+                log.error(f"OCR Engine load failed: {e}")
+        return self._reader

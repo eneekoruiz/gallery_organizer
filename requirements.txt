@@ -1,0 +1,15 @@
+numpy
+pandas
+opencv-python-headless
+Pillow
+imagehash
+streamlit
+streamlit-autorefresh
+onnxruntime
+tqdm
+pytesseract
+faiss-cpu
+scipy
+pytest
+black
+ruff

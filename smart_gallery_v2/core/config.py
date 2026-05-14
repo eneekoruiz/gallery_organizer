@@ -20,7 +20,9 @@ DB_PATH = ROOT / "gallery.db"
 LOG_PATH = ROOT / "gallery.log"
 
 # ─── EXTENSIONES ──────────────────────────────────────────────────────────────
-EXT_IMAGEN: frozenset[str] = frozenset({".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tiff", ".heic"})
+EXT_IMAGEN: frozenset[str] = frozenset(
+    {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tiff", ".heic"}
+)
 EXT_VIDEO: frozenset[str] = frozenset({".mp4", ".avi", ".mov", ".mkv", ".webm", ".m4v"})
 EXT_TODAS: frozenset[str] = EXT_IMAGEN | EXT_VIDEO
 

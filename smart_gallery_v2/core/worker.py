@@ -5,6 +5,7 @@ Refactor Phase 3: Flujo explícito scan → enqueue → process_one → steps
 
 from __future__ import annotations
 
+import gc
 import hashlib
 import logging
 import shutil
@@ -22,16 +23,24 @@ import numpy as np
 from PIL import ExifTags, Image
 from PIL import Image as _PILImage
 
-from core.ai_engines import ArcFaceEngine, CLIPEngine, DedupeEngine, FaissIndex, YOLOEngine
+from core.ai_engines import (
+    ArcFaceEngine,
+    CLIPEngine,
+    DedupeEngine,
+    FaissIndex,
+    OCREngine,
+    YOLOEngine,
+)
 from core.config import (
-    CONTROL_STATE_KEY,
-    DIR_FACES,
-    DIR_RESULT,
     DIR_THUMBS,
     OCR_MIN_TEXT_LEN,
     PHASH_HAMMING_THRESHOLD,
     THUMB_SIZE,
     USE_PYTESSERACT,
+    BATCH_SIZE,
+    DIR_RESULT,
+    DIR_FACES,
+    CONTROL_STATE_KEY,
 )
 from core.database import DatabaseManager
 from core.models_types import (
@@ -46,30 +55,6 @@ from core.symlink_manager import create_group_symlinks
 from core.video_processor import VideoKeyframeExtractor
 
 log = logging.getLogger(__name__)
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# OCR Singleton
-# ──────────────────────────────────────────────────────────────────────────────
-class OCREngine:
-    _instance: Optional[OCREngine] = None
-
-    def __new__(cls) -> OCREngine:
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._reader = None
-        return cls._instance
-
-    def get_reader(self) -> Any:
-        if self._reader is None:
-            try:
-                import easyocr
-
-                self._reader = easyocr.Reader(["en", "es"], gpu=False)
-                log.info("OCR Engine: EasyOCR loaded.")
-            except Exception as e:
-                log.error(f"OCR Engine load failed: {e}")
-        return self._reader
 
 
 ocr_engine = OCREngine()
@@ -101,7 +86,9 @@ class ProcessingEngine:
             return
         self._stop_evt.clear()
         self._pause_evt.clear()
-        self._thread = threading.Thread(target=self._run, name="ProcessingEngine", daemon=True)
+        self._thread = threading.Thread(
+            target=self._run, name="ProcessingEngine", daemon=True
+        )
         self._thread.start()
         self._emit("INFO", "▶ Motor iniciado.")
 
@@ -128,31 +115,45 @@ class ProcessingEngine:
         self._load_engines()
         log.info("Pipeline started.")
 
+        # Initial scan (Phase 3)
+        from core.scanner import scan_directory
+
+        scan_directory(self._db)
+
         while not self._stop_evt.is_set():
             if self._pause_evt.is_set():
                 time.sleep(0.5)
                 continue
 
-            row = self._db.next_pending()
-            if not row:
+            # Batch fetching (Phase 4)
+            batch = self._db.next_batch_pending(limit=BATCH_SIZE)
+            if not batch:
                 self._emit("DONE", "✅ Cola vacía.")
-                break
+                time.sleep(2)  # Wait for new files
+                continue
 
-            record = MediaRecord(
-                id=int(row["id"]),
-                filepath=row["filepath"],
-                media_type=row.get("media_type", "image"),
-                retries=int(row.get("retries", 0)),
-            )
+            for row in batch:
+                if self._stop_evt.is_set():
+                    break
 
-            res = self.process_one(record)
+                record = MediaRecord(
+                    id=int(row["id"]),
+                    filepath=row["filepath"],
+                    media_type=row.get("media_type", "image"),
+                    retries=int(row.get("retries", 0)),
+                )
 
-            if res.status == "ERROR":
-                self._emit("ERROR", f"💥 {Path(record.filepath).name}: {res.message}")
+                res = self.process_one(record)
 
-            # Progress update
-            stats = self._db.get_stats()
-            self._emit("PROGRESS", (stats.get("done", 0), stats.get("total", 1)))
+                if res.status == "ERROR":
+                    self._emit("ERROR", f"💥 {Path(record.filepath).name}: {res.message}")
+
+                # Progress update
+                stats = self._db.get_stats()
+                self._emit("PROGRESS", (stats.get("done", 0), stats.get("total", 1)))
+
+            # Collect once per batch
+            gc.collect()
 
         log.info("Pipeline loop finished.")
 
@@ -169,41 +170,56 @@ class ProcessingEngine:
                 )
 
             # 1. Thumbnail
-            thumb_res = self._step_thumb(fp)
+            log.info(f"[{file_id}] Phase: Thumbnail")
+            thumb_res = self.thumbnail(fp)
             if thumb_res.error:
-                log.warning(f"Thumb error for {fp}: {thumb_res.error}")
+                log.warning(f"[{file_id}] Thumb error: {thumb_res.error}")
+                self._db.update_error(file_id, phase="thumbnail", exception=thumb_res.error)
 
             # 2. EXIF (solo imágenes)
             exif_res = ExifResult()
             if record.media_type == "image":
-                exif_res = self._step_exif(fp)
+                log.info(f"[{file_id}] Phase: EXIF")
+                exif_res = self.exif(fp)
+                if exif_res.error:
+                    log.warning(f"[{file_id}] EXIF error: {exif_res.error}")
 
             # 3. Dedupe (solo imágenes)
             if record.media_type == "image":
-                dedupe_res = self._step_dedupe(fp, file_id)
-                if dedupe_res.is_duplicate:
-                    self._step_persist_duplicate(record, dedupe_res, thumb_res.thumb_path)
+                log.info(f"[{file_id}] Phase: Dedupe")
+                dedupe_res = self.dedupe(fp, file_id)
+                if dedupe_res.error:
+                    log.warning(f"[{file_id}] Dedupe error: {dedupe_res.error}")
+                elif dedupe_res.is_duplicate:
+                    log.info(f"[{file_id}] Duplicate found. Linking.")
+                    self._step_persist_duplicate(
+                        record, dedupe_res, thumb_res.thumb_path
+                    )
                     return ProcessResult(
                         file_id, "DONE", "dedupe", "Duplicado detectado y vinculado."
                     )
 
             # 4. AI (YOLO, Face, CLIP)
-            ai_res = AIResult()
-            if record.media_type == "image":
-                ai_res = self._step_ai_image(fp, file_id)
-            else:
-                ai_res = self._step_ai_video(fp, file_id)
+            log.info(f"[{file_id}] Phase: AI")
+            ai_res = self.ai(fp, file_id, media_type=record.media_type)
 
             if ai_res.error:
+                log.error(f"[{file_id}] AI error: {ai_res.error}")
                 return ProcessResult(file_id, "ERROR", "ai", ai_res.error)
 
             # 5. Materialize & Persist
             try:
-                self._step_materialize(record, ai_res)
-                self._step_persist_final(record, ai_res, exif_res, thumb_res.thumb_path)
+                log.info(f"[{file_id}] Phase: Materialize")
+                self.materialize_results(record, ai_res)
+                log.info(f"[{file_id}] Phase: Persist")
+                self.persist(record, ai_res, exif_res, thumb_res.thumb_path)
             except Exception as e:
+                log.error(f"[{file_id}] Persist error: {e}")
                 return ProcessResult(
-                    file_id, "ERROR", "materialize", f"Fallo al mover/copiar archivos: {e}"
+                    file_id,
+                    "ERROR",
+                    "persist",
+                    f"Fallo al mover/copiar archivos: {e}",
                 )
 
             return ProcessResult(file_id, "DONE", "persist", "Procesado correctamente.")
@@ -212,47 +228,82 @@ class ProcessingEngine:
             err_msg = str(e)
             log.exception(f"Unexpected error in process_one for {fp}")
             self._db.update_error(file_id, phase="process_one", exception=err_msg)
-            return ProcessResult(file_id, "ERROR", "exception", err_msg, exception=err_msg)
+            return ProcessResult(
+                file_id, "ERROR", "exception", err_msg, exception=err_msg
+            )
 
     # ── Steps ─────────────────────────────────────────────────────────────
 
-    def _check_stability(self, filepath: str) -> bool:
+    def _check_stability(self, filepath: str, wait_ms: int = 200) -> bool:
+        """
+        Verifica que el archivo exista, tenga extensión válida y su tamaño sea estable.
+        """
+        from core.config import EXT_TODAS
+
         p = Path(filepath)
         if not p.exists():
+            log.warning(f"Archivo no existe: {filepath}")
             return False
-        # Check size stability over 100ms
-        s1 = p.stat().st_size
-        time.sleep(0.1)
-        s2 = p.stat().st_size
-        return s1 == s2
 
-    def _step_thumb(self, filepath: str) -> ThumbnailResult:
+        if p.suffix.lower() not in EXT_TODAS:
+            log.warning(f"Extensión no soportada: {p.suffix}")
+            return False
+
+        # Verificar bloqueo (intentar abrir para lectura)
+        try:
+            with open(filepath, "rb"):
+                pass
+        except OSError:
+            log.warning(f"Archivo bloqueado o sin permisos: {filepath}")
+            return False
+
+        # Estabilidad de tamaño
+        try:
+            s1 = p.stat().st_size
+            time.sleep(wait_ms / 1000.0)
+            s2 = p.stat().st_size
+            if s1 != s2:
+                log.info(f"Archivo inestable (escribiendo...): {filepath}")
+                return False
+        except OSError:
+            return False
+
+        return True
+
+    def thumbnail(self, filepath: str) -> ThumbnailResult:
         try:
             path = _make_thumb(filepath)
             return ThumbnailResult(thumb_path=path)
         except Exception as e:
             return ThumbnailResult(error=str(e))
 
-    def _step_exif(self, filepath: str) -> ExifResult:
+    def exif(self, filepath: str) -> ExifResult:
         try:
             data = _read_exif(filepath)
             return ExifResult(exif_date=data["exif_date"], gps=data["gps"])
         except Exception as e:
             return ExifResult(error=str(e))
 
-    def _step_dedupe(self, filepath: str, file_id: int) -> DedupeResult:
+    def dedupe(self, filepath: str, file_id: int) -> DedupeResult:
         try:
             with _PILImage.open(filepath) as im:
                 ph = imagehash.phash(im)
             ph_hex = str(ph)
             all_hashes = self._db.get_all_phashes()
-            matches = DedupeEngine.find_similar(ph_hex, all_hashes, PHASH_HAMMING_THRESHOLD)
+            matches = DedupeEngine.find_similar(
+                ph_hex, all_hashes, PHASH_HAMMING_THRESHOLD
+            )
             matches = [m for m in matches if m != file_id]
             if matches:
                 return DedupeResult(is_duplicate=True, original_id=matches[0])
             return DedupeResult(is_duplicate=False)
         except Exception as e:
             return DedupeResult(error=str(e))
+
+    def ai(self, filepath: str, file_id: int, media_type: str = "image") -> AIResult:
+        if media_type == "image":
+            return self._step_ai_image(filepath, file_id)
+        return self._step_ai_video(filepath, file_id)
 
     def _step_ai_image(self, filepath: str, file_id: int) -> AIResult:
         try:
@@ -266,10 +317,8 @@ class ProcessingEngine:
             with _PILImage.open(filepath) as im:
                 ph = str(imagehash.phash(im))
 
-            tags, tier, ids, err = self._process_image(img, rgb, filepath, file_id)
-            if err:
-                return AIResult(error=err)
-            return AIResult(tags=tags, triage_tier=tier, identities=ids, phash=ph)
+            ai_res = self._process_image(img, rgb, filepath, file_id, phash=ph)
+            return ai_res
         except Exception as e:
             log.exception(f"Fallo en _step_ai_image: {e}")
             return AIResult(error=str(e))
@@ -285,19 +334,23 @@ class ProcessingEngine:
 
             for kf in keyframes:
                 rgb = cv2.cvtColor(kf, cv2.COLOR_BGR2RGB)
-                tags, tier, ids, err = self._process_image(kf, rgb, filepath, file_id)
-                if err:
+                ai_res_kf = self._process_image(kf, rgb, filepath, file_id)
+                if ai_res_kf.error:
                     continue
-                all_tags.update(tags)
-                all_ids.update(ids)
-                if tier_rank.get(tier, 0) > tier_rank.get(best_tier, 0):
-                    best_tier = tier
-            return AIResult(tags=list(all_tags), triage_tier=best_tier, identities=list(all_ids))
+                all_tags.update(ai_res_kf.tags)
+                all_ids.update(ai_res_kf.identities)
+                if tier_rank.get(ai_res_kf.triage_tier, 0) > tier_rank.get(
+                    best_tier, 0
+                ):
+                    best_tier = ai_res_kf.triage_tier
+            return AIResult(
+                tags=list(all_tags), triage_tier=best_tier, identities=list(all_ids)
+            )
         except Exception as e:
             log.exception(f"Fallo en _step_ai_video: {e}")
             return AIResult(error=str(e))
 
-    def _step_persist_final(
+    def persist(
         self, record: MediaRecord, ai: AIResult, exif: ExifResult, thumb: Optional[str]
     ):
         self._db.update_done(
@@ -317,7 +370,7 @@ class ProcessingEngine:
             record.id, tags=["Duplicado"], triage_tier="unclassified", thumb_path=thumb
         )
 
-    def _step_materialize(self, record: MediaRecord, ai: AIResult):
+    def materialize_results(self, record: MediaRecord, ai: AIResult):
         src = Path(record.filepath)
         if ai.identities:
             create_group_symlinks(src, ai.identities, self._db, record.id)
@@ -349,10 +402,15 @@ class ProcessingEngine:
         self._faiss.rebuild(names, embs)
 
     def _process_image(
-        self, img_bgr: np.ndarray, img_rgb: np.ndarray, filepath: str, file_id: int
-    ) -> tuple[list[str], str, list[str], Optional[str]]:
+        self,
+        img_bgr: np.ndarray,
+        img_rgb: np.ndarray,
+        filepath: str,
+        file_id: int,
+        phash: Optional[str] = None,
+    ) -> AIResult:
         """
-        Analiza una imagen devolviendo: (tags, tier, identities, error_msg)
+        Analiza una imagen devolviendo un AIResult estructurado.
         """
         tags, identities = set(), set()
         best_tier = "unclassified"
@@ -400,7 +458,9 @@ class ProcessingEngine:
                     if USE_PYTESSERACT:
                         import pytesseract
 
-                        ocr_text = pytesseract.image_to_string(_PILImage.fromarray(img_rgb))
+                        ocr_text = pytesseract.image_to_string(
+                            _PILImage.fromarray(img_rgb)
+                        )
                     else:
                         reader = ocr_engine.get_reader()
                         if reader:
@@ -418,12 +478,17 @@ class ProcessingEngine:
                 else:
                     tags.add("SinClasificar")
 
-            return sorted(tags), best_tier, sorted(identities), None
+            return AIResult(
+                tags=sorted(list(tags)),
+                triage_tier=best_tier,
+                identities=sorted(list(identities)),
+                phash=phash,
+            )
 
         except Exception as e:
             err = f"Error en _process_image: {e}"
             log.exception(err)
-            return [], "unclassified", [], err
+            return AIResult(error=err)
 
     def _save_crop(self, img_bgr: np.ndarray, bbox: dict[str, int]) -> str:
         t, r, b, left = bbox["top"], bbox["right"], bbox["bottom"], bbox["left"]
@@ -459,10 +524,10 @@ def _read_exif(filepath: str) -> dict[str, Any]:
                         dt = datetime.strptime(exif[tid], "%Y:%m:%d %H:%M:%S")
                         res["exif_date"] = dt.strftime("%Y-%m-%dT%H:%M:%S")
                         break
-                    except Exception:
-                        pass
-    except Exception:
-        pass
+                    except Exception as e:
+                        log.debug(f"EXIF date parse fail for {filepath}: {e}")
+    except Exception as e:
+        log.warning(f"EXIF read fail for {filepath}: {e}")
     return res
 
 
@@ -487,5 +552,6 @@ def _h6(s: str) -> str:
 
 def _safe(name: str) -> str:
     return (
-        "".join(c for c in name if c.isalnum() or c in " _-").strip().replace(" ", "_") or "otros"
+        "".join(c for c in name if c.isalnum() or c in " _-").strip().replace(" ", "_")
+        or "otros"
     )

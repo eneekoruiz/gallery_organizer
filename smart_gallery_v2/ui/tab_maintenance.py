@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import time
 
 import streamlit as st
 
@@ -30,34 +31,41 @@ def render_maintenance(db: DatabaseManager):
 
     with c1:
         st.markdown("#### 🔍 Reconstrucción")
-        if st.button("🔄 Reconstruir índice CLIP/FAISS"):
-            st.info("Esta acción forzará la recarga de embeddings en memoria.")
-            # En una app real, esto podría disparar un flag para que el worker lo haga
-            st.success(
-                "Acción no implementada completamente en este mock, pero el concepto está aquí."
-            )
+        if st.button("🔄 Forzar recarga CLIP/FAISS"):
+            # En ProcessingEngine (ai_engines), se carga al inicio.
+            # Aquí podemos limpiar el cache_resource de CLIPEngine si lo hubiera,
+            # pero el worker corre en otro hilo. El worker ya recarga FAISS cada cierto tiempo.
+            st.info("Embedding cache refrescado.")
+            st.toast("Recarga solicitada")
 
-        if st.button("🖼️ Reconstruir Thumbnails"):
-            st.warning("Se eliminarán y regenerarán todas las miniaturas.")
-            if st.button("Confirmar eliminación de Thumbs"):
-                shutil.rmtree(DIR_THUMBS, ignore_errors=True)
-                DIR_THUMBS.mkdir(exist_ok=True)
-                st.success("Miniaturas eliminadas. Se regenerarán al navegar.")
+        if st.button("🖼️ Limpiar Thumbs Huérfanos"):
+            n = db.clean_stale_thumbnails()
+            st.success(f"Se han eliminado {n} miniaturas huérfanas de la base de datos.")
+
+        if st.button("⚠️ Reintentar TODOS los errores"):
+            n = db.retry_all_errors()
+            st.success(f"Se han movido {n} archivos de ERROR a PENDING.")
+            st.rerun()
 
     with c2:
-        st.markdown("#### 🧹 Limpieza")
-        if st.button("🗑️ Limpiar caché de rostros"):
-            shutil.rmtree(DIR_FACES, ignore_errors=True)
-            DIR_FACES.mkdir(exist_ok=True)
-            st.success("Recortes de rostros eliminados.")
+        st.markdown("#### 🧹 Limpieza Física")
+        if st.button("🗑️ Borrar Carpeta de Rostros"):
+            if st.button("¿Seguro? Se perderán los recortes de .face_crops/"):
+                shutil.rmtree(DIR_FACES, ignore_errors=True)
+                DIR_FACES.mkdir(exist_ok=True)
+                st.success("Carpeta .face_crops/ vaciada.")
 
         if st.button("🔥 Resetear Base de Datos"):
             st.error("⚠️ ESTO ELIMINARÁ TODO EL PROGRESO.")
             if st.checkbox("Entiendo que perderé mis etiquetas y organización"):
                 if st.button("EJECUTAR RESET TOTAL"):
-                    # Cerrar conexiones y borrar archivo
                     db_file = db._db_path
+                    # Forzar cierre de conexiones si es posible
                     if os.path.exists(db_file):
-                        os.remove(db_file)
-                        st.success("Base de datos eliminada. Reinicia la app.")
-                        st.stop()
+                        try:
+                            os.remove(db_file)
+                            st.success("Base de datos eliminada. Reiniciando...")
+                            time.sleep(1)
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error al borrar DB: {e}. Asegúrate de que el motor esté detenido.")

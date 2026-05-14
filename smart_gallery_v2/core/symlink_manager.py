@@ -80,8 +80,8 @@ def _create_symlink_windows(src: Path, link: Path) -> Optional[Path]:
         # Archivos → symlink de archivo
         os.symlink(str(src.resolve()), str(link), target_is_directory=False)
         return link
-    except (OSError, NotImplementedError):
-        pass
+    except (OSError, NotImplementedError) as e:
+        log.debug("os.symlink not supported on Windows without elevated privileges: %s", e)
 
     # Intento con mklink vía subprocess (requiere admin)
     try:
@@ -93,8 +93,8 @@ def _create_symlink_windows(src: Path, link: Path) -> Optional[Path]:
         )
         if result.returncode == 0:
             return link
-    except Exception:
-        pass
+    except Exception as e:
+        log.debug("mklink via subprocess failed: %s", e)
 
     return _fallback_hardlink(src, link)
 

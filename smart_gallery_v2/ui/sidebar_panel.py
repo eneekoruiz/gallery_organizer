@@ -36,7 +36,9 @@ def render_help_sidebar(db: DatabaseManager) -> None:
         unsafe_allow_html=True,
     )
 
-    _status_card("Motor", engine_state, "Proceso de clasificación y organización", "c-teal")
+    _status_card(
+        "Motor", engine_state, "Proceso de clasificación y organización", "c-teal"
+    )
     _status_card(
         "Watchdog",
         watcher_state,
@@ -134,13 +136,23 @@ def render_help_sidebar(db: DatabaseManager) -> None:
 
     st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
     _section_title("Programación automática")
-    st.caption("Nota: la tarea se ejecuta diariamente a las 03:00 vía Windows Task Scheduler.")
+    st.caption(
+        "Nota: la tarea se ejecuta diariamente a las 03:00 vía Windows Task Scheduler."
+    )
     if st.button("📋 Ver programación actual", use_container_width=True):
         try:
             from subprocess import run
 
             result = run(
-                ["schtasks", "/Query", "/TN", "SmartGallery_Maintenance", "/V", "/FO", "LIST"],
+                [
+                    "schtasks",
+                    "/Query",
+                    "/TN",
+                    "SmartGallery_Maintenance",
+                    "/V",
+                    "/FO",
+                    "LIST",
+                ],
                 capture_output=True,
                 text=True,
                 timeout=5,

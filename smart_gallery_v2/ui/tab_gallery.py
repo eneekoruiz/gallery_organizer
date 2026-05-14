@@ -62,6 +62,14 @@ def render_gallery(db: DatabaseManager) -> None:
     triage_param = None if triage_f == "Todas" else triage_f
 
     PAGE_SIZE = 60
+    
+    # Obtener total para paginación
+    total_files = db.get_files_count(status=status_param, triage=triage_param)
+    total_pages = (total_files - 1) // PAGE_SIZE + 1 if total_files > 0 else 1
+    
+    if st.session_state.gal_page >= total_pages:
+        st.session_state.gal_page = total_pages - 1
+
     offset = st.session_state.gal_page * PAGE_SIZE
 
     # ── Búsqueda semántica CLIP (Global) ───────────────────────────────────
@@ -73,7 +81,7 @@ def render_gallery(db: DatabaseManager) -> None:
         st.caption(f"🎯 {len(df)} resultados ordenados por relevancia para: *{query}*")
     else:
         df = _cached_files_df(db, status_param, triage_param, PAGE_SIZE, offset)
-        st.caption(f"📁 {len(df)} archivos")
+        st.caption(f"📁 {len(df)} de {total_files} archivos")
 
     # ── Bulk selection bar ─────────────────────────────────────────────────
     if "gallery_sel" not in st.session_state:
@@ -90,17 +98,28 @@ def render_gallery(db: DatabaseManager) -> None:
     c1, c2, c3 = st.columns([1, 2, 1])
     with c1:
         if st.session_state.gal_page > 0:
-            if st.button("⬅️ Anterior"):
+            if st.button("⬅️ Anterior", use_container_width=True):
                 st.session_state.gal_page -= 1
                 st.rerun()
     with c2:
+        pg = st.number_input(
+            "Página",
+            min_value=1,
+            max_value=total_pages,
+            value=st.session_state.gal_page + 1,
+            step=1,
+            label_visibility="collapsed",
+        )
+        if pg != st.session_state.gal_page + 1:
+            st.session_state.gal_page = pg - 1
+            st.rerun()
         st.markdown(
-            f"<div style='text-align:center;padding-top:10px'>Página {st.session_state.gal_page + 1}</div>",
+            f"<div style='text-align:center;color:#606880;font-size:12px'>Página {pg} de {total_pages}</div>",
             unsafe_allow_html=True,
         )
     with c3:
-        if len(df) == PAGE_SIZE:
-            if st.button("Siguiente ➡️"):
+        if st.session_state.gal_page < total_pages - 1:
+            if st.button("Siguiente ➡️", use_container_width=True):
                 st.session_state.gal_page += 1
                 st.rerun()
 
@@ -154,9 +173,15 @@ def _semantic_search(db: DatabaseManager, query: str) -> pd.DataFrame:
 
 @st.cache_data(ttl=5.0, show_spinner=False)
 def _cached_files_df(
-    _db: DatabaseManager, status: Optional[str], triage: Optional[str], limit: int, offset: int
+    _db: DatabaseManager,
+    status: Optional[str],
+    triage: Optional[str],
+    limit: int,
+    offset: int,
 ) -> pd.DataFrame:
-    return _db.get_files_with_thumbs_df(status=status, triage=triage, limit=limit, offset=offset)
+    return _db.get_files_with_thumbs_df(
+        status=status, triage=triage, limit=limit, offset=offset
+    )
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -235,7 +260,9 @@ def _image_card(rec: pd.Series) -> None:
 
     # ── Checkbox bulk ──────────────────────────────────────────────────────
     selected = file_id in st.session_state.get("gallery_sel", set())
-    is_now = st.checkbox("", value=selected, key=f"gchk_{file_id}", label_visibility="collapsed")
+    is_now = st.checkbox(
+        "", value=selected, key=f"gchk_{file_id}", label_visibility="collapsed"
+    )
     if is_now != selected:
         if is_now:
             st.session_state.gallery_sel.add(file_id)
@@ -260,11 +287,15 @@ def _image_card(rec: pd.Series) -> None:
             f'<span class="tag-pill {"tp-person" if _is_person(t) else "tp-object"}">{t}</span>'
             for t in tags[:4]
         )
-        st.markdown(f'<div style="margin:3px 0 1px">{pills}</div>', unsafe_allow_html=True)
+        st.markdown(
+            f'<div style="margin:3px 0 1px">{pills}</div>', unsafe_allow_html=True
+        )
 
     # ── Tier + status ──────────────────────────────────────────────────────
     tb_css = {"safe": "tb-safe", "review": "tb-review"}.get(triage, "tb-unk")
-    sc = {"DONE": "#34d399", "ERROR": "#f87171", "PENDING": "#fbbf24"}.get(status, "#606880")
+    sc = {"DONE": "#34d399", "ERROR": "#f87171", "PENDING": "#fbbf24"}.get(
+        status, "#606880"
+    )
     st.markdown(
         f'<span class="tier-badge {tb_css}" style="font-size:10px">{triage}</span> '
         f'<span style="font-size:10px;color:{sc}">{status}</span>',

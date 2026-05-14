@@ -119,7 +119,9 @@ def _render_review_bin(db: DatabaseManager) -> None:
 # ──────────────────────────────────────────────────────────────────────────────
 def _render_unknown_bin(db: DatabaseManager) -> None:
     # Usar la versión con thumbs para evitar lag
-    df_files = db.get_files_with_thumbs_df(status="DONE", triage="unclassified", limit=80)
+    df_files = db.get_files_with_thumbs_df(
+        status="DONE", triage="unclassified", limit=80
+    )
 
     st.markdown(
         '<div class="triage-header triage-unk">'
@@ -133,7 +135,9 @@ def _render_unknown_bin(db: DatabaseManager) -> None:
         st.info("No hay archivos sin clasificar.")
         return
 
-    st.caption("Puedes usar 'Etiquetado Manual' para asignar identidades a estas fotos.")
+    st.caption(
+        "Puedes usar 'Etiquetado Manual' para asignar identidades a estas fotos."
+    )
     _render_file_grid(db, df_files)
 
 
@@ -160,7 +164,9 @@ def _render_faceless_panel(db: DatabaseManager) -> None:
         return
 
     filenames = df["filename"].tolist()
-    sel_name = st.selectbox("Selecciona una foto para etiquetar:", filenames, key="fl_file_sel")
+    sel_name = st.selectbox(
+        "Selecciona una foto para etiquetar:", filenames, key="fl_file_sel"
+    )
     sel_row = df[df["filename"] == sel_name].iloc[0]
     file_id = int(sel_row["id"])
     filepath = sel_row["filepath"]
@@ -169,7 +175,9 @@ def _render_faceless_panel(db: DatabaseManager) -> None:
 
     with col_img:
         if Path(filepath).exists():
-            st.image(Image.open(filepath), use_container_width=True, caption=f"📷 {sel_name}")
+            st.image(
+                Image.open(filepath), use_container_width=True, caption=f"📷 {sel_name}"
+            )
         else:
             st.warning("Archivo no encontrado en disco.")
 
@@ -183,7 +191,9 @@ def _render_faceless_panel(db: DatabaseManager) -> None:
         new_id = ""
         if sel_id == "(Nueva identidad)":
             new_id = st.text_input(
-                "Nombre de la persona:", key="fl_new_name", placeholder="Ej: Carlos Ruiz"
+                "Nombre de la persona:",
+                key="fl_new_name",
+                placeholder="Ej: Carlos Ruiz",
             )
 
         st.markdown("**Región (opcional)** — coordenadas en píxeles")
@@ -194,7 +204,9 @@ def _render_faceless_panel(db: DatabaseManager) -> None:
                 fl_left = st.number_input("Left", min_value=0, value=0, key="fl_left")
             with bcol2:
                 fl_bot = st.number_input("Bottom", min_value=0, value=200, key="fl_bot")
-                fl_right = st.number_input("Right", min_value=0, value=200, key="fl_right")
+                fl_right = st.number_input(
+                    "Right", min_value=0, value=200, key="fl_right"
+                )
 
         if st.button("✅ Asignar identidad faceless", type="primary"):
             nombre_final = new_id.strip() if sel_id == "(Nueva identidad)" else sel_id
@@ -204,7 +216,12 @@ def _render_faceless_panel(db: DatabaseManager) -> None:
 
             bbox: Optional[dict] = None
             if fl_top or fl_left or fl_bot or fl_right:
-                bbox = {"top": fl_top, "right": fl_right, "bottom": fl_bot, "left": fl_left}
+                bbox = {
+                    "top": fl_top,
+                    "right": fl_right,
+                    "bottom": fl_bot,
+                    "left": fl_left,
+                }
 
             # Añadir a DB
             db.add_faceless_tag(file_id, nombre_final, bbox)
@@ -214,7 +231,9 @@ def _render_faceless_panel(db: DatabaseManager) -> None:
             if src.exists():
                 create_faceless_symlink(src, nombre_final, db, file_id)
 
-            st.success(f"✅ '{nombre_final}' asignado a '{sel_name}' sin embedding facial.")
+            st.success(
+                f"✅ '{nombre_final}' asignado a '{sel_name}' sin embedding facial."
+            )
             st.rerun()
 
     # Mostrar etiquetas faceless ya asignadas a este archivo
@@ -295,13 +314,18 @@ def _render_det_card(
         # Validación de 1 clic: Confirmar o Denegar
         c1, c2 = st.columns(2)
         with c1:
-            if st.button("✅", key=f"cfm_{det_id}", help="Confirmar", use_container_width=True):
+            if st.button(
+                "✅", key=f"cfm_{det_id}", help="Confirmar", use_container_width=True
+            ):
                 db.verify_detection(det_id, name)
                 st.toast(f"✅ {name} confirmado.")
                 st.rerun()
         with c2:
             if st.button(
-                "❌", key=f"den_{det_id}", help="Denegar / Falso positivo", use_container_width=True
+                "❌",
+                key=f"den_{det_id}",
+                help="Denegar / Falso positivo",
+                use_container_width=True,
             ):
                 db.mark_false_positive(det_id)
                 st.toast("Falso positivo eliminado.")
@@ -309,15 +333,22 @@ def _render_det_card(
     else:
         # Asignación manual
         opts = ["(Sin cambios)"] + known_ids + ["➕ Nuevo nombre"]
-        sel_name = st.selectbox("", opts, key=f"dsel_{det_id}", label_visibility="collapsed")
+        sel_name = st.selectbox(
+            "", opts, key=f"dsel_{det_id}", label_visibility="collapsed"
+        )
         new_name = ""
         if sel_name == "➕ Nuevo nombre":
             new_name = st.text_input(
-                "", key=f"dtxt_{det_id}", label_visibility="collapsed", placeholder="Nombre…"
+                "",
+                key=f"dtxt_{det_id}",
+                label_visibility="collapsed",
+                placeholder="Nombre…",
             )
         c1, c2 = st.columns(2)
         with c1:
-            if st.button("✅", key=f"sv_{det_id}", use_container_width=True, type="primary"):
+            if st.button(
+                "✅", key=f"sv_{det_id}", use_container_width=True, type="primary"
+            ):
                 n = new_name if sel_name == "➕ Nuevo nombre" else sel_name
                 if n and n != "(Sin cambios)":
                     db.verify_detection(det_id, n)
@@ -466,7 +497,9 @@ def _render_inspector(db: DatabaseManager) -> None:
             cv2.rectangle(disp_rgb, (left, top), (right, bot), col, 2)
             label = f"{name} {conf*100:.0f}%" if conf > 0 else name
             (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.52, 1)
-            cv2.rectangle(disp_rgb, (left, top - th - 10), (left + tw + 10, top), col, -1)
+            cv2.rectangle(
+                disp_rgb, (left, top - th - 10), (left + tw + 10, top), col, -1
+            )
             cv2.putText(
                 disp_rgb,
                 label,
@@ -490,10 +523,15 @@ def _render_inspector(db: DatabaseManager) -> None:
         for det in dets:
             tier = det.get("triage_tier", "unclassified")
             tb = {"safe": "tb-safe", "review": "tb-review"}.get(tier, "tb-unk")
-            with st.expander(f'👤 {det["assigned_name"]} ' f'({det["confidence"]*100:.0f}%)'):
+            with st.expander(
+                f'👤 {det["assigned_name"]} ' f'({det["confidence"]*100:.0f}%)'
+            ):
                 if det.get("face_crop_path") and Path(det["face_crop_path"]).exists():
                     st.image(det["face_crop_path"], width=90)
-                st.markdown(f'<span class="tier-badge {tb}">{tier}</span>', unsafe_allow_html=True)
+                st.markdown(
+                    f'<span class="tier-badge {tb}">{tier}</span>',
+                    unsafe_allow_html=True,
+                )
 
                 opts = ["(Sin cambios)"] + known_ids + ["➕ Nuevo nombre"]
                 sel = st.selectbox("Corregir:", opts, key=f"insp_sel_{det['id']}")

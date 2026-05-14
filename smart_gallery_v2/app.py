@@ -19,6 +19,7 @@ import logging
 import sys
 
 from core.bootstrap import ensure_dirs, setup_environment
+from core.config import APP_ICON, APP_TITLE, LOG_PATH
 
 ensure_dirs()
 setup_environment()
@@ -42,14 +43,13 @@ from core.database import DatabaseManager
 from ui.sidebar_panel import render_help_sidebar
 from ui.styles import BBOX_SCRIPT, PREMIUM_CSS
 from ui.tab_dashboard import _boot as _boot_runtime
+from ui.tab_cleanup import render_cleanup
 from ui.tab_dashboard import render_dashboard
 from ui.tab_errors import render_errors
 from ui.tab_gallery import render_gallery
 from ui.tab_maintenance import render_maintenance
 from ui.tab_timeline import render_timeline
 from ui.tab_triage import render_triage
-
-from core.config import APP_ICON, APP_TITLE, CONTROL_STATE_KEY, LOG_PATH
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -115,11 +115,12 @@ def main() -> None:
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ── Navegación principal ──────────────────────────────────────────────
-    t1, t2, t3, t4, t5, t6 = st.tabs(
+    t1, t2, t3, t4, t5, t6, t7 = st.tabs(
         [
             "🎛️  Dashboard",
             "🖼️  Galería",
             "⚖️  Triaje",
+            "🧹  Limpieza",
             "📅  Línea de Tiempo",
             "⚠️  Errores",
             "🛠️  Mantenimiento",
@@ -132,19 +133,24 @@ def main() -> None:
     with t2:
         render_gallery(db)
         # Inspector de archivo desde galería
-        if st.session_state.get("inspect_file_id") and not st.session_state.get("inspect_det_id"):
+        if st.session_state.get("inspect_file_id") and not st.session_state.get(
+            "inspect_det_id"
+        ):
             _render_file_inspector(db)
 
     with t3:
         render_triage(db)
 
     with t4:
-        render_timeline(db)
+        render_cleanup(db)
 
     with t5:
-        render_errors(db)
+        render_timeline(db)
 
     with t6:
+        render_errors(db)
+
+    with t7:
         render_maintenance(db)
 
     gc.collect()
@@ -186,9 +192,17 @@ def _render_file_inspector(db: DatabaseManager) -> None:
 
     h, w = img_bgr.shape[:2]
     scale = min(1.0, 860 / w)
-    disp = cv2.cvtColor(cv2.resize(img_bgr, (int(w * scale), int(h * scale))), cv2.COLOR_BGR2RGB)
+    disp = cv2.cvtColor(
+        cv2.resize(img_bgr, (int(w * scale), int(h * scale))), cv2.COLOR_BGR2RGB
+    )
 
-    COLORS = [(99, 102, 241), (236, 72, 153), (52, 211, 153), (251, 191, 36), (96, 165, 250)]
+    COLORS = [
+        (99, 102, 241),
+        (236, 72, 153),
+        (52, 211, 153),
+        (251, 191, 36),
+        (96, 165, 250),
+    ]
     for i, det in enumerate(dets):
         try:
             b = json.loads(det["bbox_json"])
@@ -202,10 +216,16 @@ def _render_file_inspector(db: DatabaseManager) -> None:
             (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
             cv2.rectangle(disp, (left, top - th - 10), (left + tw + 10, top), col, -1)
             cv2.putText(
-                disp, label, (left + 5, top - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1
+                disp,
+                label,
+                (left + 5, top - 5),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (255, 255, 255),
+                1,
             )
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug(f"Failed to draw bbox for detection {det.get('id')}: {e}")
 
     img_c, info_c = st.columns([3, 2])
     with img_c:
@@ -214,12 +234,18 @@ def _render_file_inspector(db: DatabaseManager) -> None:
         st.markdown(f"**{len(dets)} detecciones**")
         known = db.get_all_identity_names()
         for det in dets:
-            with st.expander(f'👤 {det["assigned_name"]} ({det["confidence"]*100:.0f}%)'):
+            with st.expander(
+                f'👤 {det["assigned_name"]} ({det["confidence"]*100:.0f}%)'
+            ):
                 opts = ["(Sin cambios)"] + known + ["➕ Nuevo nombre"]
-                s = st.selectbox("", opts, key=f"fi_sel_{det['id']}", label_visibility="collapsed")
+                s = st.selectbox(
+                    "", opts, key=f"fi_sel_{det['id']}", label_visibility="collapsed"
+                )
                 nw = ""
                 if s == "➕ Nuevo nombre":
-                    nw = st.text_input("", key=f"fi_n_{det['id']}", label_visibility="collapsed")
+                    nw = st.text_input(
+                        "", key=f"fi_n_{det['id']}", label_visibility="collapsed"
+                    )
                 c1, c2 = st.columns(2)
                 with c1:
                     if st.button("Guardar", key=f"fi_sv_{det['id']}", type="primary"):

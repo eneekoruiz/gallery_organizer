@@ -158,7 +158,9 @@ def render_dashboard(db: DatabaseManager) -> None:
         if watcher.is_running():
             st.success(f"👁 Watchdog escuchando → `{DIR_ENTRADA.name}/`")
         else:
-            st.error("👁 Watchdog desactivado — los cambios no se detectan en tiempo real")
+            st.error(
+                "👁 Watchdog desactivado — los cambios no se detectan en tiempo real"
+            )
 
     st.divider()
 
