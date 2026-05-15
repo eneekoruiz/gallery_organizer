@@ -45,12 +45,13 @@ def render_triage(db: DatabaseManager) -> None:
         unsafe_allow_html=True,
     )
 
-    tab_safe, tab_review, tab_unk, tab_faceless = st.tabs(
+    tab_safe, tab_review, tab_unk, tab_faceless, tab_clusters = st.tabs(
         [
             "✅ Seguros (>85%)",
             "🔶 Revisar (40–85%)",
             "❓ Sin Clasificar",
             "👤 Etiquetado Manual",
+            "🪄 Agrupamiento IA",
         ]
     )
 
@@ -66,6 +67,9 @@ def render_triage(db: DatabaseManager) -> None:
     with tab_faceless:
         _render_faceless_panel(db)
 
+    with tab_clusters:
+        _render_clusters_tab(db)
+
     # Inspector modal si está activo
     if st.session_state.get("inspect_det_id"):
         _render_inspector(db)
@@ -75,15 +79,25 @@ def render_triage(db: DatabaseManager) -> None:
 # Bandeja 1 — SEGURA (auto-clasificados, solo lectura / corrección)
 # ──────────────────────────────────────────────────────────────────────────────
 def _render_safe_bin(db: DatabaseManager) -> None:
-    df = db.get_triage_detections("safe", limit=60)
-
+    count = db.get_triage_count("safe")
+    limit = 60
+    num_pages = max(1, (count + limit - 1) // limit)
+    
     st.markdown(
         '<div class="triage-header triage-safe">'
         '<span class="tier-badge tb-safe">✅ Alta Confianza > 85%</span>'
-        f'<span style="color:#505570;font-size:13px">{len(df)} detecciones clasificadas automáticamente</span>'
+        f'<span style="color:#505570;font-size:13px">{count} detecciones clasificadas automáticamente</span>'
         "</div>",
         unsafe_allow_html=True,
     )
+    
+    if count > limit:
+        page = st.number_input("Página (Seguros):", 1, num_pages, 1, key="p_safe")
+        offset = (page - 1) * limit
+    else:
+        offset = 0
+
+    df = db.get_triage_detections("safe", limit=limit, offset=offset)
 
     if df.empty:
         st.info("Sin detecciones de alta confianza todavía.")
@@ -96,15 +110,25 @@ def _render_safe_bin(db: DatabaseManager) -> None:
 # Bandeja 2 — DUDOSA (la IA propone, el humano valida con 1 clic)
 # ──────────────────────────────────────────────────────────────────────────────
 def _render_review_bin(db: DatabaseManager) -> None:
-    df = db.get_triage_detections("review", limit=48)
+    count = db.get_triage_count("review")
+    limit = 48
+    num_pages = max(1, (count + limit - 1) // limit)
 
     st.markdown(
         '<div class="triage-header triage-review">'
         '<span class="tier-badge tb-review">🔶 Confianza Media 40–85%</span>'
-        f'<span style="color:#505570;font-size:13px">{len(df)} detecciones pendientes de tu validación</span>'
+        f'<span style="color:#505570;font-size:13px">{count} detecciones pendientes de tu validación</span>'
         "</div>",
         unsafe_allow_html=True,
     )
+    
+    if count > limit:
+        page = st.number_input("Página (Dudosos):", 1, num_pages, 1, key="p_review")
+        offset = (page - 1) * limit
+    else:
+        offset = 0
+
+    df = db.get_triage_detections("review", limit=limit, offset=offset)
 
     if df.empty:
         st.success("🎉 ¡Sin dudas pendientes! La IA tiene todo controlado.")
@@ -118,17 +142,26 @@ def _render_review_bin(db: DatabaseManager) -> None:
 # Bandeja 3 — SIN CLASIFICAR (ni cara ni objeto detectados)
 # ──────────────────────────────────────────────────────────────────────────────
 def _render_unknown_bin(db: DatabaseManager) -> None:
-    # Usar la versión con thumbs para evitar lag
-    df_files = db.get_files_with_thumbs_df(
-        status="DONE", triage="unclassified", limit=80
-    )
+    count = db.get_files_count(status="DONE", triage="unclassified")
+    limit = 80
+    num_pages = max(1, (count + limit - 1) // limit)
 
     st.markdown(
         '<div class="triage-header triage-unk">'
         '<span class="tier-badge tb-unk">❓ Sin Clasificar</span>'
-        f'<span style="color:#505570;font-size:13px">{len(df_files)} archivos sin detecciones</span>'
+        f'<span style="color:#505570;font-size:13px">{count} archivos sin detecciones</span>'
         "</div>",
         unsafe_allow_html=True,
+    )
+    
+    if count > limit:
+        page = st.number_input("Página (Sin clasificar):", 1, num_pages, 1, key="p_unk")
+        offset = (page - 1) * limit
+    else:
+        offset = 0
+
+    df_files = db.get_files_with_thumbs_df(
+        status="DONE", triage="unclassified", limit=limit, offset=offset
     )
 
     if df_files.empty:
@@ -240,6 +273,37 @@ def _render_faceless_panel(db: DatabaseManager) -> None:
     ids = db.get_identities_for_file(file_id)
     if ids:
         st.markdown(f"**Identidades ya asignadas:** {', '.join(ids)}")
+    
+    st.divider()
+    
+    # Issue 17: Gestión Global de Identidades
+    st.markdown("#### ⚙️ Gestión Global de Identidades")
+    st.caption("Cambia el nombre de una persona en todo el sistema (Base de datos + Carpetas de resultados).")
+    
+    known = db.get_all_identity_names()
+    if not known:
+        st.info("No hay identidades registradas todavía.")
+    else:
+        c1, c2, c3 = st.columns([2, 2, 1])
+        with c1:
+            old_name = st.selectbox("Persona a renombrar:", known, key="rn_old")
+        with c2:
+            new_name = st.text_input("Nuevo nombre:", key="rn_new", placeholder="Ej: Juan Pérez")
+        with c3:
+            st.markdown("<br>", unsafe_allow_html=True)
+            if st.button("🔄 Renombrar", type="primary", use_container_width=True):
+                if not new_name.strip():
+                    st.error("Nombre inválido.")
+                else:
+                    # 1. Renombrar en DB
+                    if db.rename_identity(old_name, new_name):
+                        # 2. Mover carpetas físicas
+                        from core.symlink_manager import rename_identity_folders
+                        rename_identity_folders(old_name, new_name, db)
+                        st.success(f"✅ '{old_name}' es ahora '{new_name}'")
+                        st.rerun()
+                    else:
+                        st.error("Fallo al renombrar en la base de datos.")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -318,6 +382,9 @@ def _render_det_card(
                 "✅", key=f"cfm_{det_id}", help="Confirmar", use_container_width=True
             ):
                 db.verify_detection(det_id, name)
+                # Issue 8: Actualizar symlinks en disco inmediatamente
+                from core.symlink_manager import create_group_symlinks
+                create_group_symlinks(Path(filepath), [name], db, int(det["file_id"]))
                 st.toast(f"✅ {name} confirmado.")
                 st.rerun()
         with c2:
@@ -352,6 +419,9 @@ def _render_det_card(
                 n = new_name if sel_name == "➕ Nuevo nombre" else sel_name
                 if n and n != "(Sin cambios)":
                     db.verify_detection(det_id, n)
+                    # Issue 8: Actualizar symlinks en disco
+                    from core.symlink_manager import create_group_symlinks
+                    create_group_symlinks(Path(filepath), [n], db, int(det["file_id"]))
                     st.toast(f"✅ {n} guardado.")
                     st.rerun()
         with c2:
@@ -396,6 +466,12 @@ def _render_bulk_bar(db: DatabaseManager, df: pd.DataFrame) -> None:
             nombre = bk_new if bk_sel == "➕ Nuevo nombre" else bk_sel
             if nombre and nombre != "(Seleccionar…)":
                 db.bulk_verify(list(selected), nombre)
+                # Issue 8: Bulk update symlinks
+                from core.symlink_manager import create_group_symlinks
+                for did in selected:
+                    det_row = df[df["id"] == did].iloc[0]
+                    create_group_symlinks(Path(det_row["filepath"]), [nombre], db, int(det_row["file_id"]))
+                
                 st.session_state.triage_sel = set()
                 st.toast(f"✅ {n} detecciones → '{nombre}'")
                 st.rerun()
@@ -545,9 +621,69 @@ def _render_inspector(db: DatabaseManager) -> None:
                         nombre = nw if sel == "➕ Nuevo nombre" else sel
                         if nombre and nombre != "(Sin cambios)":
                             db.verify_detection(det["id"], nombre)
+                            # Issue 8: Actualizar symlinks
+                            from core.symlink_manager import create_group_symlinks
+                            create_group_symlinks(Path(filepath), [nombre], db, int(det["file_id"]))
                             st.toast(f"✅ {nombre}")
                             st.rerun()
                 with c2:
                     if st.button("Falso+", key=f"insp_fp_{det['id']}"):
                         db.mark_false_positive(det["id"])
+                        st.rerun()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Bandeja 5 — AGRUPAMIENTO IA (DBSCAN de caras desconocidas)
+# ──────────────────────────────────────────────────────────────────────────────
+def _render_clusters_tab(db: DatabaseManager) -> None:
+    from core.clustering import FaceClustering
+    
+    st.markdown(
+        '<div class="triage-header triage-review">'
+        '<span class="tier-badge tb-review">🪄 Agrupamiento IA</span>'
+        '<span style="color:#505570;font-size:13px">La IA busca caras parecidas entre tus "Desconocidos"</span>'
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    
+    c1, c2 = st.columns([1, 1])
+    with c1:
+        if st.button("🚀 Ejecutar Agrupamiento (DBSCAN)", use_container_width=True):
+            with st.spinner("Analizando rostros..."):
+                fc = FaceClustering(db)
+                n = fc.run()
+                st.success(f"¡He encontrado {n} grupos de personas!")
+                st.rerun()
+    with c2:
+        st.caption("Esto agrupa caras que pertenecen a la misma persona para que puedas etiquetarlas de golpe.")
+
+    clusters = db.get_clusters_with_samples()
+    if not clusters:
+        st.info("No hay grupos detectados. Pulsa el botón de arriba para analizar tus rostros desconocidos.")
+        return
+
+    for cl in clusters:
+        cid = cl["cluster_id"]
+        count = cl["count"]
+        with st.expander(f"Grupo #{cid} — {count} fotos detectadas", expanded=True):
+            cols = st.columns(len(cl["samples"]) + 1)
+            for i, sample in enumerate(cl["samples"]):
+                with cols[i]:
+                    if Path(sample["face_crop_path"]).exists():
+                        st.image(sample["face_crop_path"], use_container_width=True)
+            
+            with cols[-1]:
+                st.write("**¿Quién es?**")
+                known = db.get_all_identity_names()
+                opts = ["(Seleccionar…)"] + known + ["➕ Nuevo nombre"]
+                sel = st.selectbox("Asignar nombre:", opts, key=f"cl_sel_{cid}")
+                new_name = ""
+                if sel == "➕ Nuevo nombre":
+                    new_name = st.text_input("Nombre:", key=f"cl_txt_{cid}")
+                
+                if st.button(f"Confirmar {count} fotos", key=f"cl_btn_{cid}", type="primary"):
+                    final_name = new_name if sel == "➕ Nuevo nombre" else sel
+                    if final_name and final_name != "(Seleccionar…)":
+                        db.verify_cluster(cid, final_name)
+                        st.toast(f"✅ {count} fotos asignadas a {final_name}")
                         st.rerun()

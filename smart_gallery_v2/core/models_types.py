@@ -22,6 +22,11 @@ class ThumbnailResult:
 class ExifResult:
     exif_date: Optional[str] = None
     gps: Optional[tuple[float, float]] = None
+    camera_model: Optional[str] = None
+    lens_model: Optional[str] = None
+    iso: Optional[int] = None
+    f_number: Optional[float] = None
+    exposure: Optional[str] = None
     error: Optional[str] = None
 
 
@@ -31,6 +36,7 @@ class AIResult:
     triage_tier: str = "unclassified"
     identities: list[str] = field(default_factory=list)
     phash: Optional[str] = None
+    quality_score: float = 0.0
     error: Optional[str] = None
 
 

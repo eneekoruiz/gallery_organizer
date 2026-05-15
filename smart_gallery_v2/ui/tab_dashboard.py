@@ -9,6 +9,7 @@ import time
 from queue import Empty, Queue
 from typing import Optional
 
+import pandas as pd
 import streamlit as st
 
 from core.config import CONTROL_STATE_KEY, DIR_ENTRADA, EXT_TODAS, EXT_VIDEO
@@ -52,6 +53,11 @@ def _boot(db: DatabaseManager) -> None:
         )
         w.start()
         st.session_state.watcher = w
+    
+    # Issue 7: Identificador de sesión único para este tab
+    if "session_id" not in st.session_state:
+        import uuid
+        st.session_state.session_id = str(uuid.uuid4())
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -84,6 +90,19 @@ def render_dashboard(db: DatabaseManager) -> None:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
+    # ── Actividad Temporal ──────────────────────────────────────────────
+    st.markdown("#### 📈 Actividad Temporal")
+    df_time = db.get_timeline_df()
+    if not df_time.empty:
+        df_time["exif_date"] = pd.to_datetime(df_time["exif_date"])
+        # Agrupar por mes para el gráfico
+        df_month = df_time.resample('M', on='exif_date').sum().reset_index()
+        st.area_chart(df_month, x="exif_date", y="count", height=180, use_container_width=True)
+    else:
+        st.info("Sin datos temporales suficientes para mostrar actividad.")
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
     # ── Progreso ──────────────────────────────────────────────────────────
     pct = done / total if total else 0.0
     st.progress(pct, text=f"{done}/{total} archivos · {pct*100:.1f}%")
@@ -98,10 +117,15 @@ def render_dashboard(db: DatabaseManager) -> None:
     is_running = engine.is_running()
     is_paused = engine.is_paused()
 
-    ctrl = st.columns([2, 2, 2, 2, 3, 3])
+    ctrl = st.columns([2, 2, 2, 2, 3, 2, 2])
     with ctrl[0]:
         lbl = "▶ Reanudar" if is_paused else "▶ Iniciar"
-        if st.button(lbl, type="primary", disabled=is_running and not is_paused):
+        # Issue 7: Comprobar si otra sesión ya tiene el control
+        current_owner = db.get_control_state("engine_owner")
+        is_locked = current_owner and current_owner != st.session_state.session_id and is_running
+        
+        if st.button(lbl, type="primary", disabled=(is_running and not is_paused) or is_locked):
+            db.set_control_state("engine_owner", st.session_state.session_id)
             engine.start()
             try:
                 db.set_control_state(CONTROL_STATE_KEY, "running")
@@ -144,14 +168,23 @@ def render_dashboard(db: DatabaseManager) -> None:
             if st.button("👁 Activar Watchdog", type="primary"):
                 watcher.start()
                 st.rerun()
+    with ctrl[6]:
+        if st.button("🧹 Limpiar"):
+            res = db.cleanup_db()
+            st.toast(f"🧹 Limpieza: {res['removed_files']} archivos huérfanos eliminados.")
+            st.rerun()
 
     # ── Status badges ─────────────────────────────────────────────────────
     sb1, sb2 = st.columns(2)
     with sb1:
+        owner = db.get_control_state("engine_owner")
         if is_running and not is_paused:
-            st.success("🟢 Motor activo")
+            if owner == st.session_state.session_id:
+                st.success("🟢 Motor activo (esta pestaña)")
+            else:
+                st.warning(f"🟠 Motor activo (otra pestaña: {owner[:8] if owner else '?'}...)")
         elif is_paused:
-            st.warning("🟡 Motor en pausa — reanudar para continuar")
+            st.warning("🟡 Motor en pausa")
         else:
             st.info("⚪ Motor inactivo")
     with sb2:
@@ -182,11 +215,8 @@ def render_dashboard(db: DatabaseManager) -> None:
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def _sync(db: DatabaseManager, log_q: Queue) -> int:
     count = 0
-    for p in DIR_ENTRADA.rglob("*"):
-        if p.is_file() and p.suffix.lower() in EXT_TODAS:
-            mt = "video" if p.suffix.lower() in EXT_VIDEO else "image"
-            if db.upsert_file(str(p), p.name, mt):
-                count += 1
+    from core.scanner import scan_directory
+    count = scan_directory(db)
     log_q.put(("INFO", f"Sync: {count} archivos nuevos en cola."))
     return count
 

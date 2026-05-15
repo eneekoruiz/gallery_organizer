@@ -32,8 +32,8 @@ def scan_directory(db: DatabaseManager, path: Path = DIR_ENTRADA) -> int:
         if p.is_file() and p.suffix.lower() in EXT_TODAS:
             # Intentar añadir a la DB (INSERT OR IGNORE)
             media_type = "video" if p.suffix.lower() in EXT_VIDEO else "image"
-            file_id = db.upsert_file(str(p.resolve()), p.name, media_type=media_type)
-            if file_id:
+            file_id, is_new = db.upsert_file(str(p.resolve()), p.name, media_type=media_type)
+            if is_new:
                 count += 1
 
     log.info(f"Scan finalizado. {count} archivos en cola.")

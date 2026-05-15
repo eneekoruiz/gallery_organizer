@@ -25,7 +25,19 @@ python .\smart_gallery_v2\tools\maintenance_runner.py --dry-run
 python .\smart_gallery_v2\tools\maintenance_runner.py --log-file C:\logs\sg_maintenance.log
 ```
 
-Notas:
-- El script intenta detectar `python` en `PATH` si no se proporciona `-PythonExe`.
-- El task se crea como `NT AUTHORITY\SYSTEM` para que se ejecute sin sesión de usuario; ajusta si quieres usar un usuario específico.
-- Revisa los logs/outputs del task en el Visor de eventos o configura redirección a un archivo si lo prefieres.
+### Programación en Linux / macOS (Crontab)
+
+Para ejecutar la limpieza diariamente en sistemas Unix:
+
+1.  Abre el editor de crontab: `crontab -e`
+2.  Añade la siguiente línea para ejecutarlo a las 03:00 AM:
+    ```bash
+    0 3 * * * /usr/bin/python3 /ruta/a/gallery_organizer/smart_gallery_v2/tools/maintenance_runner.py >> /ruta/a/logs/maintenance.log 2>&1
+    ```
+
+---
+
+## Seguridad y Privilegios
+
+- **Windows**: La tarea se registra por defecto como `NT AUTHORITY\SYSTEM` para ejecución sin sesión. Se recomienda revisar si prefieres un usuario restringido con permisos de escritura en las carpetas de entrada/resultados.
+- **Linux**: No ejecutes el cron como `root`. Usa el crontab del usuario que gestiona las fotos.

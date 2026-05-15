@@ -46,7 +46,9 @@ def create_symlink(src_file: Path, identity: str) -> Optional[Path]:
     dest_dir = DIR_RESULT / _sanitize(identity)
     dest_dir.mkdir(parents=True, exist_ok=True)
 
-    link_path = dest_dir / src_file.name
+    import hashlib
+    h6 = hashlib.sha256(str(src_file.resolve()).encode()).hexdigest()[:6]
+    link_path = dest_dir / f"{src_file.stem}_{h6}{src_file.suffix}"
 
     # Evitar duplicados: si ya existe y apunta al mismo origen, ok
     if link_path.exists() or link_path.is_symlink():
@@ -126,26 +128,44 @@ def create_group_symlinks(
 ) -> list[Path]:
     """
     Para una foto grupal con N identidades, crea N symlinks (uno por persona).
-    Registra las rutas en FileIdentities de la DB.
-
-    Retorna la lista de symlinks creados con éxito.
+    Issue 18: Eliminar symlinks previos si estamos corrigiendo una identidad.
     """
     created: list[Path] = []
-
+    
+    # 1. Obtener symlinks actuales de este archivo en la DB
+    current_links = db.get_symlink_paths_for_file(file_id)
+    
+    # 2. Crear los nuevos
     for identity in identities:
         link_path = create_symlink(src_file, identity)
         if link_path:
             created.append(link_path)
+            # Registrar si es nuevo
             db.add_file_identity(
                 file_id=file_id,
                 identity=identity,
                 symlink_path=str(link_path),
                 is_faceless=False,
             )
+            # Issue 18: Eliminar de la lista de "limpieza" los que acabamos de (re)crear
+            if str(link_path) in current_links:
+                current_links.remove(str(link_path))
             log.info("Symlink: %s → Resultados/%s/", src_file.name, _sanitize(identity))
         else:
-            # Si el symlink falla, registrar igualmente la relación sin ruta de link
             db.add_file_identity(file_id=file_id, identity=identity)
+
+    # 3. Eliminar los symlinks huérfanos (los que estaban antes pero ya no en esta lista)
+    for old_sp in current_links:
+        if old_sp:
+            p = Path(old_sp)
+            if p.is_symlink() or p.exists():
+                try:
+                    p.unlink()
+                    # Limpiar de la DB
+                    db.delete_file_identity_by_symlink_path(old_sp)
+                    log.info("Symlink huérfano eliminado: %s", p)
+                except Exception:
+                    pass
 
     gc.collect()
     return created
@@ -169,6 +189,47 @@ def create_faceless_symlink(
         is_faceless=True,
     )
     return link_path
+
+
+def rename_identity_folders(old_name: str, new_name: str, db: "DatabaseManager") -> bool:
+    """
+    Issue 17: Mueve físicamente la carpeta de una identidad en Resultados.
+    Actualiza los registros de symlinks en la base de datos.
+    """
+    old_dir = DIR_RESULT / _sanitize(old_name)
+    new_dir = DIR_RESULT / _sanitize(new_name)
+    
+    if not old_dir.exists():
+        return False
+    
+    try:
+        # Si la carpeta destino ya existe, moveremos el contenido uno a uno
+        if new_dir.exists():
+            for f in old_dir.iterdir():
+                dest = new_dir / f.name
+                if dest.exists():
+                    dest.unlink()
+                f.rename(dest)
+                db.update_symlink_path_by_path(str(f.resolve()), str(dest.resolve()))
+            old_dir.rmdir()
+        else:
+            # Renombrar carpeta completa
+            old_dir.rename(new_dir)
+            # Actualizar DB (todas las rutas que empezaran por old_dir)
+            # Como los symlinks tienen la ruta completa, usamos un update parcial o iterativo
+            # Para simplificar, buscamos todos los links de esta identidad
+            with db._write() as c:
+                c.execute("SELECT id, symlink_path FROM FileIdentities WHERE identity=?", (new_name,))
+                rows = c.fetchall()
+                for r in rows:
+                    if r["symlink_path"]:
+                        old_p = Path(r["symlink_path"])
+                        new_p = new_dir / old_p.name
+                        c.execute("UPDATE FileIdentities SET symlink_path=? WHERE id=?", (str(new_p), r["id"]))
+        return True
+    except Exception as e:
+        log.error("Error renombrando carpeta de identidad %s -> %s: %s", old_name, new_name, e)
+        return False
 
 
 def remove_symlinks_for_file(file_id: int, db: "DatabaseManager") -> None:  # type: ignore[name-defined]

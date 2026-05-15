@@ -75,8 +75,9 @@ class ProcessingEngine:
         self._yolo: Optional[YOLOEngine] = None
         self._arcface: Optional[ArcFaceEngine] = None
         self._clip: Optional[CLIPEngine] = None
-        self._faiss: Optional[FaissIndex] = None
         self._video: Optional[VideoKeyframeExtractor] = None
+        self._faiss_count = 0  # Para detectar cambios
+        self._thumb_lock = threading.Lock()
 
     def start(self) -> None:
         if self.is_running():
@@ -128,6 +129,8 @@ class ProcessingEngine:
             # Batch fetching (Phase 4)
             batch = self._db.next_batch_pending(limit=BATCH_SIZE)
             if not batch:
+                # Issue 2: Recargar FAISS si ha habido aprendizaje en el HITL
+                self._check_reload_faiss()
                 self._emit("DONE", "✅ Cola vacía.")
                 time.sleep(2)  # Wait for new files
                 continue
@@ -234,54 +237,70 @@ class ProcessingEngine:
 
     # ── Steps ─────────────────────────────────────────────────────────────
 
-    def _check_stability(self, filepath: str, wait_ms: int = 200) -> bool:
+    def _check_stability(self, filepath: str, wait_ms: int = 400) -> bool:
         """
         Verifica que el archivo exista, tenga extensión válida y su tamaño sea estable.
+        Issue 5: Mayor rigor en la estabilidad (comprobación doble).
         """
         from core.config import EXT_TODAS
 
         p = Path(filepath)
         if not p.exists():
-            log.warning(f"Archivo no existe: {filepath}")
             return False
 
         if p.suffix.lower() not in EXT_TODAS:
-            log.warning(f"Extensión no soportada: {p.suffix}")
-            return False
-
-        # Verificar bloqueo (intentar abrir para lectura)
-        try:
-            with open(filepath, "rb"):
-                pass
-        except OSError:
-            log.warning(f"Archivo bloqueado o sin permisos: {filepath}")
             return False
 
         # Estabilidad de tamaño
         try:
             s1 = p.stat().st_size
-            time.sleep(wait_ms / 1000.0)
+            time.sleep(wait_ms / 2000.0) # Primer respiro
             s2 = p.stat().st_size
-            if s1 != s2:
-                log.info(f"Archivo inestable (escribiendo...): {filepath}")
+            if s1 != s2 or s1 == 0:
                 return False
-        except OSError:
+            
+            time.sleep(wait_ms / 2000.0) # Segundo respiro para archivos grandes
+            s3 = p.stat().st_size
+            if s2 != s3:
+                return False
+                
+            # Verificar bloqueo (intentar abrir para lectura)
+            with open(filepath, "rb") as f:
+                f.read(1024) # Leer un poco para asegurar que no hay lock de escritura
+        except (OSError, PermissionError):
             return False
 
         return True
 
     def thumbnail(self, filepath: str) -> ThumbnailResult:
         try:
-            path = _make_thumb(filepath)
+            # Issue 15: Evitar carrera entre hilos al generar miniaturas
+            with self._thumb_lock:
+                path = _make_thumb(filepath)
             return ThumbnailResult(thumb_path=path)
+        except (OSError, IOError) as e:
+            log.warning(f"[{file_id}] Thumbnail save failed: {e}")
+            return ThumbnailResult(error=str(e))
         except Exception as e:
             return ThumbnailResult(error=str(e))
 
     def exif(self, filepath: str) -> ExifResult:
         try:
             data = _read_exif(filepath)
-            return ExifResult(exif_date=data["exif_date"], gps=data["gps"])
+            return ExifResult(
+                exif_date=data["exif_date"],
+                gps=data["gps"],
+                camera_model=data["camera_model"],
+                lens_model=data["lens_model"],
+                iso=data["iso"],
+                f_number=data["f_number"],
+                exposure=data["exposure"],
+            )
+        except (OSError, IOError) as e:
+            log.warning(f"Exif read failed for {filepath}: {e}")
+            return ExifResult(error=str(e))
         except Exception as e:
+            log.exception(f"Unexpected Exif error for {filepath}: {e}")
             return ExifResult(error=str(e))
 
     def dedupe(self, filepath: str, file_id: int) -> DedupeResult:
@@ -297,7 +316,11 @@ class ProcessingEngine:
             if matches:
                 return DedupeResult(is_duplicate=True, original_id=matches[0])
             return DedupeResult(is_duplicate=False)
+        except (OSError, IOError) as e:
+            log.warning(f"Dedupe hash calculation failed: {e}")
+            return DedupeResult(error=str(e))
         except Exception as e:
+            log.exception(f"Unexpected dedupe error: {e}")
             return DedupeResult(error=str(e))
 
     def ai(self, filepath: str, file_id: int, media_type: str = "image") -> AIResult:
@@ -307,15 +330,16 @@ class ProcessingEngine:
 
     def _step_ai_image(self, filepath: str, file_id: int) -> AIResult:
         try:
-            stream = np.fromfile(filepath, dtype=np.uint8)
-            img = cv2.imdecode(stream, cv2.IMREAD_COLOR)
-            if img is None:
-                return AIResult(error="Decodificación fallida.")
-            rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-
-            # phash para persistencia
-            with _PILImage.open(filepath) as im:
-                ph = str(imagehash.phash(im))
+            # Issue 26: Soporte EXIF Orientation (Auto-rotación)
+            # Usamos PIL para leer y corregir antes de pasar a CV2
+            from PIL import Image, ImageOps
+            with Image.open(filepath) as im_pil:
+                im_pil = ImageOps.exif_transpose(im_pil)
+                # phash sobre la imagen ya rotada correctamente
+                ph = str(imagehash.phash(im_pil))
+                # Convertir a CV2 (BGR) y RGB para el pipeline
+                rgb = np.array(im_pil.convert("RGB"))
+                img = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
 
             ai_res = self._process_image(img, rgb, filepath, file_id, phash=ph)
             return ai_res
@@ -338,13 +362,18 @@ class ProcessingEngine:
                 if ai_res_kf.error:
                     continue
                 all_tags.update(ai_res_kf.tags)
-                all_ids.update(ai_res_kf.identities)
+                
+                # Issue 10: Deduplicar identidades por vídeo (no añadir la misma cara 10 veces)
+                for iden in ai_res_kf.identities:
+                    if iden not in all_ids:
+                        all_ids.add(iden)
+                
                 if tier_rank.get(ai_res_kf.triage_tier, 0) > tier_rank.get(
                     best_tier, 0
                 ):
                     best_tier = ai_res_kf.triage_tier
             return AIResult(
-                tags=list(all_tags), triage_tier=best_tier, identities=list(all_ids)
+                tags=sorted(list(all_tags)), triage_tier=best_tier, identities=sorted(list(all_ids))
             )
         except Exception as e:
             log.exception(f"Fallo en _step_ai_video: {e}")
@@ -361,6 +390,12 @@ class ProcessingEngine:
             gps=exif.gps,
             thumb_path=thumb,
             phash=ai.phash,
+            camera_model=exif.camera_model,
+            lens_model=exif.lens_model,
+            iso=exif.iso,
+            f_number=exif.f_number,
+            exposure=exif.exposure,
+            quality_score=ai.quality_score,
         )
 
     def _step_persist_duplicate(
@@ -400,6 +435,31 @@ class ProcessingEngine:
         names, embs = self._db.load_known_faces()
         self._faiss = FaissIndex()
         self._faiss.rebuild(names, embs)
+        self._faiss_count = len(names)
+
+    def _check_reload_faiss(self) -> None:
+        """Issue 2: Recarga el índice si hay nuevas caras en la DB."""
+        with self._db._read() as c:
+            count = c.execute("SELECT COUNT(*) FROM KnownFaces WHERE embedding IS NOT NULL").fetchone()[0]
+        if count != self._faiss_count:
+            log.info(f"Reloading FAISS: {self._faiss_count} -> {count} faces")
+            self._reload_faiss()
+
+    def _is_high_quality_face(self, crop: np.ndarray) -> bool:
+        """Issue 19: Determinar si un recorte de cara es apto para el índice de conocimiento."""
+        try:
+            h, w = crop.shape[:2]
+            if h < 80 or w < 80:
+                return False
+            gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+            # Nitidez vía Laplaciano
+            variance = cv2.Laplacian(gray, cv2.CV_64F).var()
+            return variance > 80  # Umbral empírico para caras "nítidas"
+        except (cv2.error, ValueError) as e:
+            log.warning(f"Quality check failed for crop: {e}")
+        except Exception as e:
+            log.exception(f"Unexpected quality check error: {e}")
+        return False
 
     def _process_image(
         self,
@@ -427,7 +487,29 @@ class ProcessingEngine:
             if self._arcface and self._faiss:
                 faces = self._arcface.get_faces(img_rgb)
                 for bbox, emb, det_conf in faces:
+                    # Issue 19: Extraer crop temporal para check de calidad
+                    # bbox: [x1, y1, x2, y2]
+                    try:
+                        face_crop = img_bgr[int(bbox[1]):int(bbox[3]), int(bbox[0]):int(bbox[2])]
+                        is_high_q = self._is_high_quality_face(face_crop)
+                    except (cv2.error, ValueError, IndexError) as e:
+                        log.warning(f"Face crop extraction failed for bbox {bbox}: {e}")
+                        is_high_q = False
+                    except Exception as e:
+                        log.debug(f"Unexpected error in face quality check: {e}")
+                        is_high_q = False
+
                     name, faiss_conf, tier = self._faiss.search(emb)
+                    
+                    # Calcular quality_score basado en la nitidez de la cara (escalado 0-1)
+                    # variance > 80 es nítido, variance < 20 es muy borroso
+                    try:
+                        gray = cv2.cvtColor(face_crop, cv2.COLOR_BGR2GRAY)
+                        var = cv2.Laplacian(gray, cv2.CV_64F).var()
+                        q_score = min(1.0, var / 150.0) # 150 es "perfecto"
+                    except:
+                        q_score = 0.5
+                    
                     if name != "Desconocido":
                         identities.add(name)
                         tags.add(name)
@@ -435,6 +517,9 @@ class ProcessingEngine:
                             best_tier = tier
 
                     crop_path = self._save_crop(img_bgr, bbox)
+                    # El worker NO inserta en KnownFaces directamente, 
+                    # pero marcamos la calidad en la DB si fuera necesario.
+                    # Por ahora, la lógica de filtrado irá en verify_detection.
                     self._db.add_detection(
                         file_id=file_id,
                         embedding=emb,
@@ -443,7 +528,14 @@ class ProcessingEngine:
                         confidence=faiss_conf if name != "Desconocido" else det_conf,
                         assigned_name=name,
                         triage_tier=tier,
+                        is_high_quality=is_high_q,
                     )
+
+            # Global quality score (media de las caras o 0.5)
+            # Para simplificar, usamos la varianza de la imagen completa
+            gray_full = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+            full_var = cv2.Laplacian(gray_full, cv2.CV_64F).var()
+            final_q_score = min(1.0, full_var / 200.0)
 
             # 3. CLIP
             if self._clip:
@@ -483,6 +575,7 @@ class ProcessingEngine:
                 triage_tier=best_tier,
                 identities=sorted(list(identities)),
                 phash=phash,
+                quality_score=final_q_score,
             )
 
         except Exception as e:
@@ -510,13 +603,25 @@ class ProcessingEngine:
 
 
 def _read_exif(filepath: str) -> dict[str, Any]:
-    res = {"exif_date": None, "gps": None}
+    res = {
+        "exif_date": None,
+        "gps": None,
+        "camera_model": None,
+        "lens_model": None,
+        "iso": None,
+        "f_number": None,
+        "exposure": None,
+    }
     try:
         with Image.open(filepath) as img:
             exif = img._getexif()
             if not exif:
                 return res
+
+            # Convert tid to name map
             tag_map = {v: k for k, v in ExifTags.TAGS.items()}
+
+            # 1. Date
             for name in ("DateTimeOriginal", "DateTime"):
                 tid = tag_map.get(name)
                 if tid in exif:
@@ -524,8 +629,28 @@ def _read_exif(filepath: str) -> dict[str, Any]:
                         dt = datetime.strptime(exif[tid], "%Y:%m:%d %H:%M:%S")
                         res["exif_date"] = dt.strftime("%Y-%m-%dT%H:%M:%S")
                         break
-                    except Exception as e:
-                        log.debug(f"EXIF date parse fail for {filepath}: {e}")
+                    except Exception:
+                        continue
+
+            # 2. Camera & Lens
+            res["camera_model"] = exif.get(tag_map.get("Model"))
+            res["lens_model"] = exif.get(tag_map.get("LensModel"))
+            res["iso"] = exif.get(tag_map.get("ISOSpeedRatings"))
+            
+            f_num = exif.get(tag_map.get("FNumber"))
+            if f_num:
+                res["f_number"] = float(f_num[0] / f_num[1]) if isinstance(f_num, tuple) else float(f_num)
+            
+            exp = exif.get(tag_map.get("ExposureTime"))
+            if exp:
+                if isinstance(exp, tuple):
+                    res["exposure"] = f"{exp[0]}/{exp[1]}"
+                else:
+                    res["exposure"] = str(exp)
+
+            # 3. GPS (Simplificado)
+            # ... GPS logic usually requires helper for deg/min/sec ...
+            # Por ahora mantenemos el valor crudo o None si no queremos complicar
     except Exception as e:
         log.warning(f"EXIF read fail for {filepath}: {e}")
     return res
@@ -542,7 +667,8 @@ def _make_thumb(filepath: str) -> Optional[str]:
                 img = img.convert("RGB")
             img.save(str(dest), format="WEBP", quality=80)
         return str(dest)
-    except Exception:
+    except Exception as e:
+        log.error("Generic embedding error: %s", e)
         return None
 
 

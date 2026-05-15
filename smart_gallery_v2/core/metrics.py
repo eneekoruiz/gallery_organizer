@@ -1,4 +1,4 @@
-"""Prometheus metrics for Smart Gallery maintenance and operations.
+"""Local metrics for Smart Gallery maintenance and operations.
 
 Tracks:
 - Files processed (total, successes, failures)
@@ -14,11 +14,9 @@ from contextlib import contextmanager
 from functools import wraps
 from typing import Any, Callable
 
-# Simplified metrics (dict-based instead of full Prometheus client for minimal deps)
-
 
 class Metrics:
-    """Simple metrics collector for Smart Gallery."""
+    """Simple internal metrics collector for Smart Gallery."""
 
     _instance: Metrics | None = None
 

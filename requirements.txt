@@ -1,15 +1,31 @@
+# Core
 numpy
 pandas
 opencv-python-headless
 Pillow
 imagehash
+scipy
+scikit-learn
+
+# UI
 streamlit
-streamlit-autorefresh
+
+# AI Engines
 onnxruntime
+ultralytics
+deepface
+sentence-transformers
+faiss-cpu
+easyocr
+torch
+torchvision
+
+# System & Utils
+watchdog
 tqdm
 pytesseract
-faiss-cpu
-scipy
+
+# Dev/Test
 pytest
 black
 ruff

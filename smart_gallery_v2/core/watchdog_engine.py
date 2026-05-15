@@ -156,11 +156,17 @@ def make_db_callback(db: "DatabaseManager") -> DbCallback:  # type: ignore[name-
     def _cb(event_type: str, src: str, dest: str) -> None:
         db.log_fs_event(event_type, src, dest)
         if event_type == "created":
-            p = Path(src)
             if _is_result_path(src):
                 return
+            
+            p = Path(src)
+            # Issue 6: Evitar re-encolar archivos ya procesados o en curso
+            existing = db.get_file_by_path(src)
+            if existing and existing["status"] in ("DONE", "PROCESSING"):
+                return
+
             # Debounce: esperar estabilidad inicial
-            time.sleep(0.5)
+            time.sleep(0.8)
             db.upsert_file(
                 src,
                 p.name,

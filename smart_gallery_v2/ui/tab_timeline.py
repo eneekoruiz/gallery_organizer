@@ -81,15 +81,30 @@ def _render_timeline(db: DatabaseManager) -> None:
 
 
 def _period_thumbs(db: DatabaseManager, d_from, d_to) -> None:
-    # Usar la versión con thumbs para evitar lag
-    df = db.get_files_with_thumbs_df(limit=60)
-    df["exif_date"] = pd.to_datetime(df["exif_date"], errors="coerce")
-    df = df[(df["exif_date"].dt.date >= d_from) & (df["exif_date"].dt.date <= d_to)]
+    # Convertir a string para la query SQL
+    df_count = db.get_timeline_df()
+    mask = (pd.to_datetime(df_count["exif_date"]).dt.date >= d_from) & (pd.to_datetime(df_count["exif_date"]).dt.date <= d_to)
+    count = int(df_count.loc[mask, "count"].sum())
+    
+    limit = 60
+    num_pages = max(1, (count + limit - 1) // limit)
+    
+    if count > limit:
+        page = st.number_input("Página (Período):", 1, num_pages, 1, key="p_timeline")
+        offset = (page - 1) * limit
+    else:
+        offset = 0
+
+    df = db.get_files_by_date_range(
+        d_from.isoformat(), d_to.isoformat(), limit=limit, offset=offset
+    )
+    
     if df.empty:
         st.info("Sin fotos en este período.")
         return
+        
     cols_n = 6
-    for chunk in [df.iloc[i : i + cols_n] for i in range(0, min(len(df), 48), cols_n)]:
+    for chunk in [df.iloc[i : i + cols_n] for i in range(0, len(df), cols_n)]:
         cols = st.columns(cols_n)
         for col, (_, rec) in zip(cols, chunk.iterrows()):
             with col:

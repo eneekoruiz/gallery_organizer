@@ -225,7 +225,8 @@ class ArcFaceEngine:
                 detector_backend="retinaface",
                 enforce_detection=False,
             )
-        except Exception:
+        except Exception as e:
+            log.error("DeepFace face extraction failed: %s", e)
             return []
         out = []
         for f in faces:
@@ -277,7 +278,8 @@ class ArcFaceEngine:
             blob = img.transpose(2, 0, 1)[np.newaxis]
             out = self._ort.run(None, {self._inp: blob})[0][0]
             return _norm(out.astype(np.float32))
-        except Exception:
+        except Exception as e:
+            log.error("DeepFace embedding failed: %s", e)
             return None
 
 
@@ -326,7 +328,8 @@ class CLIPEngine:
             self._prep = prep
             self._tokenizer = open_clip.get_tokenizer("ViT-B-32")
             log.info("CLIPEngine: open_clip nativo")
-        except Exception:
+        except Exception as e:
+            log.error("CLIPEngine open_clip load failed: %s", e)
             try:
                 from transformers import CLIPModel, CLIPProcessor  # type: ignore
 
@@ -399,7 +402,8 @@ class CLIPEngine:
                 with torch.no_grad():
                     f = self._native.get_image_features(**inp)
                 return _norm(f.squeeze().numpy().astype(np.float32))
-        except Exception:
+        except Exception as e:
+            log.error("CLIP native embedding failed: %s", e)
             return None
 
     def embed_text(self, text: str) -> Optional[np.ndarray]:
@@ -419,7 +423,8 @@ class CLIPEngine:
                     with torch.no_grad():
                         f = self._native.get_text_features(**inp)
                     return _norm(f.squeeze().numpy().astype(np.float32))
-        except Exception:
+        except Exception as e:
+            log.error("CLIP text embedding failed: %s", e)
             return None
         return None
 
@@ -451,15 +456,20 @@ class FaissIndex:
         """
         if self._index.ntotal == 0:
             return "Desconocido", 999.0, "unclassified"
-        q = query.astype(np.float32).reshape(1, -1)
-        distances, indices = self._index.search(q, 1)
-        dist = float(distances[0][0])
+        try:
+            q = query.astype(np.float32).reshape(1, -1)
+            distances, indices = self._index.search(q, 1)
+            dist = float(distances[0][0])
+        except Exception as e:
+            log.error("FAISS search failed: %s", e)
+            return "Desconocido", 0.0, "unclassified"
 
         if dist > FAISS_THRESHOLD:
             return "Desconocido", dist, "unclassified"
 
-        # Convertir distancia L2 a confidence normalizado [0,1]
-        confidence = max(0.0, 1.0 - dist / FAISS_THRESHOLD)
+        # Convertir distancia L2 a confidence (Similitud Coseno aproximada para vectores normalizados)
+        # sim = 1 - (dist^2 / 2)
+        confidence = max(0.0, 1.0 - (dist**2 / 2.0))
         tier = _conf_to_tier(confidence)
         name = self._names[int(indices[0][0])]
         return name, confidence, tier

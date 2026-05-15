@@ -6,6 +6,7 @@ WAL · Thread-Safe · Triage · Faceless Tags · Group Symlinks · Undo/Redo
 from __future__ import annotations
 
 import gc
+import hashlib
 import json
 import logging
 import sqlite3
@@ -28,9 +29,11 @@ log = logging.getLogger(__name__)
 _DDL = """
 PRAGMA journal_mode=WAL;
 PRAGMA synchronous=NORMAL;
-PRAGMA cache_size=-32000;
+PRAGMA cache_size=-64000;  -- 64MB cache
+PRAGMA mmap_size=268435456; -- 256MB mmap
 PRAGMA temp_store=MEMORY;
 PRAGMA foreign_keys=ON;
+PRAGMA page_size=4096;
 
 -- ── IDENTIDADES VERIFICADAS ──────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS KnownFaces (
@@ -57,9 +60,13 @@ CREATE TABLE IF NOT EXISTS FileQueue (
     phash        TEXT,                               -- perceptual hash hex
     exif_date    TEXT,
     gps_lat      REAL,
-    gps_lon      REAL,
-    thumb_path   TEXT,
     hash_sha256  TEXT,
+    camera_model TEXT,
+    lens_model   TEXT,
+    iso          INTEGER,
+    f_number     REAL,
+    exposure     TEXT,
+    quality_score REAL    NOT NULL DEFAULT 0.0,
     last_updated TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 CREATE INDEX IF NOT EXISTS idx_fq_status  ON FileQueue(status);
@@ -81,6 +88,8 @@ CREATE TABLE IF NOT EXISTS Detections (
     is_faceless      BOOLEAN NOT NULL DEFAULT 0,
     is_false_positive BOOLEAN NOT NULL DEFAULT 0,
     is_verified      BOOLEAN NOT NULL DEFAULT 0,
+    is_high_quality  BOOLEAN NOT NULL DEFAULT 1,
+    cluster_id       INTEGER,
     created_at       TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 CREATE INDEX IF NOT EXISTS idx_det_file     ON Detections(file_id);
@@ -211,6 +220,26 @@ class DatabaseManager:
             log.info("Migration: Adding phash column to FileQueue.")
             cursor.execute("ALTER TABLE FileQueue ADD COLUMN phash TEXT")
 
+        # Migración Phase 5: Nuevas columnas EXIF y Calidad
+        new_fq_cols = {
+            "camera_model": "TEXT",
+            "lens_model": "TEXT",
+            "iso": "INTEGER",
+            "f_number": "REAL",
+            "exposure": "TEXT",
+            "quality_score": "REAL NOT NULL DEFAULT 0.0"
+        }
+        for col, ctype in new_fq_cols.items():
+            if col not in cols:
+                log.info(f"Migration: Adding {col} to FileQueue.")
+                cursor.execute(f"ALTER TABLE FileQueue ADD COLUMN {col} {ctype}")
+
+        cursor.execute("PRAGMA table_info(Detections)")
+        d_cols = [r[1] for r in cursor.fetchall()]
+        if "cluster_id" not in d_cols:
+            log.info("Migration: Adding cluster_id to Detections.")
+            cursor.execute("ALTER TABLE Detections ADD COLUMN cluster_id INTEGER")
+
         log.info(f"Database schema version: {version}")
 
     # ── Conexión ──────────────────────────────────────────────────────────
@@ -269,21 +298,34 @@ class DatabaseManager:
         filename: str,
         media_type: str = "image",
         phash: Optional[str] = None,
-    ) -> Optional[int]:
+    ) -> tuple[Optional[int], bool]:
+        # Issue 11: Calcular SHA256 para deduplicación real
+        sha256 = ""
+        try:
+            h = hashlib.sha256()
+            with open(filepath, "rb") as f:
+                while chunk := f.read(8192):
+                    h.update(chunk)
+            sha256 = h.hexdigest()
+        except Exception as e:
+            log.debug(f"SHA256 calculation skipped for {filepath}: {e}")
+
         try:
             with self._write() as c:
+                # Si ya existe por SHA256 y filepath, ignorar.
                 c.execute(
-                    "INSERT OR IGNORE INTO FileQueue (filepath,filename,media_type,phash,last_updated) "
-                    "VALUES (?,?,?,?,?)",
-                    (filepath, filename, media_type, phash, _now()),
+                    "INSERT OR IGNORE INTO FileQueue (filepath,filename,media_type,phash,hash_sha256,last_updated) "
+                    "VALUES (?,?,?,?,?,?)",
+                    (filepath, filename, media_type, phash, sha256, _now()),
                 )
                 if c.lastrowid:
-                    return c.lastrowid
+                    return c.lastrowid, True
+                
                 c.execute("SELECT id FROM FileQueue WHERE filepath=?", (filepath,))
                 row = c.fetchone()
-                return row["id"] if row else None
+                return (row["id"] if row else None), False
         except sqlite3.Error:
-            return None
+            return None, False
 
     def set_processing(self, file_id: int) -> None:
         with self._write() as c:
@@ -301,11 +343,19 @@ class DatabaseManager:
         gps: Optional[tuple[float, float]] = None,
         thumb_path: Optional[str] = None,
         phash: Optional[str] = None,
+        camera_model: Optional[str] = None,
+        lens_model: Optional[str] = None,
+        iso: Optional[int] = None,
+        f_number: Optional[float] = None,
+        exposure: Optional[str] = None,
+        quality_score: float = 0.0,
     ) -> None:
         with self._write() as c:
             c.execute(
                 "UPDATE FileQueue SET status='DONE', triage_tier=?, tags=?, "
-                "exif_date=?, gps_lat=?, gps_lon=?, thumb_path=?, phash=?, last_updated=? WHERE id=?",
+                "exif_date=?, gps_lat=?, gps_lon=?, thumb_path=?, phash=?, "
+                "camera_model=?, lens_model=?, iso=?, f_number=?, exposure=?, "
+                "quality_score=?, last_updated=? WHERE id=?",
                 (
                     triage_tier,
                     json.dumps(tags, ensure_ascii=False),
@@ -314,6 +364,12 @@ class DatabaseManager:
                     gps[1] if gps else None,
                     thumb_path,
                     phash,
+                    camera_model,
+                    lens_model,
+                    iso,
+                    f_number,
+                    exposure,
+                    quality_score,
                     _now(),
                     file_id,
                 ),
@@ -349,7 +405,7 @@ class DatabaseManager:
             current_retries = row_retries["retries"] if row_retries else 0
 
             # Decidir si pasar a ERROR final o dejar en PENDING para reintento automático
-            # Limite de 3 reintentos antes de marcar como ERROR permanente
+            # Issue 12: Usar lógica robusta. MAX_RETRIES suele ser 3.
             status = "ERROR" if current_retries >= 3 else "PENDING"
             c.execute(
                 "UPDATE FileQueue SET status=?, last_updated=? WHERE id=?",
@@ -443,8 +499,8 @@ class DatabaseManager:
                 try:
                     if p.exists() or p.is_symlink():
                         p.unlink()
-                except Exception:
-                    log.debug("Could not unlink broken symlink %s", link)
+                except Exception as e:
+                    log.error("Could not unlink broken symlink %s: %s", link, e)
             try:
                 with self._write() as c:
                     c.execute("DELETE FROM FileIdentities WHERE id=?", (row["id"],))
@@ -583,7 +639,11 @@ class DatabaseManager:
         return df
 
     def get_files_count(
-        self, status: Optional[str] = None, triage: Optional[str] = None
+        self, 
+        status: Optional[str] = None, 
+        triage: Optional[str] = None,
+        camera: Optional[str] = None,
+        lens: Optional[str] = None,
     ) -> int:
         clauses: list[str] = []
         params: list[Any] = []
@@ -593,14 +653,23 @@ class DatabaseManager:
         if triage:
             clauses.append("triage_tier=?")
             params.append(triage)
+        if camera:
+            clauses.append("camera_model=?")
+            params.append(camera)
+        if lens:
+            clauses.append("lens_model=?")
+            params.append(lens)
         where = "WHERE " + " AND ".join(clauses) if clauses else ""
         sql = f"SELECT COUNT(*) FROM FileQueue {where}"
         with self._read() as c:
             return c.execute(sql, params).fetchone()[0]
+
     def get_files_with_thumbs_df(
         self,
         status: Optional[str] = None,
         triage: Optional[str] = None,
+        camera: Optional[str] = None,
+        lens: Optional[str] = None,
         limit: int = 200,
         offset: int = 0,
     ) -> pd.DataFrame:
@@ -613,6 +682,13 @@ class DatabaseManager:
         if triage:
             clauses.append("f.triage_tier=?")
             params.append(triage)
+        if camera:
+            clauses.append("f.camera_model=?")
+            params.append(camera)
+        if lens:
+            clauses.append("f.lens_model=?")
+            params.append(lens)
+            
         where = "WHERE " + " AND ".join(clauses) if clauses else ""
         sql = f"""
             SELECT f.*, t.thumb_path as cached_thumb 
@@ -627,6 +703,16 @@ class DatabaseManager:
         df = pd.read_sql_query(sql, conn, params=params)
         conn.close()
         return df
+
+    def get_unique_metadata(self) -> dict[str, list[str]]:
+        """Retorna valores únicos para filtros (Cámaras, Lentes)."""
+        with self._read() as c:
+            cameras = c.execute("SELECT DISTINCT camera_model FROM FileQueue WHERE camera_model IS NOT NULL").fetchall()
+            lenses = c.execute("SELECT DISTINCT lens_model FROM FileQueue WHERE lens_model IS NOT NULL").fetchall()
+            return {
+                "cameras": [r[0] for r in cameras],
+                "lenses": [r[0] for r in lenses]
+            }
 
     def get_duplicate_groups(self) -> list[pd.DataFrame]:
         """Agrupa archivos que tienen el mismo phash."""
@@ -719,6 +805,22 @@ class DatabaseManager:
         conn.close()
         return df
 
+    def get_files_by_date_range(
+        self, d_from: str, d_to: str, limit: int = 100, offset: int = 0
+    ) -> pd.DataFrame:
+        sql = """
+            SELECT f.*, t.thumb_path as cached_thumb 
+            FROM FileQueue f
+            LEFT JOIN ThumbnailCache t ON f.id = t.file_id
+            WHERE substr(f.exif_date,1,10) >= ? AND substr(f.exif_date,1,10) <= ?
+            ORDER BY f.exif_date DESC, f.id DESC
+            LIMIT ? OFFSET ?
+        """
+        conn = self._connect()
+        df = pd.read_sql_query(sql, conn, params=[d_from, d_to, limit, offset])
+        conn.close()
+        return df
+
     # ── KnownFaces ────────────────────────────────────────────────────────
     def add_known_face(
         self,
@@ -765,6 +867,7 @@ class DatabaseManager:
         assigned_name: str = "Desconocido",
         triage_tier: str = "unclassified",
         is_faceless: bool = False,
+        is_high_quality: bool = True,
     ) -> int:
         emb_bytes = (
             embedding.astype(np.float32).tobytes() if embedding is not None else None
@@ -773,7 +876,7 @@ class DatabaseManager:
             c.execute(
                 "INSERT INTO Detections "
                 "(file_id,face_crop_path,bbox_json,assigned_name,confidence,"
-                "triage_tier,embedding,is_faceless) VALUES (?,?,?,?,?,?,?,?)",
+                "triage_tier,embedding,is_faceless,is_high_quality) VALUES (?,?,?,?,?,?,?,?,?)",
                 (
                     file_id,
                     face_crop_path,
@@ -783,32 +886,45 @@ class DatabaseManager:
                     triage_tier,
                     emb_bytes,
                     int(is_faceless),
+                    int(is_high_quality),
                 ),
             )
             return c.lastrowid  # type: ignore[return-value]
+    
+    def get_triage_count(self, tier: str) -> int:
+        with self._read() as c:
+            return c.execute(
+                "SELECT COUNT(*) FROM Detections "
+                "WHERE triage_tier=? AND is_verified=0 AND is_false_positive=0",
+                (tier,),
+            ).fetchone()[0]
 
-    def get_triage_detections(self, tier: str, limit: int = 48) -> pd.DataFrame:
+    def get_triage_detections(
+        self, tier: str, limit: int = 48, offset: int = 0
+    ) -> pd.DataFrame:
         conn = self._connect()
         df = pd.read_sql_query(
             "SELECT d.*,f.filepath,f.filename FROM Detections d "
             "JOIN FileQueue f ON d.file_id=f.id "
             "WHERE d.triage_tier=? AND d.is_verified=0 AND d.is_false_positive=0 "
-            "ORDER BY d.confidence DESC LIMIT ?",
+            "ORDER BY d.confidence DESC LIMIT ? OFFSET ?",
             conn,
-            params=[tier, limit],
+            params=[tier, limit, offset],
         )
         conn.close()
         return df
 
-    def get_unverified_detections(self, limit: int = 48) -> pd.DataFrame:
+    def get_unverified_detections(
+        self, limit: int = 48, offset: int = 0
+    ) -> pd.DataFrame:
         conn = self._connect()
         df = pd.read_sql_query(
             "SELECT d.*,f.filepath,f.filename FROM Detections d "
             "JOIN FileQueue f ON d.file_id=f.id "
             "WHERE d.is_verified=0 AND d.is_false_positive=0 "
-            "AND d.assigned_name='Desconocido' ORDER BY d.id DESC LIMIT ?",
+            "AND d.assigned_name='Desconocido' ORDER BY d.id DESC LIMIT ? OFFSET ?",
             conn,
-            params=[limit],
+            params=[limit, offset],
         )
         conn.close()
         return df
@@ -816,23 +932,37 @@ class DatabaseManager:
     def verify_detection(self, det_id: int, name: str) -> None:
         _before = self._snap_detections([det_id])
         emb_bytes: Optional[bytes] = None
+        file_id: int = 0
+        is_high_q: bool = True
         with self._read() as c:
-            c.execute("SELECT embedding FROM Detections WHERE id=?", (det_id,))
-            row = c.fetchone()
+            row = c.execute("SELECT embedding, file_id, is_high_quality FROM Detections WHERE id=?", (det_id,)).fetchone()
             if row:
                 emb_bytes = row["embedding"]
+                file_id = row["file_id"]
+                is_high_q = bool(row["is_high_quality"])
+        
+        identity_id = None
         with self._write() as c:
             c.execute(
                 "UPDATE Detections SET assigned_name=?,is_verified=1,triage_tier='safe' WHERE id=?",
                 (name, det_id),
             )
-            # enseñar a KnownFaces si hay embedding
-            if emb_bytes:
-                c.execute(
-                    "INSERT INTO KnownFaces (name,embedding) VALUES (?,?)",
-                    (name, emb_bytes),
-                )
-        self._record_tx("VERIFY", _before, {"name": name})
+            # Issue 3 & 19: Deduplicación + Filtro de Calidad
+            # Solo "enseñamos" a la IA si la cara es nítida (is_high_q)
+            if emb_bytes and is_high_q:
+                count = c.execute("SELECT COUNT(*) FROM KnownFaces WHERE name=?", (name,)).fetchone()[0]
+                if count < 10:
+                    c.execute(
+                        "INSERT INTO KnownFaces (name,embedding) VALUES (?,?)",
+                        (name, emb_bytes),
+                    )
+                    identity_id = c.lastrowid
+            
+            # Issue 8: Actualizar symlinks en disco (vía FileIdentities)
+            c.execute("INSERT OR IGNORE INTO FileIdentities (file_id, identity) VALUES (?,?)", (file_id, name))
+            
+        # Issue 4: Guardamos el ID de la identidad creada para el deshacer
+        self._record_tx("VERIFY", _before, {"name": name, "identity_id": identity_id})
 
     def mark_false_positive(self, det_id: int) -> None:
         with self._write() as c:
@@ -1001,19 +1131,20 @@ class DatabaseManager:
             return [dict(r) for r in c.fetchall()]
 
     def undo_last(self) -> Optional[str]:
-        with self._read() as c:
+        # Issue 16: Hacer atómico el proceso de deshacer
+        with self._write() as c:
             c.execute("SELECT * FROM TxHistory WHERE undone=0 ORDER BY id DESC LIMIT 1")
             row = c.fetchone()
-        if not row:
-            return None
-        payload = json.loads(row["payload"])
-        action = row["action"]
-        if action in ("RENAME", "VERIFY"):
-            before: list[dict] = payload.get("before", [])
-            after: dict = payload.get("after", {})
-            identity_id = after.get("identity_id")
+            if not row:
+                return None
+            
+            payload = json.loads(row["payload"])
+            action = row["action"]
+            if action in ("RENAME", "VERIFY"):
+                before: list[dict] = payload.get("before", [])
+                after: dict = payload.get("after", {})
+                identity_id = after.get("identity_id")
 
-            with self._write() as c:
                 for item in before:
                     c.execute(
                         "UPDATE Detections SET assigned_name=?,triage_tier=?,is_verified=0 WHERE id=?",
@@ -1024,7 +1155,7 @@ class DatabaseManager:
                     c.execute("DELETE FROM KnownFaces WHERE id=?", (identity_id,))
 
                 c.execute("UPDATE TxHistory SET undone=1 WHERE id=?", (row["id"],))
-            return f"Undo '{action}' → {len(before)} detecciones revertidas"
+                return f"Undo '{action}' → {len(before)} detecciones revertidas"
         return None
 
     def get_last_tx(self) -> Optional[dict[str, Any]]:
@@ -1119,6 +1250,112 @@ class DatabaseManager:
                 rec["hamming"] = d
                 out.append(rec)
         return out
+
+
+    # ── Mantenimiento Avanzado ────────────────────────────────────────────
+    def rename_identity(self, old_name: str, new_name: str) -> bool:
+        """Issue 17: Renombrado global de una identidad."""
+        if not old_name or not new_name or old_name == new_name:
+            return False
+        
+        with self._write() as c:
+            # 1. Actualizar identidades conocidas
+            c.execute("UPDATE KnownFaces SET name=? WHERE name=?", (new_name, old_name))
+            # 2. Actualizar todas las detecciones históricas
+            c.execute("UPDATE Detections SET assigned_name=? WHERE assigned_name=?", (new_name, old_name))
+            # 3. Actualizar relaciones de archivos (para symlinks)
+            c.execute("UPDATE FileIdentities SET identity=? WHERE identity=?", (new_name, old_name))
+            return c.rowcount > 0
+
+    def cleanup_db(self) -> dict[str, int]:
+        """Issue 20: Eliminar huérfanos y optimizar DB."""
+        removed_files = 0
+        with self._read() as c:
+            c.execute("SELECT id, filepath FROM FileQueue")
+            rows = c.fetchall()
+        
+        to_delete = []
+        for r in rows:
+            if not Path(r["filepath"]).exists():
+                to_delete.append(r["id"])
+        
+        if to_delete:
+            with self._write() as c:
+                ph = ",".join("?" * len(to_delete))
+                c.execute(f"DELETE FROM FileQueue WHERE id IN ({ph})", to_delete)
+                removed_files = c.rowcount
+        
+        # Optimizar espacio
+        with self._write() as c:
+            c.execute("VACUUM")
+            
+        return {"removed_files": removed_files}
+
+    def get_similar_files(self, file_id: int, limit: int = 24) -> pd.DataFrame:
+        """Encuentra archivos visualmente similares usando CLIP embeddings."""
+        with self._read() as c:
+            row = c.execute("SELECT embedding FROM ClipEmbeddings WHERE id=?", (file_id,)).fetchone()
+            if not row:
+                return pd.DataFrame()
+            query_emb = np.frombuffer(row["embedding"], dtype=np.float32)
+
+        # Cargar todos para búsqueda bruta
+        ids, embs = self.load_clip()
+        if len(ids) == 0:
+            return pd.DataFrame()
+
+        # Similitud coseno
+        scores = embs @ query_emb
+        
+        # Ordenar y filtrar
+        sorted_indices = np.argsort(scores)[::-1]
+        sorted_ids = [ids[i] for i in sorted_indices if ids[i] != file_id]
+        
+        return self.get_files_by_ids_with_thumbs(sorted_ids[:limit])
+
+    def get_unlabeled_face_embeddings(self) -> list[tuple[int, bytes]]:
+        """Obtiene IDs y embeddings de caras que no han sido verificadas ni etiquetadas."""
+        with self._read() as c:
+            c.execute(
+                "SELECT id, embedding FROM Detections "
+                "WHERE assigned_name = 'Desconocido' AND is_verified = 0 AND embedding IS NOT NULL"
+            )
+            return [(r["id"], r["embedding"]) for r in c.fetchall()]
+
+    def get_clusters_with_samples(self, limit_per_cluster: int = 5) -> list[dict]:
+        """Agrupa las detecciones por cluster_id y devuelve ejemplos."""
+        with self._read() as c:
+            c.execute(
+                "SELECT cluster_id, COUNT(*) as count "
+                "FROM Detections WHERE cluster_id IS NOT NULL "
+                "GROUP BY cluster_id HAVING count >= 2 ORDER BY count DESC"
+            )
+            clusters = c.fetchall()
+            
+            results = []
+            for cl in clusters:
+                cid = cl["cluster_id"]
+                # Obtener muestras
+                c.execute(
+                    "SELECT d.id, d.face_crop_path, f.filepath "
+                    "FROM Detections d JOIN FileQueue f ON d.file_id = f.id "
+                    "WHERE d.cluster_id = ? LIMIT ?", (cid, limit_per_cluster)
+                )
+                samples = c.fetchall()
+                results.append({
+                    "cluster_id": cid,
+                    "count": cl["count"],
+                    "samples": [dict(s) for s in samples]
+                })
+            return results
+
+    def verify_cluster(self, cluster_id: int, name: str) -> None:
+        """Asigna un nombre verificado a todo un cluster de una vez."""
+        with self._write() as c:
+            c.execute(
+                "UPDATE Detections SET assigned_name = ?, is_verified = 1, cluster_id = NULL "
+                "WHERE cluster_id = ?", (name, cluster_id)
+            )
 
 
 # ── Helper ────────────────────────────────────────────────────────────────────

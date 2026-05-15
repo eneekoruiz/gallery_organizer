@@ -252,6 +252,9 @@ def _render_file_inspector(db: DatabaseManager) -> None:
                         n = nw if s == "➕ Nuevo nombre" else s
                         if n and n != "(Sin cambios)":
                             db.verify_detection(det["id"], n)
+                            # Issue 8: Actualizar symlinks en disco
+                            from core.symlink_manager import create_group_symlinks
+                            create_group_symlinks(Path(filepath), [n], db, file_id)
                             st.toast(f"✅ {n}")
                             st.rerun()
                 with c2:

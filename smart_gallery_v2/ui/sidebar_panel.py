@@ -124,9 +124,17 @@ def render_help_sidebar(db: DatabaseManager) -> None:
                 st.toast("🔁 FAISS reindexado.")
             else:
                 st.toast("Motor no disponible para reindexar.")
-        except Exception:
-            log.exception("FAISS reindex failed from sidebar")
+        except Exception as e:
+            log.warning(f"FAISS reindex failed from sidebar: {e}")
             st.toast("No se pudo reindexar FAISS.")
+
+    st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+    _section_title("Configuración Avanzada")
+    st.session_state.privacy_mode = st.toggle(
+        "🕵️ Modo Privacidad", 
+        value=st.session_state.get("privacy_mode", False),
+        help="Difumina automáticamente los rostros de extraños en la galería."
+    )
 
     st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
     _section_title("Notas de uso")
@@ -194,8 +202,8 @@ def _section_title(title: str) -> None:
 def _get_control_state(db: DatabaseManager) -> str:
     try:
         return db.get_control_state(CONTROL_STATE_KEY) or "stopped"
-    except Exception:
-        log.debug("Control state unavailable; falling back to stopped")
+    except Exception as e:
+        log.debug(f"Control state unavailable; falling back to stopped: {e}")
         return "stopped"
 
 

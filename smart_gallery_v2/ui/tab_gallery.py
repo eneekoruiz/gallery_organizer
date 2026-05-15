@@ -31,24 +31,27 @@ def render_gallery(db: DatabaseManager) -> None:
     )
 
     # ── Filtros ────────────────────────────────────────────────────────────
-    f1, f2, f3 = st.columns([2, 2, 3])
+    meta = db.get_unique_metadata()
+    f1, f2, f3, f4 = st.columns([2, 2, 2, 2])
     with f1:
         status_f = st.selectbox(
-            "Estado",
-            ["Todos", "DONE", "PENDING", "ERROR"],
-            label_visibility="collapsed",
-            key="gf_status",
+            "Estado", ["Todos", "DONE", "PENDING", "ERROR"],
+            key="gf_status", label_visibility="collapsed"
         )
     with f2:
         triage_f = st.selectbox(
-            "Bandeja",
-            ["Todas", "safe", "review", "unclassified"],
-            label_visibility="collapsed",
-            key="gf_triage",
+            "Bandeja", ["Todas", "safe", "review", "unclassified"],
+            key="gf_triage", label_visibility="collapsed"
         )
     with f3:
-        st.caption(
-            "💡 Arrastra fotos a `Galería/Para Organizar/` y pulsa **Sincronizar** en el Dashboard."
+        cam_f = st.selectbox(
+            "Cámara", ["Todas"] + meta["cameras"],
+            key="gf_cam", label_visibility="collapsed"
+        )
+    with f4:
+        lens_f = st.selectbox(
+            "Lente", ["Todas"] + meta["lenses"],
+            key="gf_lens", label_visibility="collapsed"
         )
 
     st.markdown("<br>", unsafe_allow_html=True)
@@ -60,11 +63,15 @@ def render_gallery(db: DatabaseManager) -> None:
     # ── Cargar datos ───────────────────────────────────────────────────────
     status_param = None if status_f == "Todos" else status_f
     triage_param = None if triage_f == "Todas" else triage_f
+    cam_param = None if cam_f == "Todas" else cam_f
+    lens_param = None if lens_f == "Todas" else lens_f
 
     PAGE_SIZE = 60
     
     # Obtener total para paginación
-    total_files = db.get_files_count(status=status_param, triage=triage_param)
+    total_files = db.get_files_count(
+        status=status_param, triage=triage_param, camera=cam_param, lens=lens_param
+    )
     total_pages = (total_files - 1) // PAGE_SIZE + 1 if total_files > 0 else 1
     
     if st.session_state.gal_page >= total_pages:
@@ -72,15 +79,30 @@ def render_gallery(db: DatabaseManager) -> None:
 
     offset = st.session_state.gal_page * PAGE_SIZE
 
-    # ── Búsqueda semántica CLIP (Global) ───────────────────────────────────
-    if query.strip():
+    # ── Búsqueda visual (Similitud) ────────────────────────────────────────
+    sim_id = st.session_state.get("similarity_root_id")
+    
+    if sim_id:
+        df = db.get_similar_files(sim_id)
+        if st.button("⬅️ Volver a Galería"):
+            st.session_state.similarity_root_id = None
+            st.rerun()
+        st.caption(f"🪄 Mostrando archivos similares al ID {sim_id}")
+    elif query.strip():
         df = _semantic_search(db, query.strip())
         if df.empty:
             st.warning(f"Sin resultados para: '{query}'")
             return
         st.caption(f"🎯 {len(df)} resultados ordenados por relevancia para: *{query}*")
     else:
-        df = _cached_files_df(db, status_param, triage_param, PAGE_SIZE, offset)
+        df = db.get_files_with_thumbs_df(
+            status=status_param, 
+            triage=triage_param, 
+            camera=cam_param, 
+            lens=lens_param,
+            limit=PAGE_SIZE, 
+            offset=offset
+        )
         st.caption(f"📁 {len(df)} de {total_files} archivos")
 
     # ── Bulk selection bar ─────────────────────────────────────────────────
@@ -269,17 +291,35 @@ def _image_card(rec: pd.Series) -> None:
         else:
             st.session_state.gallery_sel.discard(file_id)
 
-    # ── Thumbnail ──────────────────────────────────────────────────────────
+    # ── Thumbnail con Privacy Mode ─────────────────────────────────────────
     thumb = rec.get("cached_thumb")
+    privacy = st.session_state.get("privacy_mode", False)
+    # Solo blureamos si no está verificado y hay caras (persona tag)
+    should_blur = privacy and triage != "safe" and any(_is_person(t) for t in tags)
+    
+    blur_style = 'filter:blur(12px);' if should_blur else ''
+    
     if thumb and Path(thumb).exists():
-        st.image(thumb, use_container_width=True)
+        st.markdown(
+            f'<img src="data:image/webp;base64,{_get_base64(thumb)}" '
+            f'style="width:100%;border-radius:10px;{blur_style}">',
+            unsafe_allow_html=True
+        )
     else:
-        # Fallback si no está en caché o se borró el archivo
         st.markdown(
             '<div style="background:#10121a;border-radius:10px;aspect-ratio:4/3;'
             'display:flex;align-items:center;justify-content:center;font-size:28px">🖼️</div>',
             unsafe_allow_html=True,
         )
+
+    # ── Calidad IA bar ─────────────────────────────────────────────────────
+    q_score = rec.get("quality_score", 0.0)
+    q_color = "#34d399" if q_score > 0.7 else "#fbbf24" if q_score > 0.4 else "#f87171"
+    st.markdown(
+        f'<div style="height:3px;background:#1c1f2e;width:100%;margin:4px 0">'
+        f'<div style="height:100%;background:{q_color};width:{q_score*100}%"></div></div>',
+        unsafe_allow_html=True
+    )
 
     # ── Tags row ───────────────────────────────────────────────────────────
     if tags:
@@ -303,12 +343,18 @@ def _image_card(rec: pd.Series) -> None:
     )
     st.caption(filename[:24])
 
-    # ── Botón inspector ────────────────────────────────────────────────────
-    if st.button("🔍", key=f"ginsp_{file_id}", help="Abrir inspector"):
-        st.session_state.inspect_det_id = None  # inspector de archivo, no de detección
-        st.session_state.inspect_path = filepath
-        st.session_state.inspect_file_id = file_id
-        st.rerun()
+    # ── Botones ────────────────────────────────────────────────────────────
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("🔍", key=f"ginsp_{file_id}", help="Abrir inspector"):
+            st.session_state.inspect_det_id = None
+            st.session_state.inspect_path = filepath
+            st.session_state.inspect_file_id = file_id
+            st.rerun()
+    with c2:
+        if st.button("🪄", key=f"gsim_{file_id}", help="Buscar similares"):
+            st.session_state.similarity_root_id = file_id
+            st.rerun()
 
 
 def _is_person(tag: str) -> bool:
@@ -322,3 +368,8 @@ def _is_person(tag: str) -> bool:
         "sinclasificar",
         "persona",
     }
+
+def _get_base64(path: str) -> str:
+    import base64
+    with open(path, "rb") as f:
+        return base64.b64encode(f.read()).decode()
