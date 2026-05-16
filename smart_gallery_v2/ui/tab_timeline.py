@@ -37,9 +37,7 @@ def render_timeline(db: DatabaseManager) -> None:
 def _render_timeline(db: DatabaseManager) -> None:
     df = db.get_timeline_df()
     if df.empty:
-        st.info(
-            "Sin metadatos de fecha. Las fotos con EXIF aparecerán aquí automáticamente."
-        )
+        st.info("Sin metadatos de fecha. Las fotos con EXIF aparecerán aquí automáticamente.")
         return
 
     df["exif_date"] = pd.to_datetime(df["exif_date"], errors="coerce")
@@ -61,9 +59,7 @@ def _render_timeline(db: DatabaseManager) -> None:
         return
 
     st.markdown("#### Fotos por día")
-    st.bar_chart(
-        df_f.set_index("exif_date")[["count"]], use_container_width=True, height=200
-    )
+    st.bar_chart(df_f.set_index("exif_date")[["count"]], use_container_width=True, height=200)
 
     total = int(df_f["count"].sum())
     prom = df_f["count"].mean()
@@ -83,12 +79,14 @@ def _render_timeline(db: DatabaseManager) -> None:
 def _period_thumbs(db: DatabaseManager, d_from, d_to) -> None:
     # Convertir a string para la query SQL
     df_count = db.get_timeline_df()
-    mask = (pd.to_datetime(df_count["exif_date"]).dt.date >= d_from) & (pd.to_datetime(df_count["exif_date"]).dt.date <= d_to)
+    mask = (pd.to_datetime(df_count["exif_date"]).dt.date >= d_from) & (
+        pd.to_datetime(df_count["exif_date"]).dt.date <= d_to
+    )
     count = int(df_count.loc[mask, "count"].sum())
-    
+
     limit = 60
     num_pages = max(1, (count + limit - 1) // limit)
-    
+
     if count > limit:
         page = st.number_input("Página (Período):", 1, num_pages, 1, key="p_timeline")
         offset = (page - 1) * limit
@@ -98,11 +96,11 @@ def _period_thumbs(db: DatabaseManager, d_from, d_to) -> None:
     df = db.get_files_by_date_range(
         d_from.isoformat(), d_to.isoformat(), limit=limit, offset=offset
     )
-    
+
     if df.empty:
         st.info("Sin fotos en este período.")
         return
-        
+
     cols_n = 6
     for chunk in [df.iloc[i : i + cols_n] for i in range(0, len(df), cols_n)]:
         cols = st.columns(cols_n)
@@ -112,9 +110,7 @@ def _period_thumbs(db: DatabaseManager, d_from, d_to) -> None:
                 if th and Path(th).exists():
                     st.image(th, use_container_width=True)
                     dt = rec.get("exif_date")
-                    st.caption(
-                        pd.Timestamp(dt).strftime("%d/%m/%Y") if pd.notna(dt) else ""
-                    )
+                    st.caption(pd.Timestamp(dt).strftime("%d/%m/%Y") if pd.notna(dt) else "")
 
 
 # ── Mapa GPS ──────────────────────────────────────────────────────────────────
@@ -134,9 +130,7 @@ def _render_map(db: DatabaseManager) -> None:
     st.markdown("#### Detalle de ubicaciones")
     disp = df[["filename", "exif_date", "lat", "lon"]].copy()
     disp.columns = ["Archivo", "Fecha", "Latitud", "Longitud"]
-    disp["Fecha"] = pd.to_datetime(disp["Fecha"], errors="coerce").dt.strftime(
-        "%d/%m/%Y"
-    )
+    disp["Fecha"] = pd.to_datetime(disp["Fecha"], errors="coerce").dt.strftime("%d/%m/%Y")
     st.dataframe(
         disp,
         use_container_width=True,

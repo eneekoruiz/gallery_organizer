@@ -47,6 +47,7 @@ def create_symlink(src_file: Path, identity: str) -> Optional[Path]:
     dest_dir.mkdir(parents=True, exist_ok=True)
 
     import hashlib
+
     h6 = hashlib.sha256(str(src_file.resolve()).encode()).hexdigest()[:6]
     link_path = dest_dir / f"{src_file.stem}_{h6}{src_file.suffix}"
 
@@ -131,10 +132,10 @@ def create_group_symlinks(
     Issue 18: Eliminar symlinks previos si estamos corrigiendo una identidad.
     """
     created: list[Path] = []
-    
+
     # 1. Obtener symlinks actuales de este archivo en la DB
     current_links = db.get_symlink_paths_for_file(file_id)
-    
+
     # 2. Crear los nuevos
     for identity in identities:
         link_path = create_symlink(src_file, identity)
@@ -198,10 +199,10 @@ def rename_identity_folders(old_name: str, new_name: str, db: "DatabaseManager")
     """
     old_dir = DIR_RESULT / _sanitize(old_name)
     new_dir = DIR_RESULT / _sanitize(new_name)
-    
+
     if not old_dir.exists():
         return False
-    
+
     try:
         # Si la carpeta destino ya existe, moveremos el contenido uno a uno
         if new_dir.exists():
@@ -219,13 +220,19 @@ def rename_identity_folders(old_name: str, new_name: str, db: "DatabaseManager")
             # Como los symlinks tienen la ruta completa, usamos un update parcial o iterativo
             # Para simplificar, buscamos todos los links de esta identidad
             with db._write() as c:
-                c.execute("SELECT id, symlink_path FROM FileIdentities WHERE identity=?", (new_name,))
+                c.execute(
+                    "SELECT id, symlink_path FROM FileIdentities WHERE identity=?",
+                    (new_name,),
+                )
                 rows = c.fetchall()
                 for r in rows:
                     if r["symlink_path"]:
                         old_p = Path(r["symlink_path"])
                         new_p = new_dir / old_p.name
-                        c.execute("UPDATE FileIdentities SET symlink_path=? WHERE id=?", (str(new_p), r["id"]))
+                        c.execute(
+                            "UPDATE FileIdentities SET symlink_path=? WHERE id=?",
+                            (str(new_p), r["id"]),
+                        )
         return True
     except Exception as e:
         log.error("Error renombrando carpeta de identidad %s -> %s: %s", old_name, new_name, e)

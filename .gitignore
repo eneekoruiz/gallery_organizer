@@ -1,4 +1,6 @@
-# Python
+# ==========================================
+# Python Compiled & Cache Files
+# ==========================================
 __pycache__/
 *.py[cod]
 *$py.class
@@ -7,33 +9,39 @@ __pycache__/
 .mypy_cache/
 .ipynb_checkpoints/
 
-# SQLite & Runtime Data
-gallery.db
-gallery.db-wal
-gallery.db-shm
+# ==========================================
+# Runtime Databases & Logs
+# ==========================================
 *.db
 *.db-wal
 *.db-shm
-gallery.log
 *.log
 logs/
+gallery.db
+gallery.db-wal
+gallery.db-shm
+gallery.log
 
-# Gallery & Cache (Local user data)
-.thumbnails/
-.face_crops/
-Galería/
+# ==========================================
+# Local Dynamic / Monitored Folders (Ignore from Git)
+# ==========================================
+smart_gallery_v2/.thumbnails/
+smart_gallery_v2/.face_crops/
+smart_gallery_v2/Galería/
+smart_gallery_v2/models/
 Resultados/
 
-# Models (Local binary assets)
-models/
-!models/.keep
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Environment
+# ==========================================
+# Environment Configuration
+# ==========================================
 .env
 .venv
 venv/
 env/
+
+# ==========================================
+# Operating System Files
+# ==========================================
+.DS_Store
+Thumbs.db
+desktop.ini

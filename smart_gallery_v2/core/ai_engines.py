@@ -145,9 +145,7 @@ class YOLOEngine:
 
     def _infer_native(self, imgs: list[np.ndarray]) -> list[list[dict[str, Any]]]:
         results = []
-        for chunk in [
-            imgs[i : i + BATCH_SIZE] for i in range(0, len(imgs), BATCH_SIZE)
-        ]:
+        for chunk in [imgs[i : i + BATCH_SIZE] for i in range(0, len(imgs), BATCH_SIZE)]:
             raw = self._native(chunk, verbose=False, classes=list(YOLO_CLASSES))
             for r in raw:
                 dets = []
@@ -202,9 +200,7 @@ class ArcFaceEngine:
             except ImportError:
                 log.error("ArcFaceEngine: sin backend.")
 
-    def get_faces(
-        self, img_rgb: np.ndarray
-    ) -> list[tuple[dict[str, int], np.ndarray, float]]:
+    def get_faces(self, img_rgb: np.ndarray) -> list[tuple[dict[str, int], np.ndarray, float]]:
         """Devuelve [(bbox_dict, embedding_float32, confidence)]"""
         self._ensure_loaded()
         if self._ort:
@@ -243,9 +239,7 @@ class ArcFaceEngine:
             out.append((bbox, emb, float(f["face_confidence"])))
         return out
 
-    def _faces_ort(
-        self, img_rgb: np.ndarray
-    ) -> list[tuple[dict[str, int], np.ndarray, float]]:
+    def _faces_ort(self, img_rgb: np.ndarray) -> list[tuple[dict[str, int], np.ndarray, float]]:
         try:
             from retinaface import RetinaFace  # type: ignore
 
@@ -320,9 +314,7 @@ class CLIPEngine:
         try:
             import open_clip  # type: ignore
 
-            model, _, prep = open_clip.create_model_and_transforms(
-                "ViT-B-32", pretrained="openai"
-            )
+            model, _, prep = open_clip.create_model_and_transforms("ViT-B-32", pretrained="openai")
             model.eval()
             self._native = model
             self._prep = prep
@@ -334,9 +326,7 @@ class CLIPEngine:
                 from transformers import CLIPModel, CLIPProcessor  # type: ignore
 
                 self._native = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
-                self._tokenizer = CLIPProcessor.from_pretrained(
-                    "openai/clip-vit-base-patch32"
-                )
+                self._tokenizer = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
                 log.info("CLIPEngine: transformers CLIP")
             except Exception as exc:
                 log.warning("CLIPEngine sin backend: %s", exc)

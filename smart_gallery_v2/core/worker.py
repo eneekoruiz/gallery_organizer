@@ -32,17 +32,18 @@ from core.ai_engines import (
     YOLOEngine,
 )
 from core.config import (
+    BATCH_SIZE,
+    CONTROL_STATE_KEY,
+    DIR_FACES,
+    DIR_RESULT,
     DIR_THUMBS,
     OCR_MIN_TEXT_LEN,
     PHASH_HAMMING_THRESHOLD,
     THUMB_SIZE,
     USE_PYTESSERACT,
-    BATCH_SIZE,
-    DIR_RESULT,
-    DIR_FACES,
-    CONTROL_STATE_KEY,
 )
 from core.database import DatabaseManager
+from core.date_extractor import DateExtractor
 from core.models_types import (
     AIResult,
     DedupeResult,
@@ -51,6 +52,7 @@ from core.models_types import (
     ProcessResult,
     ThumbnailResult,
 )
+from core.review_decider import ReviewDecider
 from core.symlink_manager import create_group_symlinks
 from core.video_processor import VideoKeyframeExtractor
 
@@ -87,9 +89,7 @@ class ProcessingEngine:
             return
         self._stop_evt.clear()
         self._pause_evt.clear()
-        self._thread = threading.Thread(
-            target=self._run, name="ProcessingEngine", daemon=True
-        )
+        self._thread = threading.Thread(target=self._run, name="ProcessingEngine", daemon=True)
         self._thread.start()
         self._emit("INFO", "▶ Motor iniciado.")
 
@@ -177,7 +177,7 @@ class ProcessingEngine:
             thumb_res = self.thumbnail(fp)
             if thumb_res.error:
                 log.warning(f"[{file_id}] Thumb error: {thumb_res.error}")
-                self._db.update_error(file_id, phase="thumbnail", exception=thumb_res.error)
+                self._db.update_error(file_id, stage="thumbnail", message=thumb_res.error)
 
             # 2. EXIF (solo imágenes)
             exif_res = ExifResult()
@@ -195,9 +195,7 @@ class ProcessingEngine:
                     log.warning(f"[{file_id}] Dedupe error: {dedupe_res.error}")
                 elif dedupe_res.is_duplicate:
                     log.info(f"[{file_id}] Duplicate found. Linking.")
-                    self._step_persist_duplicate(
-                        record, dedupe_res, thumb_res.thumb_path
-                    )
+                    self._step_persist_duplicate(record, dedupe_res, thumb_res.thumb_path)
                     return ProcessResult(
                         file_id, "DONE", "dedupe", "Duplicado detectado y vinculado."
                     )
@@ -230,10 +228,8 @@ class ProcessingEngine:
         except Exception as e:
             err_msg = str(e)
             log.exception(f"Unexpected error in process_one for {fp}")
-            self._db.update_error(file_id, phase="process_one", exception=err_msg)
-            return ProcessResult(
-                file_id, "ERROR", "exception", err_msg, exception=err_msg
-            )
+            self._db.update_error(file_id, stage="process_one", message=err_msg)
+            return ProcessResult(file_id, "ERROR", "exception", err_msg, exception=err_msg)
 
     # ── Steps ─────────────────────────────────────────────────────────────
 
@@ -254,19 +250,19 @@ class ProcessingEngine:
         # Estabilidad de tamaño
         try:
             s1 = p.stat().st_size
-            time.sleep(wait_ms / 2000.0) # Primer respiro
+            time.sleep(wait_ms / 2000.0)  # Primer respiro
             s2 = p.stat().st_size
             if s1 != s2 or s1 == 0:
                 return False
-            
-            time.sleep(wait_ms / 2000.0) # Segundo respiro para archivos grandes
+
+            time.sleep(wait_ms / 2000.0)  # Segundo respiro para archivos grandes
             s3 = p.stat().st_size
             if s2 != s3:
                 return False
-                
+
             # Verificar bloqueo (intentar abrir para lectura)
             with open(filepath, "rb") as f:
-                f.read(1024) # Leer un poco para asegurar que no hay lock de escritura
+                f.read(1024)  # Leer un poco para asegurar que no hay lock de escritura
         except (OSError, PermissionError):
             return False
 
@@ -279,7 +275,7 @@ class ProcessingEngine:
                 path = _make_thumb(filepath)
             return ThumbnailResult(thumb_path=path)
         except (OSError, IOError) as e:
-            log.warning(f"[{file_id}] Thumbnail save failed: {e}")
+            log.warning(f"Thumbnail save failed for {filepath}: {e}")
             return ThumbnailResult(error=str(e))
         except Exception as e:
             return ThumbnailResult(error=str(e))
@@ -309,9 +305,7 @@ class ProcessingEngine:
                 ph = imagehash.phash(im)
             ph_hex = str(ph)
             all_hashes = self._db.get_all_phashes()
-            matches = DedupeEngine.find_similar(
-                ph_hex, all_hashes, PHASH_HAMMING_THRESHOLD
-            )
+            matches = DedupeEngine.find_similar(ph_hex, all_hashes, PHASH_HAMMING_THRESHOLD)
             matches = [m for m in matches if m != file_id]
             if matches:
                 return DedupeResult(is_duplicate=True, original_id=matches[0])
@@ -333,6 +327,7 @@ class ProcessingEngine:
             # Issue 26: Soporte EXIF Orientation (Auto-rotación)
             # Usamos PIL para leer y corregir antes de pasar a CV2
             from PIL import Image, ImageOps
+
             with Image.open(filepath) as im_pil:
                 im_pil = ImageOps.exif_transpose(im_pil)
                 # phash sobre la imagen ya rotada correctamente
@@ -362,26 +357,41 @@ class ProcessingEngine:
                 if ai_res_kf.error:
                     continue
                 all_tags.update(ai_res_kf.tags)
-                
+
                 # Issue 10: Deduplicar identidades por vídeo (no añadir la misma cara 10 veces)
                 for iden in ai_res_kf.identities:
                     if iden not in all_ids:
                         all_ids.add(iden)
-                
-                if tier_rank.get(ai_res_kf.triage_tier, 0) > tier_rank.get(
-                    best_tier, 0
-                ):
+
+                if tier_rank.get(ai_res_kf.triage_tier, 0) > tier_rank.get(best_tier, 0):
                     best_tier = ai_res_kf.triage_tier
             return AIResult(
-                tags=sorted(list(all_tags)), triage_tier=best_tier, identities=sorted(list(all_ids))
+                tags=sorted(list(all_tags)),
+                triage_tier=best_tier,
+                identities=sorted(list(all_ids)),
             )
         except Exception as e:
             log.exception(f"Fallo en _step_ai_video: {e}")
             return AIResult(error=str(e))
 
-    def persist(
-        self, record: MediaRecord, ai: AIResult, exif: ExifResult, thumb: Optional[str]
-    ):
+    def persist(self, record: MediaRecord, ai: AIResult, exif: ExifResult, thumb: Optional[str]):
+        # Extraer fecha en cascada
+        best_datetime, date_source, date_confidence = DateExtractor.extract(record.filepath)
+
+        # Consultar las confianzas de las caras detectadas para este archivo
+        with self._db._read() as c:
+            rows = c.execute(
+                "SELECT confidence FROM Detections WHERE file_id=?", (record.id,)
+            ).fetchall()
+            face_confidences = [row["confidence"] for row in rows]
+
+        # Decidir estado final de la cola (AUTO_CLASSIFIED o NEEDS_REVIEW)
+        status = ReviewDecider.decide(
+            face_confidences=face_confidences,
+            date_confidence=date_confidence,
+            quality_score=ai.quality_score,
+        )
+
         self._db.update_done(
             record.id,
             tags=ai.tags,
@@ -396,13 +406,21 @@ class ProcessingEngine:
             f_number=exif.f_number,
             exposure=exif.exposure,
             quality_score=ai.quality_score,
+            best_datetime=best_datetime,
+            date_source=date_source,
+            date_confidence=date_confidence,
+            status=status.value,
         )
 
     def _step_persist_duplicate(
         self, record: MediaRecord, dedupe: DedupeResult, thumb: Optional[str]
     ):
         self._db.update_done(
-            record.id, tags=["Duplicado"], triage_tier="unclassified", thumb_path=thumb
+            record.id,
+            tags=["Duplicado"],
+            triage_tier="unclassified",
+            thumb_path=thumb,
+            status="DONE",
         )
 
     def materialize_results(self, record: MediaRecord, ai: AIResult):
@@ -440,13 +458,17 @@ class ProcessingEngine:
     def _check_reload_faiss(self) -> None:
         """Issue 2: Recarga el índice si hay nuevas caras en la DB."""
         with self._db._read() as c:
-            count = c.execute("SELECT COUNT(*) FROM KnownFaces WHERE embedding IS NOT NULL").fetchone()[0]
+            count = c.execute(
+                "SELECT COUNT(*) FROM KnownFaces WHERE embedding IS NOT NULL"
+            ).fetchone()[0]
         if count != self._faiss_count:
             log.info(f"Reloading FAISS: {self._faiss_count} -> {count} faces")
             self._reload_faiss()
 
-    def _is_high_quality_face(self, crop: np.ndarray) -> bool:
+    def _is_high_quality_face(self, crop: Optional[np.ndarray]) -> bool:
         """Issue 19: Determinar si un recorte de cara es apto para el índice de conocimiento."""
+        if crop is None:
+            return False
         try:
             h, w = crop.shape[:2]
             if h < 80 or w < 80:
@@ -489,8 +511,11 @@ class ProcessingEngine:
                 for bbox, emb, det_conf in faces:
                     # Issue 19: Extraer crop temporal para check de calidad
                     # bbox: [x1, y1, x2, y2]
+                    face_crop = None
                     try:
-                        face_crop = img_bgr[int(bbox[1]):int(bbox[3]), int(bbox[0]):int(bbox[2])]
+                        face_crop = img_bgr[
+                            int(bbox[1]) : int(bbox[3]), int(bbox[0]) : int(bbox[2])
+                        ]
                         is_high_q = self._is_high_quality_face(face_crop)
                     except (cv2.error, ValueError, IndexError) as e:
                         log.warning(f"Face crop extraction failed for bbox {bbox}: {e}")
@@ -500,16 +525,19 @@ class ProcessingEngine:
                         is_high_q = False
 
                     name, faiss_conf, tier = self._faiss.search(emb)
-                    
+
                     # Calcular quality_score basado en la nitidez de la cara (escalado 0-1)
                     # variance > 80 es nítido, variance < 20 es muy borroso
                     try:
-                        gray = cv2.cvtColor(face_crop, cv2.COLOR_BGR2GRAY)
-                        var = cv2.Laplacian(gray, cv2.CV_64F).var()
-                        q_score = min(1.0, var / 150.0) # 150 es "perfecto"
-                    except:
+                        if face_crop is not None:
+                            gray = cv2.cvtColor(face_crop, cv2.COLOR_BGR2GRAY)
+                            var = cv2.Laplacian(gray, cv2.CV_64F).var()
+                            q_score = min(1.0, var / 150.0)  # 150 es "perfecto"
+                        else:
+                            q_score = 0.5
+                    except Exception:
                         q_score = 0.5
-                    
+
                     if name != "Desconocido":
                         identities.add(name)
                         tags.add(name)
@@ -517,7 +545,7 @@ class ProcessingEngine:
                             best_tier = tier
 
                     crop_path = self._save_crop(img_bgr, bbox)
-                    # El worker NO inserta en KnownFaces directamente, 
+                    # El worker NO inserta en KnownFaces directamente,
                     # pero marcamos la calidad en la DB si fuera necesario.
                     # Por ahora, la lógica de filtrado irá en verify_detection.
                     self._db.add_detection(
@@ -550,9 +578,7 @@ class ProcessingEngine:
                     if USE_PYTESSERACT:
                         import pytesseract
 
-                        ocr_text = pytesseract.image_to_string(
-                            _PILImage.fromarray(img_rgb)
-                        )
+                        ocr_text = pytesseract.image_to_string(_PILImage.fromarray(img_rgb))
                     else:
                         reader = ocr_engine.get_reader()
                         if reader:
@@ -636,11 +662,13 @@ def _read_exif(filepath: str) -> dict[str, Any]:
             res["camera_model"] = exif.get(tag_map.get("Model"))
             res["lens_model"] = exif.get(tag_map.get("LensModel"))
             res["iso"] = exif.get(tag_map.get("ISOSpeedRatings"))
-            
+
             f_num = exif.get(tag_map.get("FNumber"))
             if f_num:
-                res["f_number"] = float(f_num[0] / f_num[1]) if isinstance(f_num, tuple) else float(f_num)
-            
+                res["f_number"] = (
+                    float(f_num[0] / f_num[1]) if isinstance(f_num, tuple) else float(f_num)
+                )
+
             exp = exif.get(tag_map.get("ExposureTime"))
             if exp:
                 if isinstance(exp, tuple):
@@ -678,6 +706,5 @@ def _h6(s: str) -> str:
 
 def _safe(name: str) -> str:
     return (
-        "".join(c for c in name if c.isalnum() or c in " _-").strip().replace(" ", "_")
-        or "otros"
+        "".join(c for c in name if c.isalnum() or c in " _-").strip().replace(" ", "_") or "otros"
     )

@@ -36,9 +36,7 @@ def render_help_sidebar(db: DatabaseManager) -> None:
         unsafe_allow_html=True,
     )
 
-    _status_card(
-        "Motor", engine_state, "Proceso de clasificación y organización", "c-teal"
-    )
+    _status_card("Motor", engine_state, "Proceso de clasificación y organización", "c-teal")
     _status_card(
         "Watchdog",
         watcher_state,
@@ -131,9 +129,9 @@ def render_help_sidebar(db: DatabaseManager) -> None:
     st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
     _section_title("Configuración Avanzada")
     st.session_state.privacy_mode = st.toggle(
-        "🕵️ Modo Privacidad", 
+        "🕵️ Modo Privacidad",
         value=st.session_state.get("privacy_mode", False),
-        help="Difumina automáticamente los rostros de extraños en la galería."
+        help="Difumina automáticamente los rostros de extraños en la galería.",
     )
 
     st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
@@ -144,9 +142,7 @@ def render_help_sidebar(db: DatabaseManager) -> None:
 
     st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
     _section_title("Programación automática")
-    st.caption(
-        "Nota: la tarea se ejecuta diariamente a las 03:00 vía Windows Task Scheduler."
-    )
+    st.caption("Nota: la tarea se ejecuta diariamente a las 03:00 vía Windows Task Scheduler.")
     if st.button("📋 Ver programación actual", use_container_width=True):
         try:
             from subprocess import run

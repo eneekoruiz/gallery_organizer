@@ -4,11 +4,14 @@ Gestión de Duplicados Exactos · Detección de Ráfagas · Recomendación de "M
 """
 
 from __future__ import annotations
+
 import os
 from pathlib import Path
+
 import streamlit as st
-import pandas as pd
+
 from core.database import DatabaseManager
+
 
 def render_cleanup(db: DatabaseManager) -> None:
     st.markdown(
@@ -30,15 +33,16 @@ def render_cleanup(db: DatabaseManager) -> None:
     with tab_bursts:
         _render_bursts(db)
 
+
 def _render_duplicates(db: DatabaseManager) -> None:
     groups = db.get_duplicate_groups()
-    
+
     if not groups:
         st.success("🎉 ¡No se han encontrado duplicados exactos!")
         return
 
     st.warning(f"Se han detectado {len(groups)} grupos de archivos idénticos (mismo hash visual).")
-    
+
     for i, df in enumerate(groups):
         with st.expander(f"Grupo #{i+1} — {len(df)} archivos coincidentes", expanded=True):
             cols = st.columns(len(df))
@@ -48,11 +52,12 @@ def _render_duplicates(db: DatabaseManager) -> None:
                     if th and Path(th).exists():
                         st.image(th, use_container_width=True)
                     st.caption(f"ID: {row['id']}")
-                    st.text(Path(row['filepath']).name)
-                    
+                    st.text(Path(row["filepath"]).name)
+
                     if st.button("🗑 Borrar este", key=f"del_dup_{row['id']}"):
-                        _delete_file(db, row['id'], row['filepath'])
+                        _delete_file(db, row["id"], row["filepath"])
                         st.rerun()
+
 
 def _render_bursts(db: DatabaseManager) -> None:
     # Ventana de ráfaga configurable
@@ -69,7 +74,7 @@ def _render_bursts(db: DatabaseManager) -> None:
         with st.expander(f"Ráfaga #{i+1} — {len(df)} fotos", expanded=True):
             # Recomendación: La que tenga mejor tier o mayor resolución (aquí simplificamos)
             st.info("💡 Recomendación: Mantén la foto con mejor encuadre o iluminación.")
-            
+
             cols = st.columns(len(df))
             for col, (_, row) in zip(cols, df.iterrows()):
                 with col:
@@ -77,10 +82,11 @@ def _render_bursts(db: DatabaseManager) -> None:
                     if th and Path(th).exists():
                         st.image(th, use_container_width=True)
                     st.caption(f"🕒 {row['exif_date'].split('T')[-1]}")
-                    
+
                     if st.button("🗑 Borrar", key=f"del_bst_{row['id']}"):
-                        _delete_file(db, row['id'], row['filepath'])
+                        _delete_file(db, row["id"], row["filepath"])
                         st.rerun()
+
 
 def _delete_file(db: DatabaseManager, file_id: int, filepath: str):
     """Borra el archivo físicamente y de la base de datos."""

@@ -1,0 +1,11 @@
+from enum import Enum
+
+
+class QueueStatus(str, Enum):
+    PENDING = "PENDING"
+    PROCESSING = "PROCESSING"
+    AUTO_CLASSIFIED = "AUTO_CLASSIFIED"
+    NEEDS_REVIEW = "NEEDS_REVIEW"
+    VERIFIED = "VERIFIED"
+    ERROR = "ERROR"
+    IGNORED = "IGNORED"

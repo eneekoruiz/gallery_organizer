@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS FileQueue (
     phash        TEXT,                               -- perceptual hash hex
     exif_date    TEXT,
     gps_lat      REAL,
+    gps_lon      REAL,
     hash_sha256  TEXT,
     camera_model TEXT,
     lens_model   TEXT,
@@ -178,7 +179,7 @@ class DatabaseManager:
     _instance: Optional["DatabaseManager"] = None
     _cls_lock: threading.Lock = threading.Lock()
 
-    def __new__(cls) -> "DatabaseManager":
+    def __new__(cls, *args, **kwargs) -> "DatabaseManager":
         with cls._cls_lock:
             if cls._instance is None:
                 obj = super().__new__(cls)
@@ -186,11 +187,11 @@ class DatabaseManager:
                 cls._instance = obj
             return cls._instance
 
-    def __init__(self) -> None:
+    def __init__(self, db_path: Optional[Path | str] = None) -> None:
         if self._initialized:
             return
         self._write_lock = threading.Lock()
-        self._db_path = DB_PATH
+        self._db_path = Path(db_path) if db_path else DB_PATH
         self._init_db()
         self._initialized = True
 
@@ -204,6 +205,17 @@ class DatabaseManager:
         finally:
             conn.close()
 
+    @property
+    def schema_version(self) -> int:
+        """Retorna la versión actual del esquema de la base de datos."""
+        with self._read() as c:
+            try:
+                c.execute("SELECT version FROM SchemaInfo")
+                row = c.fetchone()
+                return row["version"] if row else 1
+            except sqlite3.OperationalError:
+                return 1
+
     def _run_migrations(self, cursor: sqlite3.Cursor) -> None:
         """Migraciones idempotentes."""
         try:
@@ -213,21 +225,31 @@ class DatabaseManager:
         except sqlite3.OperationalError:
             version = 1
 
-        # Migración: Asegurar columna phash (Legacy upgrade)
+        # Obtener columnas existentes en FileQueue
         cursor.execute("PRAGMA table_info(FileQueue)")
         cols = [r[1] for r in cursor.fetchall()]
+
+        # Asegurar columna phash (Legacy upgrade)
         if "phash" not in cols:
             log.info("Migration: Adding phash column to FileQueue.")
             cursor.execute("ALTER TABLE FileQueue ADD COLUMN phash TEXT")
 
-        # Migración Phase 5: Nuevas columnas EXIF y Calidad
+        # Asegurar columna gps_lon si falta
+        if "gps_lon" not in cols:
+            log.info("Migration: Adding gps_lon column to FileQueue.")
+            cursor.execute("ALTER TABLE FileQueue ADD COLUMN gps_lon REAL")
+
+        # Migración Phase 5 & 6: Nuevas columnas EXIF, Calidad y Fechas
         new_fq_cols = {
             "camera_model": "TEXT",
             "lens_model": "TEXT",
             "iso": "INTEGER",
             "f_number": "REAL",
             "exposure": "TEXT",
-            "quality_score": "REAL NOT NULL DEFAULT 0.0"
+            "quality_score": "REAL NOT NULL DEFAULT 0.0",
+            "best_datetime": "TEXT",
+            "date_source": "TEXT",
+            "date_confidence": "TEXT",
         }
         for col, ctype in new_fq_cols.items():
             if col not in cols:
@@ -239,6 +261,14 @@ class DatabaseManager:
         if "cluster_id" not in d_cols:
             log.info("Migration: Adding cluster_id to Detections.")
             cursor.execute("ALTER TABLE Detections ADD COLUMN cluster_id INTEGER")
+
+        # Incrementar version a 2 si es menor
+        if version < 2:
+            log.info("Migration: Upgrading database schema version to 2.")
+            cursor.execute("UPDATE SchemaInfo SET version = 2")
+            if cursor.rowcount == 0:
+                cursor.execute("INSERT OR IGNORE INTO SchemaInfo (version) VALUES (2)")
+            version = 2
 
         log.info(f"Database schema version: {version}")
 
@@ -320,7 +350,7 @@ class DatabaseManager:
                 )
                 if c.lastrowid:
                     return c.lastrowid, True
-                
+
                 c.execute("SELECT id FROM FileQueue WHERE filepath=?", (filepath,))
                 row = c.fetchone()
                 return (row["id"] if row else None), False
@@ -349,20 +379,24 @@ class DatabaseManager:
         f_number: Optional[float] = None,
         exposure: Optional[str] = None,
         quality_score: float = 0.0,
+        best_datetime: Optional[str] = None,
+        date_source: Optional[str] = None,
+        date_confidence: Optional[str] = None,
+        status: str = "DONE",
     ) -> None:
         with self._write() as c:
             c.execute(
-                "UPDATE FileQueue SET status='DONE', triage_tier=?, tags=?, "
-                "exif_date=?, gps_lat=?, gps_lon=?, thumb_path=?, phash=?, "
+                "UPDATE FileQueue SET status=?, triage_tier=?, tags=?, "
+                "exif_date=?, gps_lat=?, gps_lon=?, phash=?, "
                 "camera_model=?, lens_model=?, iso=?, f_number=?, exposure=?, "
-                "quality_score=?, last_updated=? WHERE id=?",
+                "quality_score=?, best_datetime=?, date_source=?, date_confidence=?, last_updated=? WHERE id=?",
                 (
+                    status,
                     triage_tier,
                     json.dumps(tags, ensure_ascii=False),
                     exif_date,
                     gps[0] if gps else None,
                     gps[1] if gps else None,
-                    thumb_path,
                     phash,
                     camera_model,
                     lens_model,
@@ -370,6 +404,9 @@ class DatabaseManager:
                     f_number,
                     exposure,
                     quality_score,
+                    best_datetime,
+                    date_source,
+                    date_confidence,
                     _now(),
                     file_id,
                 ),
@@ -380,15 +417,11 @@ class DatabaseManager:
                     (file_id, thumb_path),
                 )
 
-    def update_error(
-        self, file_id: int, phase: str = "unknown", exception: str = ""
-    ) -> None:
+    def update_error(self, file_id: int, stage: str = "unknown", message: str = "") -> None:
         filepath = ""
         with self._write() as c:
             # Recuperar filepath para el log de errores
-            row = c.execute(
-                "SELECT filepath FROM FileQueue WHERE id=?", (file_id,)
-            ).fetchone()
+            row = c.execute("SELECT filepath FROM FileQueue WHERE id=?", (file_id,)).fetchone()
             if row:
                 filepath = row["filepath"]
 
@@ -416,7 +449,7 @@ class DatabaseManager:
             c.execute(
                 "INSERT INTO ProcessingErrors (file_id, filepath, phase, exception, retries) "
                 "VALUES (?, ?, ?, ?, ?)",
-                (file_id, filepath, phase, exception, current_retries),
+                (file_id, filepath, stage, message, current_retries),
             )
 
     def retry_all_errors(self) -> int:
@@ -434,9 +467,7 @@ class DatabaseManager:
     def clean_stale_thumbnails(self) -> int:
         """Elimina entradas de caché que ya no existen en FileQueue."""
         with self._write() as c:
-            c.execute(
-                "DELETE FROM ThumbnailCache WHERE file_id NOT IN (SELECT id FROM FileQueue)"
-            )
+            c.execute("DELETE FROM ThumbnailCache WHERE file_id NOT IN (SELECT id FROM FileQueue)")
             return c.rowcount
 
     def move_filepath(self, old: str, new: str) -> None:
@@ -506,9 +537,7 @@ class DatabaseManager:
                     c.execute("DELETE FROM FileIdentities WHERE id=?", (row["id"],))
                 removed += 1
             except Exception:
-                log.exception(
-                    "Failed to delete broken FileIdentities row %s", row.get("id")
-                )
+                log.exception("Failed to delete broken FileIdentities row %s", row.get("id"))
         return removed
 
     def cleanup_missing_files(self, limit: int = 200) -> int:
@@ -520,9 +549,7 @@ class DatabaseManager:
                 self.delete_by_path(row["filepath"])
                 removed += 1
             except Exception:
-                log.exception(
-                    "Failed to delete missing file row %s", row.get("filepath")
-                )
+                log.exception("Failed to delete missing file row %s", row.get("filepath"))
         return removed
 
     def next_pending(self) -> Optional[dict[str, Any]]:
@@ -557,13 +584,13 @@ class DatabaseManager:
         with self._read() as c:
             c.execute("""SELECT
                 COUNT(*) total,
-                SUM(status='DONE')        done,
+                SUM(status IN ('DONE', 'AUTO_CLASSIFIED', 'NEEDS_REVIEW', 'VERIFIED')) done,
                 SUM(status='PENDING')     pending,
                 SUM(status='PROCESSING')  processing,
                 SUM(status='ERROR')       errors,
-                SUM(triage_tier='safe' AND status='DONE')          safe,
-                SUM(triage_tier='review' AND status='DONE')        review,
-                SUM(triage_tier='unclassified' AND status='DONE')  unclassified
+                SUM(triage_tier='safe' AND status IN ('DONE', 'AUTO_CLASSIFIED', 'NEEDS_REVIEW', 'VERIFIED')) safe,
+                SUM(triage_tier='review' AND status IN ('DONE', 'AUTO_CLASSIFIED', 'NEEDS_REVIEW', 'VERIFIED')) review,
+                SUM(triage_tier='unclassified' AND status IN ('DONE', 'AUTO_CLASSIFIED', 'NEEDS_REVIEW', 'VERIFIED')) unclassified
               FROM FileQueue""")
             row = c.fetchone()
             return {k: (v or 0) for k, v in dict(row).items()} if row else {}
@@ -584,9 +611,7 @@ class DatabaseManager:
 
     def get_symlink_paths_for_file(self, file_id: int) -> list[str]:
         with self._read() as c:
-            c.execute(
-                "SELECT symlink_path FROM FileIdentities WHERE file_id=?", (file_id,)
-            )
+            c.execute("SELECT symlink_path FROM FileIdentities WHERE file_id=?", (file_id,))
             return [r["symlink_path"] for r in c.fetchall() if r["symlink_path"]]
 
     def get_detection_ids_for_files(self, file_ids: list[int]) -> list[int]:
@@ -613,7 +638,7 @@ class DatabaseManager:
         # Reordenar para preservar el orden de file_ids (importante para search ranking)
         df["id"] = df["id"].astype(int)
         df.set_index("id", inplace=True, drop=False)
-        return df.loc[file_ids].dropna(subset=["id"])
+        return df.reindex(file_ids).dropna(subset=["id"])
 
     def get_files_df(
         self,
@@ -639,8 +664,8 @@ class DatabaseManager:
         return df
 
     def get_files_count(
-        self, 
-        status: Optional[str] = None, 
+        self,
+        status: Optional[str] = None,
         triage: Optional[str] = None,
         camera: Optional[str] = None,
         lens: Optional[str] = None,
@@ -688,7 +713,7 @@ class DatabaseManager:
         if lens:
             clauses.append("f.lens_model=?")
             params.append(lens)
-            
+
         where = "WHERE " + " AND ".join(clauses) if clauses else ""
         sql = f"""
             SELECT f.*, t.thumb_path as cached_thumb 
@@ -707,11 +732,15 @@ class DatabaseManager:
     def get_unique_metadata(self) -> dict[str, list[str]]:
         """Retorna valores únicos para filtros (Cámaras, Lentes)."""
         with self._read() as c:
-            cameras = c.execute("SELECT DISTINCT camera_model FROM FileQueue WHERE camera_model IS NOT NULL").fetchall()
-            lenses = c.execute("SELECT DISTINCT lens_model FROM FileQueue WHERE lens_model IS NOT NULL").fetchall()
+            cameras = c.execute(
+                "SELECT DISTINCT camera_model FROM FileQueue WHERE camera_model IS NOT NULL"
+            ).fetchall()
+            lenses = c.execute(
+                "SELECT DISTINCT lens_model FROM FileQueue WHERE lens_model IS NOT NULL"
+            ).fetchall()
             return {
                 "cameras": [r[0] for r in cameras],
-                "lenses": [r[0] for r in lenses]
+                "lenses": [r[0] for r in lenses],
             }
 
     def get_duplicate_groups(self) -> list[pd.DataFrame]:
@@ -744,7 +773,9 @@ class DatabaseManager:
 
     def get_burst_groups(self, window_seconds: int = 3) -> list[pd.DataFrame]:
         """Agrupa archivos tomados en ráfaga (ventana de tiempo pequeña)."""
-        sql = "SELECT id, exif_date FROM FileQueue WHERE exif_date IS NOT NULL ORDER BY exif_date ASC"
+        sql = (
+            "SELECT id, exif_date FROM FileQueue WHERE exif_date IS NOT NULL ORDER BY exif_date ASC"
+        )
         with self._read() as c:
             rows = [dict(r) for r in c.execute(sql).fetchall()]
 
@@ -758,14 +789,14 @@ class DatabaseManager:
         try:
             last_date = datetime.fromisoformat(rows[0]["exif_date"])
         except ValueError:
-            return [] # O manejar fechas mal formadas
+            return []  # O manejar fechas mal formadas
 
         for i in range(1, len(rows)):
             try:
                 curr_date = datetime.fromisoformat(rows[i]["exif_date"])
             except ValueError:
                 continue
-                
+
             diff = (curr_date - last_date).total_seconds()
 
             if diff <= window_seconds:
@@ -829,9 +860,7 @@ class DatabaseManager:
         is_faceless: bool = False,
         source_img: str = "",
     ) -> int:
-        emb_bytes = (
-            embedding.astype(np.float32).tobytes() if embedding is not None else None
-        )
+        emb_bytes = embedding.astype(np.float32).tobytes() if embedding is not None else None
         with self._write() as c:
             c.execute(
                 "INSERT INTO KnownFaces (name,embedding,is_faceless,source_img) VALUES (?,?,?,?)",
@@ -841,9 +870,7 @@ class DatabaseManager:
 
     def load_known_faces(self) -> tuple[list[str], np.ndarray]:
         with self._read() as c:
-            c.execute(
-                "SELECT name,embedding FROM KnownFaces WHERE embedding IS NOT NULL"
-            )
+            c.execute("SELECT name,embedding FROM KnownFaces WHERE embedding IS NOT NULL")
             rows = c.fetchall()
         if not rows:
             return [], np.empty((0, ARCFACE_DIM), dtype=np.float32)
@@ -869,9 +896,7 @@ class DatabaseManager:
         is_faceless: bool = False,
         is_high_quality: bool = True,
     ) -> int:
-        emb_bytes = (
-            embedding.astype(np.float32).tobytes() if embedding is not None else None
-        )
+        emb_bytes = embedding.astype(np.float32).tobytes() if embedding is not None else None
         with self._write() as c:
             c.execute(
                 "INSERT INTO Detections "
@@ -890,7 +915,7 @@ class DatabaseManager:
                 ),
             )
             return c.lastrowid  # type: ignore[return-value]
-    
+
     def get_triage_count(self, tier: str) -> int:
         with self._read() as c:
             return c.execute(
@@ -899,9 +924,7 @@ class DatabaseManager:
                 (tier,),
             ).fetchone()[0]
 
-    def get_triage_detections(
-        self, tier: str, limit: int = 48, offset: int = 0
-    ) -> pd.DataFrame:
+    def get_triage_detections(self, tier: str, limit: int = 48, offset: int = 0) -> pd.DataFrame:
         conn = self._connect()
         df = pd.read_sql_query(
             "SELECT d.*,f.filepath,f.filename FROM Detections d "
@@ -914,9 +937,7 @@ class DatabaseManager:
         conn.close()
         return df
 
-    def get_unverified_detections(
-        self, limit: int = 48, offset: int = 0
-    ) -> pd.DataFrame:
+    def get_unverified_detections(self, limit: int = 48, offset: int = 0) -> pd.DataFrame:
         conn = self._connect()
         df = pd.read_sql_query(
             "SELECT d.*,f.filepath,f.filename FROM Detections d "
@@ -935,12 +956,15 @@ class DatabaseManager:
         file_id: int = 0
         is_high_q: bool = True
         with self._read() as c:
-            row = c.execute("SELECT embedding, file_id, is_high_quality FROM Detections WHERE id=?", (det_id,)).fetchone()
+            row = c.execute(
+                "SELECT embedding, file_id, is_high_quality FROM Detections WHERE id=?",
+                (det_id,),
+            ).fetchone()
             if row:
                 emb_bytes = row["embedding"]
                 file_id = row["file_id"]
                 is_high_q = bool(row["is_high_quality"])
-        
+
         identity_id = None
         with self._write() as c:
             c.execute(
@@ -950,17 +974,22 @@ class DatabaseManager:
             # Issue 3 & 19: Deduplicación + Filtro de Calidad
             # Solo "enseñamos" a la IA si la cara es nítida (is_high_q)
             if emb_bytes and is_high_q:
-                count = c.execute("SELECT COUNT(*) FROM KnownFaces WHERE name=?", (name,)).fetchone()[0]
+                count = c.execute(
+                    "SELECT COUNT(*) FROM KnownFaces WHERE name=?", (name,)
+                ).fetchone()[0]
                 if count < 10:
                     c.execute(
                         "INSERT INTO KnownFaces (name,embedding) VALUES (?,?)",
                         (name, emb_bytes),
                     )
                     identity_id = c.lastrowid
-            
+
             # Issue 8: Actualizar symlinks en disco (vía FileIdentities)
-            c.execute("INSERT OR IGNORE INTO FileIdentities (file_id, identity) VALUES (?,?)", (file_id, name))
-            
+            c.execute(
+                "INSERT OR IGNORE INTO FileIdentities (file_id, identity) VALUES (?,?)",
+                (file_id, name),
+            )
+
         # Issue 4: Guardamos el ID de la identidad creada para el deshacer
         self._record_tx("VERIFY", _before, {"name": name, "identity_id": identity_id})
 
@@ -1056,18 +1085,14 @@ class DatabaseManager:
             c.execute("SELECT identity FROM FileIdentities WHERE file_id=?", (file_id,))
             return [r["identity"] for r in c.fetchall()]
 
-    def update_symlink_path(
-        self, file_id: int, identity: str, symlink_path: str
-    ) -> None:
+    def update_symlink_path(self, file_id: int, identity: str, symlink_path: str) -> None:
         with self._write() as c:
             c.execute(
                 "UPDATE FileIdentities SET symlink_path=? WHERE file_id=? AND identity=?",
                 (_norm_path(symlink_path), file_id, identity),
             )
 
-    def get_file_identity_by_symlink_path(
-        self, symlink_path: str
-    ) -> Optional[dict[str, Any]]:
+    def get_file_identity_by_symlink_path(self, symlink_path: str) -> Optional[dict[str, Any]]:
         with self._read() as c:
             c.execute(
                 "SELECT id, file_id, identity, symlink_path, is_faceless FROM FileIdentities WHERE symlink_path=? LIMIT 1",
@@ -1137,7 +1162,7 @@ class DatabaseManager:
             row = c.fetchone()
             if not row:
                 return None
-            
+
             payload = json.loads(row["payload"])
             action = row["action"]
             if action in ("RENAME", "VERIFY"):
@@ -1179,8 +1204,7 @@ class DatabaseManager:
 
     def has_pending_maintenance(self) -> bool:
         return bool(
-            self.get_missing_filequeue_records(limit=1)
-            or self.get_broken_symlink_records(limit=1)
+            self.get_missing_filequeue_records(limit=1) or self.get_broken_symlink_records(limit=1)
         )
 
     # ── Watchdog ──────────────────────────────────────────────────────────
@@ -1243,28 +1267,31 @@ class DatabaseManager:
             if d <= max_hamming:
                 rec = {
                     k: r[idx]
-                    for idx, k in enumerate(
-                        ["id", "filepath", "filename", "phash", "exif_date"]
-                    )
+                    for idx, k in enumerate(["id", "filepath", "filename", "phash", "exif_date"])
                 }
                 rec["hamming"] = d
                 out.append(rec)
         return out
-
 
     # ── Mantenimiento Avanzado ────────────────────────────────────────────
     def rename_identity(self, old_name: str, new_name: str) -> bool:
         """Issue 17: Renombrado global de una identidad."""
         if not old_name or not new_name or old_name == new_name:
             return False
-        
+
         with self._write() as c:
             # 1. Actualizar identidades conocidas
             c.execute("UPDATE KnownFaces SET name=? WHERE name=?", (new_name, old_name))
             # 2. Actualizar todas las detecciones históricas
-            c.execute("UPDATE Detections SET assigned_name=? WHERE assigned_name=?", (new_name, old_name))
+            c.execute(
+                "UPDATE Detections SET assigned_name=? WHERE assigned_name=?",
+                (new_name, old_name),
+            )
             # 3. Actualizar relaciones de archivos (para symlinks)
-            c.execute("UPDATE FileIdentities SET identity=? WHERE identity=?", (new_name, old_name))
+            c.execute(
+                "UPDATE FileIdentities SET identity=? WHERE identity=?",
+                (new_name, old_name),
+            )
             return c.rowcount > 0
 
     def cleanup_db(self) -> dict[str, int]:
@@ -1273,28 +1300,30 @@ class DatabaseManager:
         with self._read() as c:
             c.execute("SELECT id, filepath FROM FileQueue")
             rows = c.fetchall()
-        
+
         to_delete = []
         for r in rows:
             if not Path(r["filepath"]).exists():
                 to_delete.append(r["id"])
-        
+
         if to_delete:
             with self._write() as c:
                 ph = ",".join("?" * len(to_delete))
                 c.execute(f"DELETE FROM FileQueue WHERE id IN ({ph})", to_delete)
                 removed_files = c.rowcount
-        
+
         # Optimizar espacio
         with self._write() as c:
             c.execute("VACUUM")
-            
+
         return {"removed_files": removed_files}
 
     def get_similar_files(self, file_id: int, limit: int = 24) -> pd.DataFrame:
         """Encuentra archivos visualmente similares usando CLIP embeddings."""
         with self._read() as c:
-            row = c.execute("SELECT embedding FROM ClipEmbeddings WHERE id=?", (file_id,)).fetchone()
+            row = c.execute(
+                "SELECT embedding FROM ClipEmbeddings WHERE id=?", (file_id,)
+            ).fetchone()
             if not row:
                 return pd.DataFrame()
             query_emb = np.frombuffer(row["embedding"], dtype=np.float32)
@@ -1306,11 +1335,11 @@ class DatabaseManager:
 
         # Similitud coseno
         scores = embs @ query_emb
-        
+
         # Ordenar y filtrar
         sorted_indices = np.argsort(scores)[::-1]
         sorted_ids = [ids[i] for i in sorted_indices if ids[i] != file_id]
-        
+
         return self.get_files_by_ids_with_thumbs(sorted_ids[:limit])
 
     def get_unlabeled_face_embeddings(self) -> list[tuple[int, bytes]]:
@@ -1331,7 +1360,7 @@ class DatabaseManager:
                 "GROUP BY cluster_id HAVING count >= 2 ORDER BY count DESC"
             )
             clusters = c.fetchall()
-            
+
             results = []
             for cl in clusters:
                 cid = cl["cluster_id"]
@@ -1339,14 +1368,17 @@ class DatabaseManager:
                 c.execute(
                     "SELECT d.id, d.face_crop_path, f.filepath "
                     "FROM Detections d JOIN FileQueue f ON d.file_id = f.id "
-                    "WHERE d.cluster_id = ? LIMIT ?", (cid, limit_per_cluster)
+                    "WHERE d.cluster_id = ? LIMIT ?",
+                    (cid, limit_per_cluster),
                 )
                 samples = c.fetchall()
-                results.append({
-                    "cluster_id": cid,
-                    "count": cl["count"],
-                    "samples": [dict(s) for s in samples]
-                })
+                results.append(
+                    {
+                        "cluster_id": cid,
+                        "count": cl["count"],
+                        "samples": [dict(s) for s in samples],
+                    }
+                )
             return results
 
     def verify_cluster(self, cluster_id: int, name: str) -> None:
@@ -1354,13 +1386,16 @@ class DatabaseManager:
         with self._write() as c:
             c.execute(
                 "UPDATE Detections SET assigned_name = ?, is_verified = 1, cluster_id = NULL "
-                "WHERE cluster_id = ?", (name, cluster_id)
+                "WHERE cluster_id = ?",
+                (name, cluster_id),
             )
 
 
 # ── Helper ────────────────────────────────────────────────────────────────────
 def _now() -> str:
-    return datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+    from datetime import timezone
+
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
 
 def _norm_path(path_str: str) -> str:

@@ -12,7 +12,7 @@ from typing import Optional
 import pandas as pd
 import streamlit as st
 
-from core.config import CONTROL_STATE_KEY, DIR_ENTRADA, EXT_TODAS, EXT_VIDEO
+from core.config import CONTROL_STATE_KEY, DIR_ENTRADA
 from core.database import DatabaseManager
 from core.watchdog_engine import FileSystemWatcher, make_db_callback
 from core.worker import ProcessingEngine
@@ -53,10 +53,11 @@ def _boot(db: DatabaseManager) -> None:
         )
         w.start()
         st.session_state.watcher = w
-    
+
     # Issue 7: Identificador de sesión único para este tab
     if "session_id" not in st.session_state:
         import uuid
+
         st.session_state.session_id = str(uuid.uuid4())
 
 
@@ -96,7 +97,7 @@ def render_dashboard(db: DatabaseManager) -> None:
     if not df_time.empty:
         df_time["exif_date"] = pd.to_datetime(df_time["exif_date"])
         # Agrupar por mes para el gráfico
-        df_month = df_time.resample('M', on='exif_date').sum().reset_index()
+        df_month = df_time.resample("M", on="exif_date").sum().reset_index()
         st.area_chart(df_month, x="exif_date", y="count", height=180, use_container_width=True)
     else:
         st.info("Sin datos temporales suficientes para mostrar actividad.")
@@ -123,7 +124,7 @@ def render_dashboard(db: DatabaseManager) -> None:
         # Issue 7: Comprobar si otra sesión ya tiene el control
         current_owner = db.get_control_state("engine_owner")
         is_locked = current_owner and current_owner != st.session_state.session_id and is_running
-        
+
         if st.button(lbl, type="primary", disabled=(is_running and not is_paused) or is_locked):
             db.set_control_state("engine_owner", st.session_state.session_id)
             engine.start()
@@ -191,9 +192,7 @@ def render_dashboard(db: DatabaseManager) -> None:
         if watcher.is_running():
             st.success(f"👁 Watchdog escuchando → `{DIR_ENTRADA.name}/`")
         else:
-            st.error(
-                "👁 Watchdog desactivado — los cambios no se detectan en tiempo real"
-            )
+            st.error("👁 Watchdog desactivado — los cambios no se detectan en tiempo real")
 
     st.divider()
 
@@ -216,6 +215,7 @@ def render_dashboard(db: DatabaseManager) -> None:
 def _sync(db: DatabaseManager, log_q: Queue) -> int:
     count = 0
     from core.scanner import scan_directory
+
     count = scan_directory(db)
     log_q.put(("INFO", f"Sync: {count} archivos nuevos en cola."))
     return count

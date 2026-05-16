@@ -35,23 +35,31 @@ def render_gallery(db: DatabaseManager) -> None:
     f1, f2, f3, f4 = st.columns([2, 2, 2, 2])
     with f1:
         status_f = st.selectbox(
-            "Estado", ["Todos", "DONE", "PENDING", "ERROR"],
-            key="gf_status", label_visibility="collapsed"
+            "Estado",
+            ["Todos", "DONE", "PENDING", "ERROR"],
+            key="gf_status",
+            label_visibility="collapsed",
         )
     with f2:
         triage_f = st.selectbox(
-            "Bandeja", ["Todas", "safe", "review", "unclassified"],
-            key="gf_triage", label_visibility="collapsed"
+            "Bandeja",
+            ["Todas", "safe", "review", "unclassified"],
+            key="gf_triage",
+            label_visibility="collapsed",
         )
     with f3:
         cam_f = st.selectbox(
-            "Cámara", ["Todas"] + meta["cameras"],
-            key="gf_cam", label_visibility="collapsed"
+            "Cámara",
+            ["Todas"] + meta["cameras"],
+            key="gf_cam",
+            label_visibility="collapsed",
         )
     with f4:
         lens_f = st.selectbox(
-            "Lente", ["Todas"] + meta["lenses"],
-            key="gf_lens", label_visibility="collapsed"
+            "Lente",
+            ["Todas"] + meta["lenses"],
+            key="gf_lens",
+            label_visibility="collapsed",
         )
 
     st.markdown("<br>", unsafe_allow_html=True)
@@ -67,13 +75,13 @@ def render_gallery(db: DatabaseManager) -> None:
     lens_param = None if lens_f == "Todas" else lens_f
 
     PAGE_SIZE = 60
-    
+
     # Obtener total para paginación
     total_files = db.get_files_count(
         status=status_param, triage=triage_param, camera=cam_param, lens=lens_param
     )
     total_pages = (total_files - 1) // PAGE_SIZE + 1 if total_files > 0 else 1
-    
+
     if st.session_state.gal_page >= total_pages:
         st.session_state.gal_page = total_pages - 1
 
@@ -81,7 +89,7 @@ def render_gallery(db: DatabaseManager) -> None:
 
     # ── Búsqueda visual (Similitud) ────────────────────────────────────────
     sim_id = st.session_state.get("similarity_root_id")
-    
+
     if sim_id:
         df = db.get_similar_files(sim_id)
         if st.button("⬅️ Volver a Galería"):
@@ -96,12 +104,12 @@ def render_gallery(db: DatabaseManager) -> None:
         st.caption(f"🎯 {len(df)} resultados ordenados por relevancia para: *{query}*")
     else:
         df = db.get_files_with_thumbs_df(
-            status=status_param, 
-            triage=triage_param, 
-            camera=cam_param, 
+            status=status_param,
+            triage=triage_param,
+            camera=cam_param,
             lens=lens_param,
-            limit=PAGE_SIZE, 
-            offset=offset
+            limit=PAGE_SIZE,
+            offset=offset,
         )
         st.caption(f"📁 {len(df)} de {total_files} archivos")
 
@@ -201,9 +209,7 @@ def _cached_files_df(
     limit: int,
     offset: int,
 ) -> pd.DataFrame:
-    return _db.get_files_with_thumbs_df(
-        status=status, triage=triage, limit=limit, offset=offset
-    )
+    return _db.get_files_with_thumbs_df(status=status, triage=triage, limit=limit, offset=offset)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -282,9 +288,7 @@ def _image_card(rec: pd.Series) -> None:
 
     # ── Checkbox bulk ──────────────────────────────────────────────────────
     selected = file_id in st.session_state.get("gallery_sel", set())
-    is_now = st.checkbox(
-        "", value=selected, key=f"gchk_{file_id}", label_visibility="collapsed"
-    )
+    is_now = st.checkbox("", value=selected, key=f"gchk_{file_id}", label_visibility="collapsed")
     if is_now != selected:
         if is_now:
             st.session_state.gallery_sel.add(file_id)
@@ -296,14 +300,14 @@ def _image_card(rec: pd.Series) -> None:
     privacy = st.session_state.get("privacy_mode", False)
     # Solo blureamos si no está verificado y hay caras (persona tag)
     should_blur = privacy and triage != "safe" and any(_is_person(t) for t in tags)
-    
-    blur_style = 'filter:blur(12px);' if should_blur else ''
-    
+
+    blur_style = "filter:blur(12px);" if should_blur else ""
+
     if thumb and Path(thumb).exists():
         st.markdown(
             f'<img src="data:image/webp;base64,{_get_base64(thumb)}" '
             f'style="width:100%;border-radius:10px;{blur_style}">',
-            unsafe_allow_html=True
+            unsafe_allow_html=True,
         )
     else:
         st.markdown(
@@ -318,7 +322,7 @@ def _image_card(rec: pd.Series) -> None:
     st.markdown(
         f'<div style="height:3px;background:#1c1f2e;width:100%;margin:4px 0">'
         f'<div style="height:100%;background:{q_color};width:{q_score*100}%"></div></div>',
-        unsafe_allow_html=True
+        unsafe_allow_html=True,
     )
 
     # ── Tags row ───────────────────────────────────────────────────────────
@@ -327,15 +331,11 @@ def _image_card(rec: pd.Series) -> None:
             f'<span class="tag-pill {"tp-person" if _is_person(t) else "tp-object"}">{t}</span>'
             for t in tags[:4]
         )
-        st.markdown(
-            f'<div style="margin:3px 0 1px">{pills}</div>', unsafe_allow_html=True
-        )
+        st.markdown(f'<div style="margin:3px 0 1px">{pills}</div>', unsafe_allow_html=True)
 
     # ── Tier + status ──────────────────────────────────────────────────────
     tb_css = {"safe": "tb-safe", "review": "tb-review"}.get(triage, "tb-unk")
-    sc = {"DONE": "#34d399", "ERROR": "#f87171", "PENDING": "#fbbf24"}.get(
-        status, "#606880"
-    )
+    sc = {"DONE": "#34d399", "ERROR": "#f87171", "PENDING": "#fbbf24"}.get(status, "#606880")
     st.markdown(
         f'<span class="tier-badge {tb_css}" style="font-size:10px">{triage}</span> '
         f'<span style="font-size:10px;color:{sc}">{status}</span>',
@@ -369,7 +369,9 @@ def _is_person(tag: str) -> bool:
         "persona",
     }
 
+
 def _get_base64(path: str) -> str:
     import base64
+
     with open(path, "rb") as f:
         return base64.b64encode(f.read()).decode()

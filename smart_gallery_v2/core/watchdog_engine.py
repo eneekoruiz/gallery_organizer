@@ -35,9 +35,7 @@ DbCallback = Callable[[str, str, str], None]
 # Handler de Eventos del SO
 # ──────────────────────────────────────────────────────────────────────────────
 class _GalleryHandler(FileSystemEventHandler):
-    def __init__(
-        self, event_queue: Queue, db_callback: Optional[DbCallback] = None
-    ) -> None:
+    def __init__(self, event_queue: Queue, db_callback: Optional[DbCallback] = None) -> None:
         super().__init__()
         self._q = event_queue
         self._cb = db_callback
@@ -99,13 +97,9 @@ class FileSystemWatcher:
         if self._active.is_set():
             return
         self._observer = Observer()
-        self._observer.schedule(
-            self._handler, str(self._watch_path), recursive=self._recursive
-        )
+        self._observer.schedule(self._handler, str(self._watch_path), recursive=self._recursive)
         if self._watch_results and DIR_RESULT != self._watch_path:
-            self._observer.schedule(
-                self._handler, str(DIR_RESULT), recursive=self._recursive
-            )
+            self._observer.schedule(self._handler, str(DIR_RESULT), recursive=self._recursive)
         self._observer.start()
         self._active.set()
         log.info(
@@ -158,44 +152,54 @@ def make_db_callback(db: "DatabaseManager") -> DbCallback:  # type: ignore[name-
         if event_type == "created":
             if _is_result_path(src):
                 return
-            
+
             p = Path(src)
             # Issue 6: Evitar re-encolar archivos ya procesados o en curso
             existing = db.get_file_by_path(src)
             if existing and existing["status"] in ("DONE", "PROCESSING"):
                 return
 
-            # Debounce: esperar estabilidad inicial
-            time.sleep(0.8)
-            db.upsert_file(
-                src,
-                p.name,
-                media_type="video" if p.suffix.lower() in EXT_VIDEO else "image",
-            )
+            # Debounce en segundo plano para no bloquear al despachador de eventos del SO
+            def _async_created():
+                time.sleep(0.8)
+                if p.exists():
+                    db.upsert_file(
+                        src,
+                        p.name,
+                        media_type="video" if p.suffix.lower() in EXT_VIDEO else "image",
+                    )
+
+            threading.Thread(target=_async_created, daemon=True).start()
+
         elif event_type == "deleted":
             if _is_result_path(src):
                 db.delete_file_identity_by_symlink_path(_norm(src))
             else:
                 db.delete_by_path(src)
+
         elif event_type == "moved":
-            time.sleep(0.1)  # Breve respiro para el SO
-            if _is_result_path(src) or _is_result_path(dest):
-                src_norm = _norm(src)
-                dest_norm = _norm(dest)
-                updated = db.update_symlink_path_by_path(src_norm, dest_norm)
-                if not updated:
-                    file_row = db.get_file_identity_by_symlink_path(src_norm)
-                    if file_row and (
-                        Path(dest).exists() or Path(dest).suffix.lower() in EXT_TODAS
-                    ):
-                        db.update_symlink_path(
-                            file_row["file_id"], file_row["identity"], dest_norm
-                        )
-                    else:
-                        db.delete_file_identity_by_symlink_path(src_norm)
-            elif Path(dest).suffix.lower() in EXT_TODAS:
-                db.move_filepath(src, dest)
-            else:
-                db.delete_by_path(src)
+
+            def _async_moved():
+                time.sleep(0.1)  # Breve respiro para estabilidad física del archivo
+                if _is_result_path(src) or _is_result_path(dest):
+                    src_norm = _norm(src)
+                    dest_norm = _norm(dest)
+                    updated = db.update_symlink_path_by_path(src_norm, dest_norm)
+                    if not updated:
+                        file_row = db.get_file_identity_by_symlink_path(src_norm)
+                        if file_row and (
+                            Path(dest).exists() or Path(dest).suffix.lower() in EXT_TODAS
+                        ):
+                            db.update_symlink_path(
+                                file_row["file_id"], file_row["identity"], dest_norm
+                            )
+                        else:
+                            db.delete_file_identity_by_symlink_path(src_norm)
+                elif Path(dest).suffix.lower() in EXT_TODAS:
+                    db.move_filepath(src, dest)
+                else:
+                    db.delete_by_path(src)
+
+            threading.Thread(target=_async_moved, daemon=True).start()
 
     return _cb

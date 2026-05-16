@@ -11,7 +11,7 @@ import time
 
 import streamlit as st
 
-from core.config import DIR_FACES, DIR_THUMBS
+from core.config import DIR_FACES
 from core.database import DatabaseManager
 
 
@@ -68,4 +68,6 @@ def render_maintenance(db: DatabaseManager):
                             time.sleep(1)
                             st.rerun()
                         except Exception as e:
-                            st.error(f"Error al borrar DB: {e}. Asegúrate de que el motor esté detenido.")
+                            st.error(
+                                f"Error al borrar DB: {e}. Asegúrate de que el motor esté detenido."
+                            )

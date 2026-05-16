@@ -20,9 +20,7 @@ log = logging.getLogger(__name__)
 
 
 def _hist_corr(a: np.ndarray, b: np.ndarray) -> float:
-    hsv_a, hsv_b = cv2.cvtColor(a, cv2.COLOR_BGR2HSV), cv2.cvtColor(
-        b, cv2.COLOR_BGR2HSV
-    )
+    hsv_a, hsv_b = cv2.cvtColor(a, cv2.COLOR_BGR2HSV), cv2.cvtColor(b, cv2.COLOR_BGR2HSV)
     scores = []
     for ch in range(3):
         ha = cv2.calcHist([hsv_a], [ch], None, [64], [0, 256])
@@ -66,48 +64,47 @@ class VideoKeyframeExtractor:
             return []
         keyframes: list[np.ndarray] = []
         prev: Optional[np.ndarray] = None
-        idx = 0
         cap = cv2.VideoCapture(str(path))
         if not cap.isOpened():
             return []
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        curr_frame = 0
         try:
-            while len(keyframes) < self._max_kf:
+            while len(keyframes) < self._max_kf and curr_frame < total_frames:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, curr_frame)
                 ret, frame = cap.read()
-                if not ret:
+                if not ret or frame is None:
                     break
-                idx += 1
-                if idx % self._interval != 0:
-                    continue
                 if prev is None or _is_scene_change(prev, frame):
                     keyframes.append(frame.copy())
                     prev = frame
+                curr_frame += self._interval
         finally:
             cap.release()
             gc.collect()
-        log.info("Vídeo %s → %d keyframes", path.name, len(keyframes))
+        log.info("Vídeo %s → %d keyframes (acelerado)", path.name, len(keyframes))
         return keyframes
 
-    def stream(
-        self, video_path: str | Path
-    ) -> Generator[tuple[int, np.ndarray], None, None]:
+    def stream(self, video_path: str | Path) -> Generator[tuple[int, np.ndarray], None, None]:
         cap = cv2.VideoCapture(str(video_path))
         if not cap.isOpened():
             return
         fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+        total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         prev: Optional[np.ndarray] = None
-        idx = kf_count = 0
+        curr_frame = 0
+        kf_count = 0
         try:
-            while kf_count < self._max_kf:
+            while kf_count < self._max_kf and curr_frame < total_frames:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, curr_frame)
                 ret, frame = cap.read()
-                if not ret:
+                if not ret or frame is None:
                     break
-                idx += 1
-                if idx % self._interval != 0:
-                    continue
                 if prev is None or _is_scene_change(prev, frame):
-                    yield int((idx / fps) * 1000), frame.copy()
+                    yield int((curr_frame / fps) * 1000), frame.copy()
                     prev = frame
                     kf_count += 1
+                curr_frame += self._interval
         finally:
             cap.release()
             gc.collect()

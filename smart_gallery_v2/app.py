@@ -42,8 +42,8 @@ st.set_page_config(
 from core.database import DatabaseManager
 from ui.sidebar_panel import render_help_sidebar
 from ui.styles import BBOX_SCRIPT, PREMIUM_CSS
-from ui.tab_dashboard import _boot as _boot_runtime
 from ui.tab_cleanup import render_cleanup
+from ui.tab_dashboard import _boot as _boot_runtime
 from ui.tab_dashboard import render_dashboard
 from ui.tab_errors import render_errors
 from ui.tab_gallery import render_gallery
@@ -133,9 +133,7 @@ def main() -> None:
     with t2:
         render_gallery(db)
         # Inspector de archivo desde galería
-        if st.session_state.get("inspect_file_id") and not st.session_state.get(
-            "inspect_det_id"
-        ):
+        if st.session_state.get("inspect_file_id") and not st.session_state.get("inspect_det_id"):
             _render_file_inspector(db)
 
     with t3:
@@ -192,9 +190,7 @@ def _render_file_inspector(db: DatabaseManager) -> None:
 
     h, w = img_bgr.shape[:2]
     scale = min(1.0, 860 / w)
-    disp = cv2.cvtColor(
-        cv2.resize(img_bgr, (int(w * scale), int(h * scale))), cv2.COLOR_BGR2RGB
-    )
+    disp = cv2.cvtColor(cv2.resize(img_bgr, (int(w * scale), int(h * scale))), cv2.COLOR_BGR2RGB)
 
     COLORS = [
         (99, 102, 241),
@@ -234,18 +230,12 @@ def _render_file_inspector(db: DatabaseManager) -> None:
         st.markdown(f"**{len(dets)} detecciones**")
         known = db.get_all_identity_names()
         for det in dets:
-            with st.expander(
-                f'👤 {det["assigned_name"]} ({det["confidence"]*100:.0f}%)'
-            ):
+            with st.expander(f'👤 {det["assigned_name"]} ({det["confidence"]*100:.0f}%)'):
                 opts = ["(Sin cambios)"] + known + ["➕ Nuevo nombre"]
-                s = st.selectbox(
-                    "", opts, key=f"fi_sel_{det['id']}", label_visibility="collapsed"
-                )
+                s = st.selectbox("", opts, key=f"fi_sel_{det['id']}", label_visibility="collapsed")
                 nw = ""
                 if s == "➕ Nuevo nombre":
-                    nw = st.text_input(
-                        "", key=f"fi_n_{det['id']}", label_visibility="collapsed"
-                    )
+                    nw = st.text_input("", key=f"fi_n_{det['id']}", label_visibility="collapsed")
                 c1, c2 = st.columns(2)
                 with c1:
                     if st.button("Guardar", key=f"fi_sv_{det['id']}", type="primary"):
@@ -254,6 +244,7 @@ def _render_file_inspector(db: DatabaseManager) -> None:
                             db.verify_detection(det["id"], n)
                             # Issue 8: Actualizar symlinks en disco
                             from core.symlink_manager import create_group_symlinks
+
                             create_group_symlinks(Path(filepath), [n], db, file_id)
                             st.toast(f"✅ {n}")
                             st.rerun()

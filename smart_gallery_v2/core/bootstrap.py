@@ -54,9 +54,7 @@ def check_models():
 def setup_environment():
     """Configura variables de entorno críticas."""
     os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
-    os.environ.setdefault(
-        "CUDA_VISIBLE_DEVICES", "-1"
-    )  # Forzar CPU por defecto en local
+    os.environ.setdefault("CUDA_VISIBLE_DEVICES", "-1")  # Forzar CPU por defecto en local
     os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
     os.environ.setdefault("ORT_DISABLE_ALL_LOGS", "1")
     check_models()
