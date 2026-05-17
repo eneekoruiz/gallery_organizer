@@ -6,7 +6,6 @@ Garantiza que una foto con N personas aparezca en N carpetas sin duplicar disco.
 
 from __future__ import annotations
 
-import gc
 import logging
 import os
 import platform
@@ -168,7 +167,6 @@ def create_group_symlinks(
                 except Exception:
                     pass
 
-    gc.collect()
     return created
 
 

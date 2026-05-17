@@ -35,18 +35,19 @@ jobs:
 
       - name: Compile Code
         run: |
-          python -m compileall smart_gallery_v2
+          python -m compileall .
 
       - name: Lint Code with Ruff
         run: |
-          ruff check smart_gallery_v2
+          ruff check .
 
       - name: Check Format with Black
         run: |
-          black --check smart_gallery_v2
+          black --check .
 
       - name: Run Pytest
         env:
           PYTHONPATH: .
         run: |
-          cd smart_gallery_v2 && pytest -q
+          pytest
+

@@ -58,10 +58,47 @@ class FaceClustering:
             ).fit(embeddings)
             labels = clustering.labels_
         else:
-            log.warning(
-                "Scikit-learn no disponible. Usando fallback simple (K-Means/Distancia no implementado)."
-            )
-            return 0
+            log.info("Scikit-learn no disponible. Usando fallback de DBSCAN implementado en NumPy...")
+            # Algoritmo DBSCAN implementado directamente en NumPy
+            n = len(embeddings)
+            labels = np.full(n, -1, dtype=int)
+            visited = np.zeros(n, dtype=bool)
+            cluster_id = 0
+
+            # Calcular la matriz de distancias Euclidianas
+            # dist[i, j] = sqrt(max(0, 2 - 2 * dot_product))
+            dot_product = np.dot(embeddings, embeddings.T)
+            dot_product = np.clip(dot_product, -1.0, 1.0)
+            dists = np.sqrt(np.maximum(0.0, 2.0 - 2.0 * dot_product))
+
+            for i in range(n):
+                if visited[i]:
+                    continue
+                visited[i] = True
+                # Encontrar vecinos dentro del radio eps
+                neighbors = np.where(dists[i] <= self._eps)[0]
+                if len(neighbors) >= self._min_samples:
+                    # Es un punto núcleo, iniciar cluster
+                    queue = list(neighbors)
+                    cluster_set = set(queue)
+                    idx = 0
+                    while idx < len(queue):
+                        curr = queue[idx]
+                        if not visited[curr]:
+                            visited[curr] = True
+                            curr_neighbors = np.where(dists[curr] <= self._eps)[0]
+                            if len(curr_neighbors) >= self._min_samples:
+                                for neighbor in curr_neighbors:
+                                    if neighbor not in cluster_set:
+                                        cluster_set.add(neighbor)
+                                        queue.append(neighbor)
+                        idx += 1
+
+                    # Asignar cluster_id a todos los elementos alcanzables por densidad
+                    for member in cluster_set:
+                        if labels[member] == -1:
+                            labels[member] = cluster_id
+                    cluster_id += 1
 
         # 2. Persistir resultados
         cluster_count = 0

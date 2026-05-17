@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS FileQueue (
     filepath     TEXT    NOT NULL UNIQUE,
     filename     TEXT    NOT NULL,
     media_type   TEXT    NOT NULL DEFAULT 'image',   -- 'image' | 'video'
-    status       TEXT    NOT NULL DEFAULT 'PENDING', -- PENDING|PROCESSING|DONE|ERROR|SKIPPED
+    status       TEXT    NOT NULL DEFAULT 'PENDING', -- PENDING|PROCESSING|AUTO_CLASSIFIED|NEEDS_REVIEW|VERIFIED|ERROR|IGNORED
     triage_tier  TEXT    NOT NULL DEFAULT 'unclassified',
     -- 'safe'(>85%) | 'review'(40-85%) | 'unclassified'(<40%)
     retries      INTEGER NOT NULL DEFAULT 0,
@@ -68,6 +68,18 @@ CREATE TABLE IF NOT EXISTS FileQueue (
     f_number     REAL,
     exposure     TEXT,
     quality_score REAL    NOT NULL DEFAULT 0.0,
+    exif_datetime TEXT,
+    filename_datetime TEXT,
+    folder_datetime TEXT,
+    filesystem_datetime TEXT,
+    best_datetime TEXT,
+    date_source  TEXT,
+    date_confidence TEXT,
+    review_required BOOLEAN NOT NULL DEFAULT 0,
+    review_reasons TEXT,
+    confidence_score REAL NOT NULL DEFAULT 1.0,
+    failed_stage TEXT,
+    error_message TEXT,
     last_updated TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 CREATE INDEX IF NOT EXISTS idx_fq_status  ON FileQueue(status);
@@ -75,6 +87,8 @@ CREATE INDEX IF NOT EXISTS idx_fq_triage  ON FileQueue(triage_tier);
 CREATE INDEX IF NOT EXISTS idx_fq_date    ON FileQueue(exif_date);
 CREATE INDEX IF NOT EXISTS idx_fq_updated ON FileQueue(last_updated);
 CREATE INDEX IF NOT EXISTS idx_fq_media   ON FileQueue(media_type);
+CREATE INDEX IF NOT EXISTS idx_fq_best_datetime ON FileQueue(best_datetime);
+CREATE INDEX IF NOT EXISTS idx_fq_review_required ON FileQueue(review_required);
 
 -- ── DETECCIONES (HITL) ────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS Detections (
@@ -239,7 +253,7 @@ class DatabaseManager:
             log.info("Migration: Adding gps_lon column to FileQueue.")
             cursor.execute("ALTER TABLE FileQueue ADD COLUMN gps_lon REAL")
 
-        # Migración Phase 5 & 6: Nuevas columnas EXIF, Calidad y Fechas
+        # Migración Phase 5 & 6 & Version 3: Nuevas columnas EXIF, Calidad, Triage y Fechas
         new_fq_cols = {
             "camera_model": "TEXT",
             "lens_model": "TEXT",
@@ -250,6 +264,15 @@ class DatabaseManager:
             "best_datetime": "TEXT",
             "date_source": "TEXT",
             "date_confidence": "TEXT",
+            "exif_datetime": "TEXT",
+            "filename_datetime": "TEXT",
+            "folder_datetime": "TEXT",
+            "filesystem_datetime": "TEXT",
+            "review_required": "BOOLEAN NOT NULL DEFAULT 0",
+            "review_reasons": "TEXT",
+            "confidence_score": "REAL NOT NULL DEFAULT 1.0",
+            "failed_stage": "TEXT",
+            "error_message": "TEXT",
         }
         for col, ctype in new_fq_cols.items():
             if col not in cols:
@@ -262,13 +285,30 @@ class DatabaseManager:
             log.info("Migration: Adding cluster_id to Detections.")
             cursor.execute("ALTER TABLE Detections ADD COLUMN cluster_id INTEGER")
 
-        # Incrementar version a 2 si es menor
-        if version < 2:
-            log.info("Migration: Upgrading database schema version to 2.")
-            cursor.execute("UPDATE SchemaInfo SET version = 2")
+        # Crear los nuevos índices si no existen
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_fq_best_datetime ON FileQueue(best_datetime);"
+        )
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_fq_status ON FileQueue(status);")
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_fq_review_required ON FileQueue(review_required);"
+        )
+
+        # Migrar DONE a AUTO_CLASSIFIED / NEEDS_REVIEW si hay datos legacy
+        cursor.execute(
+            "UPDATE FileQueue SET status='AUTO_CLASSIFIED' WHERE status='DONE' AND triage_tier='safe'"
+        )
+        cursor.execute(
+            "UPDATE FileQueue SET status='NEEDS_REVIEW' WHERE status='DONE' AND triage_tier!='safe'"
+        )
+
+        # Incrementar version a 3 si es menor
+        if version < 3:
+            log.info("Migration: Upgrading database schema version to 3.")
+            cursor.execute("UPDATE SchemaInfo SET version = 3")
             if cursor.rowcount == 0:
-                cursor.execute("INSERT OR IGNORE INTO SchemaInfo (version) VALUES (2)")
-            version = 2
+                cursor.execute("INSERT OR IGNORE INTO SchemaInfo (version) VALUES (3)")
+            version = 3
 
         log.info(f"Database schema version: {version}")
 
@@ -379,17 +419,27 @@ class DatabaseManager:
         f_number: Optional[float] = None,
         exposure: Optional[str] = None,
         quality_score: float = 0.0,
+        exif_datetime: Optional[str] = None,
+        filename_datetime: Optional[str] = None,
+        folder_datetime: Optional[str] = None,
+        filesystem_datetime: Optional[str] = None,
         best_datetime: Optional[str] = None,
         date_source: Optional[str] = None,
         date_confidence: Optional[str] = None,
-        status: str = "DONE",
+        review_required: bool = False,
+        review_reasons: Optional[list[str]] = None,
+        confidence_score: float = 1.0,
+        status: str = "AUTO_CLASSIFIED",
     ) -> None:
+        reasons_json = json.dumps(review_reasons or [], ensure_ascii=False)
         with self._write() as c:
             c.execute(
                 "UPDATE FileQueue SET status=?, triage_tier=?, tags=?, "
                 "exif_date=?, gps_lat=?, gps_lon=?, phash=?, "
                 "camera_model=?, lens_model=?, iso=?, f_number=?, exposure=?, "
-                "quality_score=?, best_datetime=?, date_source=?, date_confidence=?, last_updated=? WHERE id=?",
+                "quality_score=?, exif_datetime=?, filename_datetime=?, folder_datetime=?, "
+                "filesystem_datetime=?, best_datetime=?, date_source=?, date_confidence=?, "
+                "review_required=?, review_reasons=?, confidence_score=?, last_updated=? WHERE id=?",
                 (
                     status,
                     triage_tier,
@@ -404,9 +454,16 @@ class DatabaseManager:
                     f_number,
                     exposure,
                     quality_score,
+                    exif_datetime,
+                    filename_datetime,
+                    folder_datetime,
+                    filesystem_datetime,
                     best_datetime,
                     date_source,
                     date_confidence,
+                    1 if review_required else 0,
+                    reasons_json,
+                    confidence_score,
                     _now(),
                     file_id,
                 ),
@@ -438,11 +495,10 @@ class DatabaseManager:
             current_retries = row_retries["retries"] if row_retries else 0
 
             # Decidir si pasar a ERROR final o dejar en PENDING para reintento automático
-            # Issue 12: Usar lógica robusta. MAX_RETRIES suele ser 3.
             status = "ERROR" if current_retries >= 3 else "PENDING"
             c.execute(
-                "UPDATE FileQueue SET status=?, last_updated=? WHERE id=?",
-                (status, _now(), file_id),
+                "UPDATE FileQueue SET status=?, failed_stage=?, error_message=?, last_updated=? WHERE id=?",
+                (status, stage, message, _now(), file_id),
             )
 
             # Registrar en la tabla de errores detallados
@@ -650,8 +706,11 @@ class DatabaseManager:
         clauses: list[str] = []
         params: list[Any] = []
         if status:
-            clauses.append("status=?")
-            params.append(status)
+            if status == "DONE":
+                clauses.append("status IN ('AUTO_CLASSIFIED', 'NEEDS_REVIEW', 'VERIFIED')")
+            else:
+                clauses.append("status=?")
+                params.append(status)
         if triage:
             clauses.append("triage_tier=?")
             params.append(triage)
@@ -673,8 +732,11 @@ class DatabaseManager:
         clauses: list[str] = []
         params: list[Any] = []
         if status:
-            clauses.append("status=?")
-            params.append(status)
+            if status == "DONE":
+                clauses.append("status IN ('AUTO_CLASSIFIED', 'NEEDS_REVIEW', 'VERIFIED')")
+            else:
+                clauses.append("status=?")
+                params.append(status)
         if triage:
             clauses.append("triage_tier=?")
             params.append(triage)
@@ -702,8 +764,11 @@ class DatabaseManager:
         clauses: list[str] = []
         params: list[Any] = []
         if status:
-            clauses.append("f.status=?")
-            params.append(status)
+            if status == "DONE":
+                clauses.append("f.status IN ('AUTO_CLASSIFIED', 'NEEDS_REVIEW', 'VERIFIED')")
+            else:
+                clauses.append("f.status=?")
+                params.append(status)
         if triage:
             clauses.append("f.triage_tier=?")
             params.append(triage)

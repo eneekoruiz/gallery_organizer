@@ -36,7 +36,16 @@ def render_gallery(db: DatabaseManager) -> None:
     with f1:
         status_f = st.selectbox(
             "Estado",
-            ["Todos", "DONE", "PENDING", "ERROR"],
+            [
+                "Todos",
+                "PENDING",
+                "PROCESSING",
+                "AUTO_CLASSIFIED",
+                "NEEDS_REVIEW",
+                "VERIFIED",
+                "ERROR",
+                "IGNORED",
+            ],
             key="gf_status",
             label_visibility="collapsed",
         )
@@ -335,10 +344,18 @@ def _image_card(rec: pd.Series) -> None:
 
     # ── Tier + status ──────────────────────────────────────────────────────
     tb_css = {"safe": "tb-safe", "review": "tb-review"}.get(triage, "tb-unk")
-    sc = {"DONE": "#34d399", "ERROR": "#f87171", "PENDING": "#fbbf24"}.get(status, "#606880")
+    sc = {
+        "PENDING": "#fbbf24",
+        "PROCESSING": "#60a5fa",
+        "AUTO_CLASSIFIED": "#34d399",
+        "NEEDS_REVIEW": "#fb923c",
+        "VERIFIED": "#22c55e",
+        "ERROR": "#f87171",
+        "IGNORED": "#9ca3af",
+    }.get(status, "#606880")
     st.markdown(
         f'<span class="tier-badge {tb_css}" style="font-size:10px">{triage}</span> '
-        f'<span style="font-size:10px;color:{sc}">{status}</span>',
+        f'<span style="font-size:10px;color:{sc};font-weight:bold;">{status}</span>',
         unsafe_allow_html=True,
     )
     st.caption(filename[:24])

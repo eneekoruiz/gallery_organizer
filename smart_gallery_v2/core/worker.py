@@ -336,8 +336,16 @@ class ProcessingEngine:
                 rgb = np.array(im_pil.convert("RGB"))
                 img = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
 
-            ai_res = self._process_image(img, rgb, filepath, file_id, phash=ph)
-            return ai_res
+            tags, identities, triage_tier, quality_score = self._process_image(
+                img, rgb, filepath, file_id
+            )
+            return AIResult(
+                tags=tags,
+                identities=identities,
+                triage_tier=triage_tier,
+                phash=ph,
+                quality_score=quality_score,
+            )
         except Exception as e:
             log.exception(f"Fallo en _step_ai_image: {e}")
             return AIResult(error=str(e))
@@ -350,25 +358,30 @@ class ProcessingEngine:
             all_tags, all_ids = set(), set()
             best_tier = "unclassified"
             tier_rank = {"safe": 2, "review": 1, "unclassified": 0}
+            q_scores = []
 
             for kf in keyframes:
                 rgb = cv2.cvtColor(kf, cv2.COLOR_BGR2RGB)
-                ai_res_kf = self._process_image(kf, rgb, filepath, file_id)
-                if ai_res_kf.error:
-                    continue
-                all_tags.update(ai_res_kf.tags)
+                tags_kf, ids_kf, tier_kf, q_kf = self._process_image(kf, rgb, filepath, file_id)
+                all_tags.update(tags_kf)
 
                 # Issue 10: Deduplicar identidades por vídeo (no añadir la misma cara 10 veces)
-                for iden in ai_res_kf.identities:
+                for iden in ids_kf:
                     if iden not in all_ids:
                         all_ids.add(iden)
 
-                if tier_rank.get(ai_res_kf.triage_tier, 0) > tier_rank.get(best_tier, 0):
-                    best_tier = ai_res_kf.triage_tier
+                q_scores.append(q_kf)
+
+                if tier_rank.get(tier_kf, 0) > tier_rank.get(best_tier, 0):
+                    best_tier = tier_kf
+
+            final_q = np.mean(q_scores) if q_scores else 0.5
+
             return AIResult(
                 tags=sorted(list(all_tags)),
                 triage_tier=best_tier,
                 identities=sorted(list(all_ids)),
+                quality_score=float(final_q),
             )
         except Exception as e:
             log.exception(f"Fallo en _step_ai_video: {e}")
@@ -376,21 +389,61 @@ class ProcessingEngine:
 
     def persist(self, record: MediaRecord, ai: AIResult, exif: ExifResult, thumb: Optional[str]):
         # Extraer fecha en cascada
-        best_datetime, date_source, date_confidence = DateExtractor.extract(record.filepath)
+        exif_dt, filename_dt, folder_dt, filesystem_dt, best_dt, date_src, date_conf = (
+            DateExtractor.extract(record.filepath)
+        )
 
         # Consultar las confianzas de las caras detectadas para este archivo
         with self._db._read() as c:
             rows = c.execute(
-                "SELECT confidence FROM Detections WHERE file_id=?", (record.id,)
+                "SELECT confidence, assigned_name FROM Detections WHERE file_id=?", (record.id,)
             ).fetchall()
             face_confidences = [row["confidence"] for row in rows]
+            assigned_names = [row["assigned_name"] for row in rows]
+
+        # Calcular banderas avanzadas para el ReviewDecider
+        has_unknown_person = "Desconocido" in assigned_names
+        has_multiple_people = len(face_confidences) > 1
+        has_low_face_confidence = any(c < 0.85 for c in face_confidences)
+        has_date_uncertain = date_conf in ("low", "unknown")
+
+        # Comprobar conflicto de fecha (folder vs EXIF/filename)
+        has_folder_date_conflict = False
+        if folder_dt:
+            comp_dt = exif_dt or filename_dt
+            if comp_dt:
+                if folder_dt[:7] != comp_dt[:7]:
+                    has_folder_date_conflict = True
+
+        # Comprobar duplicado
+        has_duplicate_conflict = "Duplicado" in (ai.tags or [])
+
+        # Comprobar AI disagreement
+        has_ai_disagreement = False
+        yolo_person = "persona" in [t.lower() for t in (ai.tags or [])]
+        has_faces = len(face_confidences) > 0
+        if yolo_person != has_faces:
+            has_ai_disagreement = True
+
+        is_document = any(t in ("Documentos", "Captura") for t in (ai.tags or []))
+        if is_document and has_faces:
+            has_ai_disagreement = True
 
         # Decidir estado final de la cola (AUTO_CLASSIFIED o NEEDS_REVIEW)
-        status = ReviewDecider.decide(
+        review_required, reasons, confidence_score = ReviewDecider.decide(
             face_confidences=face_confidences,
-            date_confidence=date_confidence,
+            date_confidence=date_conf,
             quality_score=ai.quality_score,
+            has_unknown_person=has_unknown_person,
+            has_multiple_people=has_multiple_people,
+            has_low_face_confidence=has_low_face_confidence,
+            has_date_uncertain=has_date_uncertain,
+            has_folder_date_conflict=has_folder_date_conflict,
+            has_duplicate_conflict=has_duplicate_conflict,
+            has_ai_disagreement=has_ai_disagreement,
         )
+
+        status = "NEEDS_REVIEW" if review_required else "AUTO_CLASSIFIED"
 
         self._db.update_done(
             record.id,
@@ -406,10 +459,17 @@ class ProcessingEngine:
             f_number=exif.f_number,
             exposure=exif.exposure,
             quality_score=ai.quality_score,
-            best_datetime=best_datetime,
-            date_source=date_source,
-            date_confidence=date_confidence,
-            status=status.value,
+            exif_datetime=exif_dt,
+            filename_datetime=filename_dt,
+            folder_datetime=folder_dt,
+            filesystem_datetime=filesystem_dt,
+            best_datetime=best_dt,
+            date_source=date_src,
+            date_confidence=date_conf,
+            review_required=review_required,
+            review_reasons=reasons,
+            confidence_score=confidence_score,
+            status=status,
         )
 
     def _step_persist_duplicate(
@@ -420,7 +480,10 @@ class ProcessingEngine:
             tags=["Duplicado"],
             triage_tier="unclassified",
             thumb_path=thumb,
-            status="DONE",
+            review_required=True,
+            review_reasons=["duplicate_conflict"],
+            confidence_score=0.5,
+            status="NEEDS_REVIEW",
         )
 
     def materialize_results(self, record: MediaRecord, ai: AIResult):
@@ -489,10 +552,9 @@ class ProcessingEngine:
         img_rgb: np.ndarray,
         filepath: str,
         file_id: int,
-        phash: Optional[str] = None,
-    ) -> AIResult:
+    ) -> tuple[list[str], list[str], str, float]:
         """
-        Analiza una imagen devolviendo un AIResult estructurado.
+        Analiza una imagen devolviendo (tags, identities, triage_tier, quality_score).
         """
         tags, identities = set(), set()
         best_tier = "unclassified"
@@ -509,8 +571,6 @@ class ProcessingEngine:
             if self._arcface and self._faiss:
                 faces = self._arcface.get_faces(img_rgb)
                 for bbox, emb, det_conf in faces:
-                    # Issue 19: Extraer crop temporal para check de calidad
-                    # bbox: [x1, y1, x2, y2]
                     face_crop = None
                     try:
                         face_crop = img_bgr[
@@ -526,18 +586,6 @@ class ProcessingEngine:
 
                     name, faiss_conf, tier = self._faiss.search(emb)
 
-                    # Calcular quality_score basado en la nitidez de la cara (escalado 0-1)
-                    # variance > 80 es nítido, variance < 20 es muy borroso
-                    try:
-                        if face_crop is not None:
-                            gray = cv2.cvtColor(face_crop, cv2.COLOR_BGR2GRAY)
-                            var = cv2.Laplacian(gray, cv2.CV_64F).var()
-                            q_score = min(1.0, var / 150.0)  # 150 es "perfecto"
-                        else:
-                            q_score = 0.5
-                    except Exception:
-                        q_score = 0.5
-
                     if name != "Desconocido":
                         identities.add(name)
                         tags.add(name)
@@ -545,9 +593,6 @@ class ProcessingEngine:
                             best_tier = tier
 
                     crop_path = self._save_crop(img_bgr, bbox)
-                    # El worker NO inserta en KnownFaces directamente,
-                    # pero marcamos la calidad en la DB si fuera necesario.
-                    # Por ahora, la lógica de filtrado irá en verify_detection.
                     self._db.add_detection(
                         file_id=file_id,
                         embedding=emb,
@@ -559,8 +604,7 @@ class ProcessingEngine:
                         is_high_quality=is_high_q,
                     )
 
-            # Global quality score (media de las caras o 0.5)
-            # Para simplificar, usamos la varianza de la imagen completa
+            # Global quality score (media de la nitidez completa)
             gray_full = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
             full_var = cv2.Laplacian(gray_full, cv2.CV_64F).var()
             final_q_score = min(1.0, full_var / 200.0)
@@ -596,18 +640,12 @@ class ProcessingEngine:
                 else:
                     tags.add("SinClasificar")
 
-            return AIResult(
-                tags=sorted(list(tags)),
-                triage_tier=best_tier,
-                identities=sorted(list(identities)),
-                phash=phash,
-                quality_score=final_q_score,
-            )
+            return sorted(list(tags)), sorted(list(identities)), best_tier, final_q_score
 
         except Exception as e:
             err = f"Error en _process_image: {e}"
             log.exception(err)
-            return AIResult(error=err)
+            return [], [], "unclassified", 0.5
 
     def _save_crop(self, img_bgr: np.ndarray, bbox: dict[str, int]) -> str:
         t, r, b, left = bbox["top"], bbox["right"], bbox["bottom"], bbox["left"]

@@ -8,7 +8,7 @@ def test_db_initialization(temp_db):
 
         # Verificar versión de esquema
         res = c.execute("SELECT version FROM SchemaInfo").fetchone()
-        assert res["version"] == 2
+        assert res["version"] == 3
 
 
 def test_file_upsert_and_fetch(temp_db):

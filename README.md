@@ -19,6 +19,35 @@ Unlike cloud-based services, this application runs entirely on your local hardwa
 
 ---
 
+## 📅 Heurísticas Inteligentes de Fechas (Smart Date Cascade)
+
+El extractor de fechas analiza cada archivo de forma recursiva a través de una cascada de alta precisión para establecer `best_datetime`, `date_source` y `date_confidence` (`exact`, `month`, `year`, `low`, `unknown`):
+
+1. **Metadatos EXIF (`exact`)**: Lee los metadatos integrados de fecha y hora original.
+2. **Nombre de archivo (`exact`)**: Analiza patrones como `IMG_YYYYMMDD_HHMMSS`, `YYYY-MM-DD HH_MM_SS`, `album_YYYY-MM-DD` o `backup_YYYYMMDD`.
+3. **Estructura de Directorios (`folder`)**:
+   - **Fechas exactas (`exact`)**: Carpetas con patrones `YYYY-MM-DD` o `YYYY_MM_DD`.
+   - **Temporadas (`month`)**: Carpetas que contengan estaciones/temporadas, por ejemplo: `verano 2018`, `invierno 2017`, `primavera 2015`, `otoño 2019`.
+   - **Estructura anidada año/mes (`month`)**: Subcarpetas de un solo mes de dos dígitos dentro de una carpeta que es un año de 4 dígitos (ej: `/2016/07/`).
+   - **Año único (`year`)**: Carpetas nombradas solo con un año de 4 dígitos (ej: `/2014/`).
+4. **Sistema de Archivos (`low`)**: Si todo lo demás falla, se usa la fecha de modificación física de disco, marcada estrictamente con confianza baja (`low`).
+
+---
+
+## ⚖️ Decisor Automático de Revisión (ReviewDecider)
+
+Para evitar la falsa sensación de infalibilidad de la IA, cada archivo procesado se analiza bajo **7 criterios avanzados de conflicto** para decidir si va a **`AUTO_CLASSIFIED`** o requiere atención humana en **`NEEDS_REVIEW`**:
+
+*   **unknown_person**: Caras detectadas que no coinciden con ninguna conocida.
+*   **multiple_people**: Múltiples rostros en una imagen (pérdida de foco principal).
+*   **low_face_confidence**: Caras con confianza por debajo del 85%.
+*   **date_uncertain**: Cuando la fecha solo se extrae de metadatos del filesystem de baja confianza.
+*   **folder_date_conflict**: Cuando la fecha extraída de la estructura de directorios no coincide con la fecha EXIF/nombre.
+*   **duplicate_conflict**: Identificación de duplicados o similares.
+*   **ai_disagreement**: Discrepancias entre modelos (por ejemplo, YOLO detecta personas pero no se extraen caras, o se detecta un documento/captura pero contiene rostros).
+
+---
+
 ## 🚀 Key Features
 
 - **Local Face Clustering**: Groups detected faces using ArcFace embeddings. Includes a Human-in-the-Loop (HITL) interface to assign names and verify groups.
@@ -33,12 +62,12 @@ Unlike cloud-based services, this application runs entirely on your local hardwa
 
 1. **Scanner & Watchdog**: Recursively scans the input folder and detects new additions in real-time, feeding a serial SQLite queue.
 2. **Background Processing Engine**: Processes batches from the queue using ONNX Runtime (running on CPU by default for portability).
-3. **SQLite Persistence**: Thread-safe single-file persistence with automatic WAL write-locking.
+3. **SQLite Persistence**: Thread-safe single-file persistence with automatic WAL write-locking. Supports migration versioning (idempotent DB version 3).
 4. **Streamlit Triage UI**: Premium web dashboard running locally for curation, semantic search, and manual identity reviews.
 
 ---
 
-## 🛠 Installation
+## 🛠 Installation & Tests
 
 ### Prerequisites
 - Python 3.9+
@@ -66,6 +95,13 @@ Unlike cloud-based services, this application runs entirely on your local hardwa
    ```bash
    streamlit run smart_gallery_v2/app.py
    ```
+
+### Running Tests
+Para validar que el extractor inteligente de fechas, el decisor de revisión, el motor de la base de datos y la cola de procesamiento están en perfecto estado, ejecuta la suite de pruebas unitarias:
+```bash
+pytest
+```
+*Las pruebas simulan las llamadas pesadas de los motores de IA y los tiempos del sistema de archivos mediante mocks para ser seguras, deterministas y súper rápidas.*
 
 ---
 

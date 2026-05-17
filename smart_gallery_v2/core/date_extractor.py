@@ -11,38 +11,141 @@ log = logging.getLogger(__name__)
 
 class DateExtractor:
     @staticmethod
-    def extract(filepath: Path | str) -> tuple[str, str, str]:
+    def extract(filepath: Path | str) -> tuple[
+        str | None,
+        str | None,
+        str | None,
+        str,
+        str,
+        str,
+        str,
+    ]:
         """Extrae la fecha y hora de un archivo multimedia usando múltiples fuentes en cascada.
 
         Retorna:
-            (best_datetime, date_source, date_confidence)
-            - best_datetime: ISO 8601 string (ej. '2023-10-05T12:30:45')
-            - date_source: 'EXIF' | 'filename' | 'folder' | 'filesystem'
-            - date_confidence: 'high' | 'medium' | 'low'
+            (exif_datetime, filename_datetime, folder_datetime, filesystem_datetime,
+             best_datetime, date_source, date_confidence)
+            - exif_datetime: ISO 8601 string or None
+            - filename_datetime: ISO 8601 string or None
+            - folder_datetime: ISO 8601 string or None
+            - filesystem_datetime: ISO 8601 string
+            - best_datetime: ISO 8601 string
+            - date_source: 'exif' | 'filename' | 'folder' | 'filesystem'
+            - date_confidence: 'exact' | 'month' | 'year' | 'low' | 'unknown'
         """
         filepath = Path(filepath)
 
         # 1. Intentar EXIF
-        exif_date = DateExtractor._extract_exif(filepath)
-        if exif_date:
-            return exif_date, "EXIF", "high"
+        exif_datetime = DateExtractor._extract_exif(filepath)
 
         # 2. Intentar nombre de archivo
-        filename_date = DateExtractor._extract_from_string(filepath.name)
-        if filename_date:
-            return filename_date, "filename", "medium"
+        filename_datetime = DateExtractor._extract_from_string(filepath.name)
 
-        # 3. Intentar nombres de carpetas contenedoras
+        # 3. Intentar nombres de carpetas contenedoras con heurísticas avanzadas
+        folder_datetime, folder_conf = DateExtractor._extract_from_folder_structure(filepath)
+
+        # 4. Fallback del sistema de archivos (siempre disponible)
+        filesystem_datetime = DateExtractor._extract_filesystem(filepath)
+
+        # Determinar el mejor candidato
+        if exif_datetime:
+            best_datetime = exif_datetime
+            date_source = "exif"
+            date_confidence = "exact"
+        elif filename_datetime:
+            best_datetime = filename_datetime
+            date_source = "filename"
+            date_confidence = "exact"
+        elif folder_datetime:
+            best_datetime = folder_datetime
+            date_source = "folder"
+            date_confidence = folder_conf
+        else:
+            best_datetime = filesystem_datetime
+            date_source = "filesystem"
+            date_confidence = "low"
+
+        return (
+            exif_datetime,
+            filename_datetime,
+            folder_datetime,
+            filesystem_datetime,
+            best_datetime,
+            date_source,
+            date_confidence,
+        )
+
+    @staticmethod
+    def _extract_from_folder_structure(filepath: Path) -> tuple[str | None, str]:
+        """Analiza la estructura de directorios para extraer fechas inteligentes."""
         for parent in filepath.parents:
             if parent.name == "" or parent.name == filepath.anchor:
                 break
-            folder_date = DateExtractor._extract_from_string(parent.name)
-            if folder_date:
-                return folder_date, "folder", "low"
+            name = parent.name.strip()
 
-        # 4. Fallback: fecha de modificación del sistema de archivos
-        fs_date = DateExtractor._extract_filesystem(filepath)
-        return fs_date, "filesystem", "low"
+            # 1. Comprobar fecha exacta YYYY-MM-DD o YYYY_MM_DD
+            match_exact = re.search(
+                r"\b(19\d\d|20\d\d)[-_](0[1-9]|1[0-2])[-_](0[1-9]|[12]\d|3[01])\b",
+                name,
+            )
+            if match_exact:
+                y, m, d = match_exact.groups()
+                if DateExtractor._is_valid_date(int(y), int(m), int(d)):
+                    return f"{y}-{m}-{d}T00:00:00", "exact"
+
+            # 2. Comprobar temporadas tipo "verano 2018" o "summer 2018"
+            seasons = {
+                "verano": "07",
+                "summer": "07",
+                "primavera": "04",
+                "spring": "04",
+                "otono": "10",
+                "otoño": "10",
+                "autumn": "10",
+                "fall": "10",
+                "invierno": "01",
+                "winter": "01",
+            }
+            for season_name, month_val in seasons.items():
+                pat1 = rf"\b{season_name}\s+(19\d\d|20\d\d)\b"
+                pat2 = rf"\b(19\d\d|20\d\d)\s+{season_name}\b"
+                m1 = re.search(pat1, name, re.IGNORECASE)
+                m2 = re.search(pat2, name, re.IGNORECASE)
+                matched_year = None
+                if m1:
+                    matched_year = m1.group(1)
+                elif m2:
+                    matched_year = m2.group(1)
+
+                if matched_year:
+                    y = int(matched_year)
+                    if DateExtractor._is_valid_date(y, int(month_val), 1):
+                        return f"{matched_year}-{month_val}-01T00:00:00", "month"
+
+            # 3. Comprobar año-mes YYYY-MM o YYYY_MM
+            match_ym = re.search(r"\b(19\d\d|20\d\d)[-_](0[1-9]|1[0-2])\b", name)
+            if match_ym:
+                y, m = match_ym.groups()
+                if DateExtractor._is_valid_date(int(y), int(m), 1):
+                    return f"{y}-{m}-01T00:00:00", "month"
+
+            # 4. Comprobar estructura de subcarpetas tipo YYYY/MM (ej: parent = '07', grandparent = '2016')
+            if re.match(r"^(0[1-9]|1[0-2])$", name):
+                grandparent_name = parent.parent.name.strip()
+                if re.match(r"^(19\d\d|20\d\d)$", grandparent_name):
+                    y = int(grandparent_name)
+                    m = int(name)
+                    if DateExtractor._is_valid_date(y, m, 1):
+                        return f"{grandparent_name}-{name}-01T00:00:00", "month"
+
+            # 5. Comprobar solo año YYYY
+            match_y = re.search(r"\b(19\d\d|20\d\d)\b", name)
+            if match_y:
+                y = int(match_y.group(1))
+                if DateExtractor._is_valid_date(y, 1, 1):
+                    return f"{y}-01-01T00:00:00", "year"
+
+        return None, "unknown"
 
     @staticmethod
     def _extract_exif(filepath: Path) -> str | None:
