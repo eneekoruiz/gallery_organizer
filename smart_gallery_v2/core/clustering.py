@@ -14,7 +14,7 @@ if TYPE_CHECKING:
     from core.database import DatabaseManager
 
 try:
-    from sklearn.cluster import DBSCAN
+    from sklearn.cluster import DBSCAN  # type: ignore
 
     HAS_SKLEARN = True
 except ImportError:
