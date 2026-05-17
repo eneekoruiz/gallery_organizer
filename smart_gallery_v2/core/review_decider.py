@@ -1,5 +1,3 @@
-
-
 class ReviewDecider:
     @staticmethod
     def decide(

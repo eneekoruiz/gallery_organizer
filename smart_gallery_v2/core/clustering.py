@@ -58,7 +58,9 @@ class FaceClustering:
             ).fit(embeddings)
             labels = clustering.labels_
         else:
-            log.info("Scikit-learn no disponible. Usando fallback de DBSCAN implementado en NumPy...")
+            log.info(
+                "Scikit-learn no disponible. Usando fallback de DBSCAN implementado en NumPy..."
+            )
             # Algoritmo DBSCAN implementado directamente en NumPy
             n = len(embeddings)
             labels = np.full(n, -1, dtype=int)
