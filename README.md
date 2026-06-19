@@ -38,6 +38,10 @@ pytest
 
 GitHub social preview asset: `docs/images/social-preview.png`
 
+## Architecture
+
+The Streamlit interface drives a scanning and metadata pipeline backed by SQLite. Optional ONNX detection and embedding stages enrich indexed media before results enter the review workflow; destructive file decisions remain explicit user actions rather than automatic model output.
+
 ## Documentation
 
 - DeepWiki: https://deepwiki.com/eneekoruiz/gallery_organizer
