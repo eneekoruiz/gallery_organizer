@@ -9,8 +9,10 @@ import gc
 import hashlib
 import json
 import logging
+import re
 import sqlite3
 import threading
+import unicodedata
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -187,6 +189,44 @@ INSERT OR IGNORE INTO SchemaInfo (version) VALUES (1);
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# HELPERS DE BÚSQUEDA Y NORMALIZACIÓN
+# ──────────────────────────────────────────────────────────────────────────────
+def normalize_text(text: str) -> str:
+    if not text:
+        return ""
+    # Convertir a minúsculas
+    text = text.lower()
+    # Eliminar acentos y diacríticos
+    text = "".join(
+        c for c in unicodedata.normalize("NFD", text)
+        if unicodedata.category(c) != "Mn"
+    )
+    return text
+
+
+MONTHS_MAP = {
+    "enero": "01", "january": "01", "jan": "01", "ene": "01",
+    "febrero": "02", "february": "02", "feb": "02",
+    "marzo": "03", "march": "03", "mar": "03",
+    "abril": "04", "april": "04", "apr": "04", "abr": "04",
+    "mayo": "05", "may": "05",
+    "junio": "06", "june": "06", "jun": "06",
+    "julio": "07", "july": "07", "jul": "07",
+    "agosto": "08", "august": "08", "ago": "08", "aug": "08",
+    "septiembre": "09", "september": "09", "sep": "09", "sept": "09",
+    "octubre": "10", "october": "10", "oct": "10",
+    "noviembre": "11", "november": "11", "nov": "11",
+    "diciembre": "12", "december": "12", "dec": "12", "dic": "12"
+}
+
+STOP_WORDS = {
+    "en", "la", "el", "de", "con", "y", "o", "un", "una", "unos", "unas",
+    "para", "por", "al", "del", "in", "on", "at", "with", "a", "the", "of",
+    "and", "or", "los", "las", "sobre", "bajo", "delante", "detras"
+}
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # DatabaseManager — Singleton Thread-Safe
 # ──────────────────────────────────────────────────────────────────────────────
 class DatabaseManager:
@@ -253,7 +293,7 @@ class DatabaseManager:
             log.info("Migration: Adding gps_lon column to FileQueue.")
             cursor.execute("ALTER TABLE FileQueue ADD COLUMN gps_lon REAL")
 
-        # Migración Phase 5 & 6 & Version 3: Nuevas columnas EXIF, Calidad, Triage y Fechas
+        # Migración Phase 5 & 6 & Version 4: Nuevas columnas EXIF, Calidad, Triage, Fechas y OCR
         new_fq_cols = {
             "camera_model": "TEXT",
             "lens_model": "TEXT",
@@ -273,6 +313,7 @@ class DatabaseManager:
             "confidence_score": "REAL NOT NULL DEFAULT 1.0",
             "failed_stage": "TEXT",
             "error_message": "TEXT",
+            "ocr_text": "TEXT",
         }
         for col, ctype in new_fq_cols.items():
             if col not in cols:
@@ -302,13 +343,13 @@ class DatabaseManager:
             "UPDATE FileQueue SET status='NEEDS_REVIEW' WHERE status='DONE' AND triage_tier!='safe'"
         )
 
-        # Incrementar version a 3 si es menor
-        if version < 3:
-            log.info("Migration: Upgrading database schema version to 3.")
-            cursor.execute("UPDATE SchemaInfo SET version = 3")
+        # Incrementar version a 4 si es menor
+        if version < 4:
+            log.info("Migration: Upgrading database schema version to 4.")
+            cursor.execute("UPDATE SchemaInfo SET version = 4")
             if cursor.rowcount == 0:
-                cursor.execute("INSERT OR IGNORE INTO SchemaInfo (version) VALUES (3)")
-            version = 3
+                cursor.execute("INSERT OR IGNORE INTO SchemaInfo (version) VALUES (4)")
+            version = 4
 
         log.info(f"Database schema version: {version}")
 
@@ -321,6 +362,8 @@ class DatabaseManager:
             isolation_level=None,
         )
         conn.row_factory = sqlite3.Row
+        # Registrar funciones personalizadas para búsquedas insensibles a acentos
+        conn.create_function("NORMALIZE_TXT", 1, normalize_text)
         # Optimización extrema para app local
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA synchronous=NORMAL;")
@@ -430,16 +473,20 @@ class DatabaseManager:
         review_reasons: Optional[list[str]] = None,
         confidence_score: float = 1.0,
         status: str = "AUTO_CLASSIFIED",
+        ocr_text: Optional[str] = None,
+        detections_payload: Optional[list[dict]] = None,
+        clip_embedding: Optional[bytes] = None,
     ) -> None:
         reasons_json = json.dumps(review_reasons or [], ensure_ascii=False)
         with self._write() as c:
+            # 1. Update FileQueue
             c.execute(
                 "UPDATE FileQueue SET status=?, triage_tier=?, tags=?, "
                 "exif_date=?, gps_lat=?, gps_lon=?, phash=?, "
                 "camera_model=?, lens_model=?, iso=?, f_number=?, exposure=?, "
                 "quality_score=?, exif_datetime=?, filename_datetime=?, folder_datetime=?, "
                 "filesystem_datetime=?, best_datetime=?, date_source=?, date_confidence=?, "
-                "review_required=?, review_reasons=?, confidence_score=?, last_updated=? WHERE id=?",
+                "review_required=?, review_reasons=?, confidence_score=?, ocr_text=?, last_updated=? WHERE id=?",
                 (
                     status,
                     triage_tier,
@@ -464,14 +511,40 @@ class DatabaseManager:
                     1 if review_required else 0,
                     reasons_json,
                     confidence_score,
+                    ocr_text,
                     _now(),
                     file_id,
                 ),
             )
+            # 2. Update Thumbnail Cache
             if thumb_path:
                 c.execute(
                     "INSERT OR REPLACE INTO ThumbnailCache (file_id, thumb_path) VALUES (?,?)",
                     (file_id, thumb_path),
+                )
+            # 3. SRE Phase 4: Atomic insertion of Detections
+            if detections_payload:
+                for det in detections_payload:
+                    c.execute(
+                        "INSERT INTO Detections (file_id, embedding, bbox_json, face_crop_path, "
+                        "confidence, assigned_name, triage_tier, is_high_quality) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            file_id,
+                            det.get("embedding"),
+                            json.dumps(det.get("bbox", {})),
+                            det.get("face_crop_path"),
+                            det.get("confidence", 0.0),
+                            det.get("assigned_name", "Desconocido"),
+                            det.get("triage_tier", "unclassified"),
+                            1 if det.get("is_high_quality", True) else 0,
+                        ),
+                    )
+            # 4. SRE Phase 4: Atomic insertion of CLIP Embeddings
+            if clip_embedding:
+                c.execute(
+                    "INSERT OR REPLACE INTO ClipEmbeddings (id, embedding) VALUES (?, ?)",
+                    (file_id, clip_embedding),
                 )
 
     def update_error(self, file_id: int, stage: str = "unknown", message: str = "") -> None:
@@ -1454,6 +1527,225 @@ class DatabaseManager:
                 "WHERE cluster_id = ?",
                 (name, cluster_id),
             )
+
+    def search_files_fuzzy(self, query: str, limit: int = 100) -> pd.DataFrame:
+        """Búsqueda difusa de lenguaje natural traducido a SQL compleja."""
+        query_clean = normalize_text(query).strip()
+        # Eliminar puntuación común
+        query_clean = re.sub(r'[^\w\s]', '', query_clean)
+        words = query_clean.split()
+
+        matched_months = []
+        filtered_words = []
+        for word in words:
+            if word in MONTHS_MAP:
+                matched_months.append(MONTHS_MAP[word])
+            else:
+                filtered_words.append(word)
+
+        # Quitar stop words de los tokens de búsqueda
+        search_tokens = [w for w in filtered_words if w not in STOP_WORDS]
+
+        # Obtener columnas disponibles en la tabla FileQueue
+        conn = self._connect()
+        cursor = conn.cursor()
+        cursor.execute("PRAGMA table_info(FileQueue)")
+        available_cols = [row["name"] for row in cursor.fetchall()]
+        conn.close()
+
+        where_clauses = []
+        where_params = []
+
+        # 1. Filtro por mes (si se especifica)
+        if matched_months:
+            month_conditions = []
+            for m in matched_months:
+                month_conditions.append("(strftime('%m', IFNULL(f.best_datetime, f.exif_date)) = ?)")
+                where_params.append(m)
+            where_clauses.append("(" + " OR ".join(month_conditions) + ")")
+
+        # 2. Filtro por tokens de texto cruzando columnas
+        if search_tokens:
+            # Columnas de texto a cruzar
+            text_cols = ["tags", "filepath", "filename"]
+            if "ocr_text" in available_cols:
+                text_cols.append("ocr_text")
+            if "camera_model" in available_cols:
+                text_cols.append("camera_model")
+            if "lens_model" in available_cols:
+                text_cols.append("lens_model")
+
+            token_clauses = []
+            for token in search_tokens:
+                col_clauses = []
+                for col in text_cols:
+                    col_clauses.append(f"NORMALIZE_TXT(f.{col}) LIKE ?")
+                    where_params.append(f"%{token}%")
+                token_clauses.append("(" + " OR ".join(col_clauses) + ")")
+
+            # Intersección (AND) de tokens
+            where_clauses.append("(" + " AND ".join(token_clauses) + ")")
+
+        # Unir cláusulas WHERE
+        where_sql = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
+
+        # 3. Puntuación de relevancia (scoring) en SQL
+        score_terms = []
+        score_params = []
+        if search_tokens:
+            for token in search_tokens:
+                # Más peso a tags y ocr_text, menos a filepath/filename
+                if "tags" in available_cols:
+                    score_terms.append("CASE WHEN NORMALIZE_TXT(f.tags) LIKE ? THEN 4 ELSE 0 END")
+                    score_params.append(f"%{token}%")
+                if "ocr_text" in available_cols:
+                    score_terms.append("CASE WHEN NORMALIZE_TXT(f.ocr_text) LIKE ? THEN 3 ELSE 0 END")
+                    score_params.append(f"%{token}%")
+                if "filepath" in available_cols:
+                    score_terms.append("CASE WHEN NORMALIZE_TXT(f.filepath) LIKE ? THEN 1 ELSE 0 END")
+                    score_params.append(f"%{token}%")
+                if "filename" in available_cols:
+                    score_terms.append("CASE WHEN NORMALIZE_TXT(f.filename) LIKE ? THEN 1 ELSE 0 END")
+                    score_params.append(f"%{token}%")
+                if "camera_model" in available_cols:
+                    score_terms.append("CASE WHEN NORMALIZE_TXT(f.camera_model) LIKE ? THEN 2 ELSE 0 END")
+                    score_params.append(f"%{token}%")
+
+        score_sql = " + ".join(score_terms) if score_terms else "1"
+
+        sql = f"""
+            SELECT f.*, t.thumb_path as cached_thumb,
+                   ({score_sql}) as relevance_score
+            FROM FileQueue f
+            LEFT JOIN ThumbnailCache t ON f.id = t.file_id
+            {where_sql}
+            ORDER BY relevance_score DESC, IFNULL(f.best_datetime, f.exif_date) DESC
+            LIMIT ?
+        """
+        # Combinar en el orden secuencial en el que aparecen los placeholders en la consulta:
+        # 1. SELECT clause (score_sql) -> score_params
+        # 2. WHERE clause (where_sql) -> where_params
+        # 3. LIMIT clause -> limit
+        params = score_params + where_params + [limit]
+
+        conn = self._connect()
+        df = pd.read_sql_query(sql, conn, params=params)
+        conn.close()
+        return df
+
+    def get_known_faces_with_crops(self) -> list[dict[str, Any]]:
+        """
+        Retorna todas las identidades conocidas de KnownFaces con su ID, nombre,
+        y una ruta a una miniatura (face crop) representativa desde Detections.
+        """
+        with self._read() as c:
+            c.execute("SELECT id, name, is_faceless, source_img FROM KnownFaces ORDER BY name")
+            rows = c.fetchall()
+
+            results = []
+            for r in rows:
+                name = r["name"]
+                crop_row = c.execute(
+                    "SELECT face_crop_path FROM Detections "
+                    "WHERE assigned_name = ? AND face_crop_path IS NOT NULL AND face_crop_path != '' LIMIT 1",
+                    (name,)
+                ).fetchone()
+
+                crop_path = crop_row["face_crop_path"] if crop_row else None
+                results.append({
+                    "id": r["id"],
+                    "name": name,
+                    "is_faceless": bool(r["is_faceless"]),
+                    "source_img": r["source_img"],
+                    "face_crop_path": crop_path
+                })
+            return results
+
+    def merge_known_faces(self, target_id: int, source_ids: list[int]) -> None:
+        """
+        Fusiona una o más identidades de origen (source_ids) en una identidad destino (target_id).
+        Reasigna las fotos (Detections y FileIdentities), recalcula el embedding promedio,
+        y elimina las identidades origen.
+        """
+        if not source_ids:
+            return
+
+        with self._write() as c:
+            # 1. Obtener nombre de la identidad destino
+            target = c.execute("SELECT name FROM KnownFaces WHERE id = ?", (target_id,)).fetchone()
+            if not target:
+                log.error(f"Error al fusionar: No se encontró la identidad destino con ID {target_id}")
+                return
+            target_name = target["name"]
+
+            # 2. Obtener nombres de las identidades origen
+            source_names = []
+            for s_id in source_ids:
+                row = c.execute("SELECT name FROM KnownFaces WHERE id = ?", (s_id,)).fetchone()
+                if row:
+                    source_names.append(row["name"])
+
+            if not source_names:
+                return
+
+            # 3. Reasignar en Detections
+            placeholders = ",".join("?" for _ in source_names)
+            c.execute(
+                f"UPDATE Detections SET assigned_name = ?, triage_tier='safe', is_verified=1 WHERE assigned_name IN ({placeholders})",
+                [target_name] + source_names
+            )
+
+            # 4. Reasignar en FileIdentities (evitando conflictos de unicidad)
+            file_ids_with_target = {
+                row["file_id"]
+                for row in c.execute("SELECT file_id FROM FileIdentities WHERE identity = ?", (target_name,)).fetchall()
+            }
+
+            for s_name in source_names:
+                source_links = c.execute("SELECT id, file_id FROM FileIdentities WHERE identity = ?", (s_name,)).fetchall()
+                for link_id, file_id in source_links:
+                    if file_id in file_ids_with_target:
+                        c.execute("DELETE FROM FileIdentities WHERE id = ?", (link_id,))
+                    else:
+                        c.execute("UPDATE FileIdentities SET identity = ? WHERE id = ?", (target_name, link_id))
+                        file_ids_with_target.add(file_id)
+
+            # 5. Recalcular el embedding promedio para la identidad destino
+            rows = c.execute(
+                "SELECT embedding FROM Detections WHERE assigned_name = ? AND embedding IS NOT NULL",
+                (target_name,)
+            ).fetchall()
+
+            if rows:
+                embs = [np.frombuffer(r["embedding"], dtype=np.float32) for r in rows]
+                mean_emb = np.mean(embs, axis=0)
+                mean_emb_bytes = mean_emb.astype(np.float32).tobytes()
+                c.execute(
+                    "UPDATE KnownFaces SET embedding = ? WHERE id = ?",
+                    (mean_emb_bytes, target_id)
+                )
+
+            # 6. Eliminar las identidades origen de KnownFaces
+            c.execute(f"DELETE FROM KnownFaces WHERE id IN ({placeholders})", source_ids)
+
+        log.info(f"Identidades {source_names} fusionadas con éxito en '{target_name}' (ID {target_id})")
+
+    def merge_dbscan_clusters(self, target_cluster_id: int, source_cluster_ids: list[int]) -> None:
+        """
+        Fusiona múltiples clústeres DBSCAN de origen (source_cluster_ids) en un clúster destino (target_cluster_id).
+        Reasigna todas las detecciones de origen al clúster destino.
+        """
+        if not source_cluster_ids:
+            return
+
+        with self._write() as c:
+            placeholders = ",".join("?" for _ in source_cluster_ids)
+            c.execute(
+                f"UPDATE Detections SET cluster_id = ? WHERE cluster_id IN ({placeholders})",
+                [target_cluster_id] + source_cluster_ids
+            )
+
+        log.info(f"Clústeres {source_cluster_ids} fusionados con éxito en el clúster #{target_cluster_id}")
 
 
 # ── Helper ────────────────────────────────────────────────────────────────────

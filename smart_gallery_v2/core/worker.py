@@ -30,6 +30,7 @@ from core.ai_engines import (
     FaissIndex,
     OCREngine,
     YOLOEngine,
+    DenseCaptionEngine,
 )
 from core.config import (
     BATCH_SIZE,
@@ -77,6 +78,7 @@ class ProcessingEngine:
         self._yolo: Optional[YOLOEngine] = None
         self._arcface: Optional[ArcFaceEngine] = None
         self._clip: Optional[CLIPEngine] = None
+        self._caption: Optional[DenseCaptionEngine] = None
         self._video: Optional[VideoKeyframeExtractor] = None
         self._faiss_count = 0  # Para detectar cambios
         self._thumb_lock = threading.Lock()
@@ -336,7 +338,7 @@ class ProcessingEngine:
                 rgb = np.array(im_pil.convert("RGB"))
                 img = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
 
-            tags, identities, triage_tier, quality_score = self._process_image(
+            tags, identities, triage_tier, quality_score, ocr_txt, detections, clip_emb = self._process_image(
                 img, rgb, filepath, file_id
             )
             return AIResult(
@@ -345,6 +347,9 @@ class ProcessingEngine:
                 triage_tier=triage_tier,
                 phash=ph,
                 quality_score=quality_score,
+                ocr_text=ocr_txt,
+                detections_payload=detections,
+                clip_embedding=clip_emb,
             )
         except Exception as e:
             log.exception(f"Fallo en _step_ai_image: {e}")
@@ -360,9 +365,10 @@ class ProcessingEngine:
             tier_rank = {"safe": 2, "review": 1, "unclassified": 0}
             q_scores = []
 
+            all_ocr = []
             for kf in keyframes:
                 rgb = cv2.cvtColor(kf, cv2.COLOR_BGR2RGB)
-                tags_kf, ids_kf, tier_kf, q_kf = self._process_image(kf, rgb, filepath, file_id)
+                tags_kf, ids_kf, tier_kf, q_kf, ocr_kf, dets_kf, clip_kf = self._process_image(kf, rgb, filepath, file_id)
                 all_tags.update(tags_kf)
 
                 # Issue 10: Deduplicar identidades por vídeo (no añadir la misma cara 10 veces)
@@ -372,16 +378,23 @@ class ProcessingEngine:
 
                 q_scores.append(q_kf)
 
+                if ocr_kf:
+                    all_ocr.append(ocr_kf)
+
                 if tier_rank.get(tier_kf, 0) > tier_rank.get(best_tier, 0):
                     best_tier = tier_kf
 
             final_q = np.mean(q_scores) if q_scores else 0.5
+            ocr_text = "\n".join(all_ocr) if all_ocr else None
 
             return AIResult(
                 tags=sorted(list(all_tags)),
                 triage_tier=best_tier,
                 identities=sorted(list(all_ids)),
                 quality_score=float(final_q),
+                ocr_text=ocr_text,
+                detections_payload=[],  # Videos will need a similar approach if extracting multiple faces
+                clip_embedding=None,
             )
         except Exception as e:
             log.exception(f"Fallo en _step_ai_video: {e}")
@@ -470,6 +483,9 @@ class ProcessingEngine:
             review_reasons=reasons,
             confidence_score=confidence_score,
             status=status,
+            ocr_text=ai.ocr_text,
+            detections_payload=ai.detections_payload,
+            clip_embedding=ai.clip_embedding,
         )
 
     def _step_persist_duplicate(
@@ -508,6 +524,7 @@ class ProcessingEngine:
         self._yolo = YOLOEngine()
         self._arcface = ArcFaceEngine()
         self._clip = CLIPEngine()
+        self._caption = DenseCaptionEngine()
         self._video = VideoKeyframeExtractor()
         self._reload_faiss()
         self._emit("INFO", "✓ Motores listos.")
@@ -552,11 +569,12 @@ class ProcessingEngine:
         img_rgb: np.ndarray,
         filepath: str,
         file_id: int,
-    ) -> tuple[list[str], list[str], str, float]:
+    ) -> tuple[list[str], list[str], str, float, Optional[str], list[dict], Optional[bytes]]:
         """
-        Analiza una imagen devolviendo (tags, identities, triage_tier, quality_score).
+        Analiza una imagen devolviendo (tags, identities, triage_tier, quality_score, ocr_text, detections_payload, clip_embedding).
         """
         tags, identities = set(), set()
+        ocr_text = None
         best_tier = "unclassified"
         tier_rank = {"safe": 2, "review": 1, "unclassified": 0}
 
@@ -568,6 +586,7 @@ class ProcessingEngine:
                     tags.add(d["class"])
 
             # 2. Faces
+            detections_payload = []
             if self._arcface and self._faiss:
                 faces = self._arcface.get_faces(img_rgb)
                 for bbox, emb, det_conf in faces:
@@ -593,16 +612,16 @@ class ProcessingEngine:
                             best_tier = tier
 
                     crop_path = self._save_crop(img_bgr, bbox)
-                    self._db.add_detection(
-                        file_id=file_id,
-                        embedding=emb,
-                        bbox=bbox,
-                        face_crop_path=crop_path,
-                        confidence=faiss_conf if name != "Desconocido" else det_conf,
-                        assigned_name=name,
-                        triage_tier=tier,
-                        is_high_quality=is_high_q,
-                    )
+                    
+                    detections_payload.append({
+                        "embedding": emb,
+                        "bbox": bbox,
+                        "face_crop_path": crop_path,
+                        "confidence": faiss_conf if name != "Desconocido" else det_conf,
+                        "assigned_name": name,
+                        "triage_tier": tier,
+                        "is_high_quality": is_high_q
+                    })
 
             # Global quality score (media de la nitidez completa)
             gray_full = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
@@ -610,12 +629,20 @@ class ProcessingEngine:
             final_q_score = min(1.0, full_var / 200.0)
 
             # 3. CLIP
+            clip_embedding = None
             if self._clip:
                 emb = self._clip.embed_image(img_rgb)
                 if emb is not None:
-                    self._db.upsert_clip(file_id, emb)
+                    clip_embedding = emb
 
-            # 4. OCR fallback
+            # 3.5. Dense Captioning (Moondream2)
+            dense_caption = None
+            if self._caption:
+                cap = self._caption.generate_caption(img_rgb, prompt="Describe what you see in a short paragraph, focusing on objects and context.")
+                if cap:
+                    dense_caption = cap
+
+            # 4. OCR fallback + Dense Caption integration
             if not tags:
                 ocr_text = ""
                 try:
@@ -640,12 +667,16 @@ class ProcessingEngine:
                 else:
                     tags.add("SinClasificar")
 
-            return sorted(list(tags)), sorted(list(identities)), best_tier, final_q_score
+            if dense_caption:
+                ocr_text = (ocr_text or "") + f"\n[AI Context]: {dense_caption}"
+                tags.add("AI_Caption")
+
+            return sorted(list(tags)), sorted(list(identities)), best_tier, final_q_score, (ocr_text if ocr_text else None), detections_payload, clip_embedding
 
         except Exception as e:
             err = f"Error en _process_image: {e}"
             log.exception(err)
-            return [], [], "unclassified", 0.5
+            return [], [], "unclassified", 0.5, None, [], None
 
     def _save_crop(self, img_bgr: np.ndarray, bbox: dict[str, int]) -> str:
         t, r, b, left = bbox["top"], bbox["right"], bbox["bottom"], bbox["left"]

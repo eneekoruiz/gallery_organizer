@@ -22,13 +22,22 @@ from core.database import DatabaseManager
 # ──────────────────────────────────────────────────────────────────────────────
 def render_gallery(db: DatabaseManager) -> None:
 
-    # ── Búsqueda semántica ─────────────────────────────────────────────────
-    query = st.text_input(
-        "",
-        placeholder="🔍  Búsqueda semántica: 'Cumpleaños con pastel', 'Perro en el parque', 'Playa al atardecer'…",
-        label_visibility="collapsed",
-        key="gallery_query",
-    )
+    # ── Búsqueda semántica y modo ──────────────────────────────────────────
+    col_search, col_mode = st.columns([3, 1])
+    with col_search:
+        query = st.text_input(
+            "",
+            placeholder="🔍 Búsqueda: 'perro en la playa en agosto', 'factura en diciembre'...",
+            label_visibility="collapsed",
+            key="gallery_query",
+        )
+    with col_mode:
+        st.selectbox(
+            "Método de búsqueda",
+            ["Búsqueda Vectorial (CLIP)", "Búsqueda SQL (Fuzzy/Metadatos)"],
+            label_visibility="collapsed",
+            key="search_mode",
+        )
 
     # ── Filtros ────────────────────────────────────────────────────────────
     meta = db.get_unique_metadata()
@@ -83,7 +92,7 @@ def render_gallery(db: DatabaseManager) -> None:
     cam_param = None if cam_f == "Todas" else cam_f
     lens_param = None if lens_f == "Todas" else lens_f
 
-    PAGE_SIZE = 60
+    PAGE_SIZE = 48
 
     # Obtener total para paginación
     total_files = db.get_files_count(
@@ -106,11 +115,16 @@ def render_gallery(db: DatabaseManager) -> None:
             st.rerun()
         st.caption(f"🪄 Mostrando archivos similares al ID {sim_id}")
     elif query.strip():
-        df = _semantic_search(db, query.strip())
+        search_mode = st.session_state.get("search_mode", "Búsqueda Vectorial (CLIP)")
+        if search_mode == "Búsqueda Vectorial (CLIP)":
+            df = _semantic_search(db, query.strip())
+        else:
+            df = db.search_files_fuzzy(query.strip(), limit=100)
+
         if df.empty:
             st.warning(f"Sin resultados para: '{query}'")
             return
-        st.caption(f"🎯 {len(df)} resultados ordenados por relevancia para: *{query}*")
+        st.caption(f"🎯 {len(df)} resultados ordenados por relevancia para: *{query}* ({search_mode})")
     else:
         df = db.get_files_with_thumbs_df(
             status=status_param,
@@ -273,13 +287,31 @@ def _bulk_rename_files(db: DatabaseManager, file_ids: list[int], name: str) -> N
 # Masonry Grid
 # ──────────────────────────────────────────────────────────────────────────────
 def _masonry(db: DatabaseManager, df: pd.DataFrame) -> None:
-    n_cols = 4
-    rows = [df.iloc[i : i + n_cols] for i in range(0, len(df), n_cols)]
-    for row_df in rows:
-        cols = st.columns(n_cols)
-        for col, (_, rec) in zip(cols, row_df.iterrows()):
-            with col:
-                _image_card(rec)
+    if df.empty:
+        return
+        
+    if "exif_date" in df.columns:
+        df["date_group"] = pd.to_datetime(df["exif_date"], errors="coerce").dt.strftime("%Y-%m-%d")
+        df["date_group"] = df["date_group"].fillna("Sin fecha")
+    elif "best_datetime" in df.columns:
+        df["date_group"] = pd.to_datetime(df["best_datetime"], errors="coerce").dt.strftime("%Y-%m-%d")
+        df["date_group"] = df["date_group"].fillna("Sin fecha")
+    else:
+        df["date_group"] = "Sin fecha"
+        
+    date_groups = df.groupby("date_group", sort=False)
+    
+    n_cols = 6
+    
+    for date_str, group_df in date_groups:
+        st.markdown(f"#### 📅 {date_str} <span style='font-size:12px;color:#505570;font-weight:normal'>· {len(group_df)} fotos</span>", unsafe_allow_html=True)
+        
+        rows = [group_df.iloc[i : i + n_cols] for i in range(0, len(group_df), n_cols)]
+        for row_df in rows:
+            cols = st.columns(n_cols)
+            for col, (_, rec) in zip(cols, row_df.iterrows()):
+                with col:
+                    _image_card(rec)
 
 
 def _image_card(rec: pd.Series) -> None:
@@ -305,23 +337,26 @@ def _image_card(rec: pd.Series) -> None:
             st.session_state.gallery_sel.discard(file_id)
 
     # ── Thumbnail con Privacy Mode ─────────────────────────────────────────
-    thumb = rec.get("cached_thumb")
     privacy = st.session_state.get("privacy_mode", False)
     # Solo blureamos si no está verificado y hay caras (persona tag)
     should_blur = privacy and triage != "safe" and any(_is_person(t) for t in tags)
 
     blur_style = "filter:blur(12px);" if should_blur else ""
 
-    if thumb and Path(thumb).exists():
+    b64_thumb = _get_optimized_thumbnail(filepath, size=(250, 250))
+
+    if b64_thumb:
         st.markdown(
-            f'<img src="data:image/webp;base64,{_get_base64(thumb)}" '
-            f'style="width:100%;border-radius:10px;{blur_style}">',
+            f'<div style="position:relative; margin-bottom:15px; text-align:center;">'
+            f'<img src="data:image/webp;base64,{b64_thumb}" '
+            f'style="width:100%; aspect-ratio:1/1; object-fit:cover; border-radius:12px; border:1px solid #1c1f2e; box-shadow:0 4px 6px rgba(0,0,0,0.1); {blur_style}">'
+            f'</div>',
             unsafe_allow_html=True,
         )
     else:
         st.markdown(
-            '<div style="background:#10121a;border-radius:10px;aspect-ratio:4/3;'
-            'display:flex;align-items:center;justify-content:center;font-size:28px">🖼️</div>',
+            '<div style="background:#10121a;border-radius:12px;aspect-ratio:1/1;'
+            'display:flex;align-items:center;justify-content:center;font-size:28px;margin-bottom:15px">🖼️</div>',
             unsafe_allow_html=True,
         )
 
@@ -387,8 +422,41 @@ def _is_person(tag: str) -> bool:
     }
 
 
-def _get_base64(path: str) -> str:
-    import base64
+CACHE_DIR = Path(".cache_thumbs")
+CACHE_DIR.mkdir(exist_ok=True)
 
-    with open(path, "rb") as f:
-        return base64.b64encode(f.read()).decode()
+def _get_optimized_thumbnail(image_path: str, size: tuple[int, int] = (250, 250)) -> str:
+    import os
+    import io
+    import base64
+    from PIL import Image
+    
+    path = Path(image_path)
+    if not path.exists():
+        return ""
+
+    try:
+        mtime = os.path.getmtime(image_path)
+        cache_filename = f"{path.stem}_{int(mtime)}_{size[0]}x{size[1]}.webp"
+        cache_path = CACHE_DIR / cache_filename
+
+        if cache_path.exists():
+            with open(cache_path, "rb") as f:
+                return base64.b64encode(f.read()).decode("utf-8")
+
+        with Image.open(image_path) as img:
+            img.thumbnail(size)
+            img.save(cache_path, "WEBP", quality=80)
+
+        with open(cache_path, "rb") as f:
+            return base64.b64encode(f.read()).decode("utf-8")
+
+    except Exception:
+        try:
+            with Image.open(image_path) as img:
+                img.thumbnail(size)
+                buf = io.BytesIO()
+                img.save(buf, format="WEBP", quality=80)
+                return base64.b64encode(buf.getvalue()).decode("utf-8")
+        except Exception:
+            return ""

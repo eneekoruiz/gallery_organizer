@@ -558,3 +558,59 @@ class OCREngine:
             except Exception as e:
                 log.error(f"OCR Engine load failed: {e}")
         return self._reader
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Dense Caption Engine (Phase 3: IA Nivel Dios)
+# ──────────────────────────────────────────────────────────────────────────────
+class DenseCaptionEngine:
+    _instance: Optional[DenseCaptionEngine] = None
+
+    def __new__(cls) -> DenseCaptionEngine:
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance._initialized = False
+        return cls._instance
+
+    def __init__(self) -> None:
+        if getattr(self, "_initialized", False):
+            return
+        self._model = None
+        self._tokenizer = None
+        self._initialized = True
+        self._load_failed = False
+
+    def _ensure_loaded(self) -> None:
+        if self._model or self._load_failed:
+            return
+        try:
+            import torch
+            from transformers import AutoModelForCausalLM, AutoTokenizer
+            from PIL import Image
+
+            model_id = "vikhyatk/moondream2"
+            revision = "2024-05-20"
+            self._model = AutoModelForCausalLM.from_pretrained(
+                model_id, trust_remote_code=True, revision=revision
+            )
+            self._tokenizer = AutoTokenizer.from_pretrained(model_id, revision=revision)
+            log.info("DenseCaptionEngine: Moondream2 cargado correctamente.")
+        except ImportError:
+            log.warning("transformers o torch no instalados. Moondream2 desactivado.")
+            self._load_failed = True
+        except Exception as e:
+            log.error(f"Error cargando Moondream2: {e}")
+            self._load_failed = True
+
+    def generate_caption(self, img_rgb: np.ndarray, prompt: str = "Describe this image in detail.") -> Optional[str]:
+        self._ensure_loaded()
+        if not self._model:
+            return None
+        try:
+            from PIL import Image as _PILImage
+            pil_img = _PILImage.fromarray(img_rgb)
+            enc_image = self._model.encode_image(pil_img)
+            answer = self._model.answer_question(enc_image, prompt, self._tokenizer)
+            return answer
+        except Exception as e:
+            log.error(f"DenseCaptionEngine inferencia fallida: {e}")
+            return None

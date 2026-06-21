@@ -134,8 +134,8 @@ def test_review_decider():
 
 
 def test_db_schema_version(temp_db):
-    """Verifica que el schema version se inicialice y trackee en la versión 3."""
-    assert temp_db.schema_version == 3
+    """Verifica que el schema version se inicialice y trackee en la versión 4."""
+    assert temp_db.schema_version == 4
 
 
 def test_numpy_dbscan_fallback(temp_db):

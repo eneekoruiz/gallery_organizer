@@ -48,6 +48,8 @@ from ui.tab_dashboard import render_dashboard
 from ui.tab_errors import render_errors
 from ui.tab_gallery import render_gallery
 from ui.tab_maintenance import render_maintenance
+from ui.tab_people import render_people_management
+from ui.tab_explorer import render_semantic_explorer
 from ui.tab_timeline import render_timeline
 from ui.tab_triage import render_triage
 
@@ -115,11 +117,13 @@ def main() -> None:
     st.markdown("<br>", unsafe_allow_html=True)
 
     # ── Navegación principal ──────────────────────────────────────────────
-    t1, t2, t3, t4, t5, t6, t7 = st.tabs(
+    t1, t2, t3, t4, t5, t6, t7, t8, t9 = st.tabs(
         [
             "🎛️  Dashboard",
             "🖼️  Galería",
             "⚖️  Triaje",
+            "👥  Personas",
+            "🌌  Explorador 3D",
             "🧹  Limpieza",
             "📅  Línea de Tiempo",
             "⚠️  Errores",
@@ -140,15 +144,21 @@ def main() -> None:
         render_triage(db)
 
     with t4:
-        render_cleanup(db)
+        render_people_management(db)
 
     with t5:
-        render_timeline(db)
+        render_semantic_explorer(db)
 
     with t6:
-        render_errors(db)
+        render_cleanup(db)
 
     with t7:
+        render_timeline(db)
+
+    with t8:
+        render_errors(db)
+
+    with t9:
         render_maintenance(db)
 
     gc.collect()

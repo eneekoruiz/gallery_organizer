@@ -38,6 +38,10 @@ class AIResult:
     phash: Optional[str] = None
     quality_score: float = 0.0
     error: Optional[str] = None
+    ocr_text: Optional[str] = None
+    # SRE Phase 4: Detections and embeddings returned raw to avoid partial DB commits
+    detections_payload: list[dict] = field(default_factory=list)
+    clip_embedding: Optional[bytes] = None
 
 
 @dataclass(frozen=True)
