@@ -26,7 +26,9 @@ def render_events_and_locations(db: DatabaseManager) -> None:
     with events_tab:
         _render_events(db, EventManagementService(db))
     with folders_tab:
-        _render_locations(LocationController(SqliteMediaLocationRepository(db), NativeFolderOpener()))
+        _render_locations(
+            LocationController(SqliteMediaLocationRepository(db), NativeFolderOpener())
+        )
 
 
 def _render_events(db: DatabaseManager, service: EventManagementService) -> None:
@@ -51,7 +53,11 @@ def _render_events(db: DatabaseManager, service: EventManagementService) -> None
         st.info("Todavía no hay eventos. Reconstrúyelos cuando hayas procesado varias imágenes.")
         return
     geo = pd.DataFrame(
-        [{"lat": e["centroid_lat"], "lon": e["centroid_lon"]} for e in events if e["centroid_lat"] is not None]
+        [
+            {"lat": e["centroid_lat"], "lon": e["centroid_lon"]}
+            for e in events
+            if e["centroid_lat"] is not None
+        ]
     )
     if not geo.empty:
         st.map(geo, use_container_width=True, zoom=5)
@@ -70,7 +76,9 @@ def _render_events(db: DatabaseManager, service: EventManagementService) -> None
                 )
                 if event.get("centroid_lat") is not None:
                     st.caption(f"GPS: {event['centroid_lat']:.5f}, {event['centroid_lon']:.5f}")
-                title = st.text_input("Nombre del evento", event["title"], key=f"event_title_{event['id']}")
+                title = st.text_input(
+                    "Nombre del evento", event["title"], key=f"event_title_{event['id']}"
+                )
                 locked = st.toggle(
                     "Conservar mis cambios al reagrupar",
                     value=bool(event["manually_locked"]),
@@ -95,7 +103,9 @@ def _render_events(db: DatabaseManager, service: EventManagementService) -> None
 
 def _render_locations(controller: LocationController) -> None:
     st.caption("Encuentra el original y cada carpeta de resultados donde aparece.")
-    query = st.text_input("Buscar archivo, carpeta o persona", placeholder="Ej. Bilbao, Ana, IMG_2024")
+    query = st.text_input(
+        "Buscar archivo, carpeta o persona", placeholder="Ej. Bilbao, Ana, IMG_2024"
+    )
     views = controller.search(query)
     records = [
         {
@@ -123,11 +133,15 @@ def _render_locations(controller: LocationController) -> None:
     if original_col.button("Abrir carpeta original", use_container_width=True):
         _open(lambda: controller.open_original(selected))
     folder = (
-        result_col.selectbox("Carpeta organizada", selected.result_folders, label_visibility="collapsed")
+        result_col.selectbox(
+            "Carpeta organizada", selected.result_folders, label_visibility="collapsed"
+        )
         if selected.result_folders
         else None
     )
-    if result_col.button("Abrir carpeta organizada", disabled=folder is None, use_container_width=True):
+    if result_col.button(
+        "Abrir carpeta organizada", disabled=folder is None, use_container_width=True
+    ):
         if folder is not None:
             _open(lambda: controller.open_result(folder))
     st.code(str(selected.original_path), language=None)

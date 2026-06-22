@@ -660,6 +660,7 @@ class ProcessingEngine:
 
 def _gps_decimal(values: Any, ref: Any) -> float:
     """Convierte grados EXIF (racionales o números) a decimal firmado."""
+
     def as_float(value: Any) -> float:
         if isinstance(value, tuple):
             return float(value[0]) / float(value[1])

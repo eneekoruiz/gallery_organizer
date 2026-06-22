@@ -43,6 +43,8 @@ class EventManagementService:
                 (event_id,),
             ).fetchall()
         return [
-            EventMediaItem(Path(row["filepath"]), str(row["filename"]), float(row["membership_score"]))
+            EventMediaItem(
+                Path(row["filepath"]), str(row["filename"]), float(row["membership_score"])
+            )
             for row in rows
         ]
