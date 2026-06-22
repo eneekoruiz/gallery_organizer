@@ -44,7 +44,7 @@ def _render_duplicates(db: DatabaseManager) -> None:
     st.warning(f"Se han detectado {len(groups)} grupos de archivos idénticos (mismo hash visual).")
 
     for i, df in enumerate(groups):
-        with st.expander(f"Grupo #{i+1} — {len(df)} archivos coincidentes", expanded=True):
+        with st.expander(f"Grupo #{i + 1} — {len(df)} archivos coincidentes", expanded=True):
             cols = st.columns(len(df))
             for col, (_, row) in zip(cols, df.iterrows()):
                 with col:
@@ -71,7 +71,7 @@ def _render_bursts(db: DatabaseManager) -> None:
     st.write(f"Se han detectado {len(groups)} secuencias de fotos rápidas.")
 
     for i, df in enumerate(groups):
-        with st.expander(f"Ráfaga #{i+1} — {len(df)} fotos", expanded=True):
+        with st.expander(f"Ráfaga #{i + 1} — {len(df)} fotos", expanded=True):
             # Recomendación: La que tenga mejor tier o mayor resolución (aquí simplificamos)
             st.info("💡 Recomendación: Mantén la foto con mejor encuadre o iluminación.")
 

@@ -9,6 +9,7 @@ scikit-learn
 
 # UI
 streamlit
+streamlit-cropper
 
 # AI Engines
 onnxruntime

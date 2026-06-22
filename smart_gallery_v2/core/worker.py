@@ -23,15 +23,6 @@ import numpy as np
 from PIL import ExifTags, Image
 from PIL import Image as _PILImage
 
-from core.ai_engines import (
-    ArcFaceEngine,
-    CLIPEngine,
-    DedupeEngine,
-    FaissIndex,
-    OCREngine,
-    YOLOEngine,
-    DenseCaptionEngine,
-)
 from core.config import (
     BATCH_SIZE,
     CONTROL_STATE_KEY,
@@ -60,9 +51,6 @@ from core.video_processor import VideoKeyframeExtractor
 log = logging.getLogger(__name__)
 
 
-ocr_engine = OCREngine()
-
-
 # ──────────────────────────────────────────────────────────────────────────────
 # ProcessingEngine
 # ──────────────────────────────────────────────────────────────────────────────
@@ -74,11 +62,14 @@ class ProcessingEngine:
         self._pause_evt = threading.Event()
         self._thread: Optional[threading.Thread] = None
 
-        # Motores
-        self._yolo: Optional[YOLOEngine] = None
-        self._arcface: Optional[ArcFaceEngine] = None
-        self._clip: Optional[CLIPEngine] = None
-        self._caption: Optional[DenseCaptionEngine] = None
+        # Motores pesados: se importan y construyen al arrancar el worker.
+        self._yolo: Any = None
+        self._arcface: Any = None
+        self._clip: Any = None
+        self._caption: Any = None
+        self._ocr: Any = None
+        self._dedupe_engine: Any = None
+        self._faiss_class: Any = None
         self._video: Optional[VideoKeyframeExtractor] = None
         self._faiss_count = 0  # Para detectar cambios
         self._thumb_lock = threading.Lock()
@@ -163,77 +154,19 @@ class ProcessingEngine:
         log.info("Pipeline loop finished.")
 
     def process_one(self, record: MediaRecord) -> ProcessResult:
-        """Flujo explícito por fases."""
-        fp = record.filepath
-        file_id = record.id
+        """Delega la orquestación al caso de uso independiente de infraestructura."""
+        from application.media_pipeline import MediaPipeline
 
-        try:
-            # 0. Estabilidad (Phase 4)
-            if not self._check_stability(fp):
-                return ProcessResult(
-                    file_id, "ERROR", "stability", "Archivo inestable o no encontrado."
-                )
-
-            # 1. Thumbnail
-            log.info(f"[{file_id}] Phase: Thumbnail")
-            thumb_res = self.thumbnail(fp)
-            if thumb_res.error:
-                log.warning(f"[{file_id}] Thumb error: {thumb_res.error}")
-                self._db.update_error(file_id, stage="thumbnail", message=thumb_res.error)
-
-            # 2. EXIF (solo imágenes)
-            exif_res = ExifResult()
-            if record.media_type == "image":
-                log.info(f"[{file_id}] Phase: EXIF")
-                exif_res = self.exif(fp)
-                if exif_res.error:
-                    log.warning(f"[{file_id}] EXIF error: {exif_res.error}")
-
-            # 3. Dedupe (solo imágenes)
-            if record.media_type == "image":
-                log.info(f"[{file_id}] Phase: Dedupe")
-                dedupe_res = self.dedupe(fp, file_id)
-                if dedupe_res.error:
-                    log.warning(f"[{file_id}] Dedupe error: {dedupe_res.error}")
-                elif dedupe_res.is_duplicate:
-                    log.info(f"[{file_id}] Duplicate found. Linking.")
-                    self._step_persist_duplicate(record, dedupe_res, thumb_res.thumb_path)
-                    return ProcessResult(
-                        file_id, "DONE", "dedupe", "Duplicado detectado y vinculado."
-                    )
-
-            # 4. AI (YOLO, Face, CLIP)
-            log.info(f"[{file_id}] Phase: AI")
-            ai_res = self.ai(fp, file_id, media_type=record.media_type)
-
-            if ai_res.error:
-                log.error(f"[{file_id}] AI error: {ai_res.error}")
-                return ProcessResult(file_id, "ERROR", "ai", ai_res.error)
-
-            # 5. Materialize & Persist
-            try:
-                log.info(f"[{file_id}] Phase: Materialize")
-                self.materialize_results(record, ai_res)
-                log.info(f"[{file_id}] Phase: Persist")
-                self.persist(record, ai_res, exif_res, thumb_res.thumb_path)
-            except Exception as e:
-                log.error(f"[{file_id}] Persist error: {e}")
-                return ProcessResult(
-                    file_id,
-                    "ERROR",
-                    "persist",
-                    f"Fallo al mover/copiar archivos: {e}",
-                )
-
-            return ProcessResult(file_id, "DONE", "persist", "Procesado correctamente.")
-
-        except Exception as e:
-            err_msg = str(e)
-            log.exception(f"Unexpected error in process_one for {fp}")
-            self._db.update_error(file_id, stage="process_one", message=err_msg)
-            return ProcessResult(file_id, "ERROR", "exception", err_msg, exception=err_msg)
+        return MediaPipeline(self, self._db).execute(record)
 
     # ── Steps ─────────────────────────────────────────────────────────────
+    def check_stability(self, filepath: str) -> bool:
+        return self._check_stability(filepath)
+
+    def persist_duplicate(
+        self, record: MediaRecord, dedupe: DedupeResult, thumb: Optional[str]
+    ) -> None:
+        self._step_persist_duplicate(record, dedupe, thumb)
 
     def _check_stability(self, filepath: str, wait_ms: int = 400) -> bool:
         """
@@ -307,6 +240,8 @@ class ProcessingEngine:
                 ph = imagehash.phash(im)
             ph_hex = str(ph)
             all_hashes = self._db.get_all_phashes()
+            from core.ai_engines import DedupeEngine
+
             matches = DedupeEngine.find_similar(ph_hex, all_hashes, PHASH_HAMMING_THRESHOLD)
             matches = [m for m in matches if m != file_id]
             if matches:
@@ -338,8 +273,8 @@ class ProcessingEngine:
                 rgb = np.array(im_pil.convert("RGB"))
                 img = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
 
-            tags, identities, triage_tier, quality_score, ocr_txt, detections, clip_emb = self._process_image(
-                img, rgb, filepath, file_id
+            tags, identities, triage_tier, quality_score, ocr_txt, detections, clip_emb = (
+                self._process_image(img, rgb, filepath, file_id)
             )
             return AIResult(
                 tags=tags,
@@ -368,7 +303,9 @@ class ProcessingEngine:
             all_ocr = []
             for kf in keyframes:
                 rgb = cv2.cvtColor(kf, cv2.COLOR_BGR2RGB)
-                tags_kf, ids_kf, tier_kf, q_kf, ocr_kf, dets_kf, clip_kf = self._process_image(kf, rgb, filepath, file_id)
+                tags_kf, ids_kf, tier_kf, q_kf, ocr_kf, dets_kf, clip_kf = self._process_image(
+                    kf, rgb, filepath, file_id
+                )
                 all_tags.update(tags_kf)
 
                 # Issue 10: Deduplicar identidades por vídeo (no añadir la misma cara 10 veces)
@@ -406,13 +343,11 @@ class ProcessingEngine:
             DateExtractor.extract(record.filepath)
         )
 
-        # Consultar las confianzas de las caras detectadas para este archivo
-        with self._db._read() as c:
-            rows = c.execute(
-                "SELECT confidence, assigned_name FROM Detections WHERE file_id=?", (record.id,)
-            ).fetchall()
-            face_confidences = [row["confidence"] for row in rows]
-            assigned_names = [row["assigned_name"] for row in rows]
+        # update_done inserta las detecciones al final. Decidir con la inferencia
+        # actual evita consultar detecciones antiguas o todavía inexistentes.
+        detections = ai.detections_payload or []
+        face_confidences = [float(row.get("confidence", 0.0)) for row in detections]
+        assigned_names = [str(row.get("assigned_name", "Desconocido")) for row in detections]
 
         # Calcular banderas avanzadas para el ReviewDecider
         has_unknown_person = "Desconocido" in assigned_names
@@ -521,6 +456,15 @@ class ProcessingEngine:
 
     def _load_engines(self) -> None:
         self._emit("INFO", "Cargando motores IA...")
+        from core.ai_engines import (
+            ArcFaceEngine,
+            CLIPEngine,
+            DenseCaptionEngine,
+            OCREngine,
+            YOLOEngine,
+        )
+
+        self._ocr = OCREngine()
         self._yolo = YOLOEngine()
         self._arcface = ArcFaceEngine()
         self._clip = CLIPEngine()
@@ -530,6 +474,8 @@ class ProcessingEngine:
         self._emit("INFO", "✓ Motores listos.")
 
     def _reload_faiss(self) -> None:
+        from core.ai_engines import FaissIndex
+
         names, embs = self._db.load_known_faces()
         self._faiss = FaissIndex()
         self._faiss.rebuild(names, embs)
@@ -592,9 +538,11 @@ class ProcessingEngine:
                 for bbox, emb, det_conf in faces:
                     face_crop = None
                     try:
-                        face_crop = img_bgr[
-                            int(bbox[1]) : int(bbox[3]), int(bbox[0]) : int(bbox[2])
-                        ]
+                        top = max(0, int(bbox["top"]))
+                        bottom = min(img_bgr.shape[0], int(bbox["bottom"]))
+                        left = max(0, int(bbox["left"]))
+                        right = min(img_bgr.shape[1], int(bbox["right"]))
+                        face_crop = img_bgr[top:bottom, left:right]
                         is_high_q = self._is_high_quality_face(face_crop)
                     except (cv2.error, ValueError, IndexError) as e:
                         log.warning(f"Face crop extraction failed for bbox {bbox}: {e}")
@@ -612,16 +560,18 @@ class ProcessingEngine:
                             best_tier = tier
 
                     crop_path = self._save_crop(img_bgr, bbox)
-                    
-                    detections_payload.append({
-                        "embedding": emb,
-                        "bbox": bbox,
-                        "face_crop_path": crop_path,
-                        "confidence": faiss_conf if name != "Desconocido" else det_conf,
-                        "assigned_name": name,
-                        "triage_tier": tier,
-                        "is_high_quality": is_high_q
-                    })
+
+                    detections_payload.append(
+                        {
+                            "embedding": emb,
+                            "bbox": bbox,
+                            "face_crop_path": crop_path,
+                            "confidence": faiss_conf if name != "Desconocido" else det_conf,
+                            "assigned_name": name,
+                            "triage_tier": tier,
+                            "is_high_quality": is_high_q,
+                        }
+                    )
 
             # Global quality score (media de la nitidez completa)
             gray_full = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
@@ -638,7 +588,10 @@ class ProcessingEngine:
             # 3.5. Dense Captioning (Moondream2)
             dense_caption = None
             if self._caption:
-                cap = self._caption.generate_caption(img_rgb, prompt="Describe what you see in a short paragraph, focusing on objects and context.")
+                cap = self._caption.generate_caption(
+                    img_rgb,
+                    prompt="Describe what you see in a short paragraph, focusing on objects and context.",
+                )
                 if cap:
                     dense_caption = cap
 
@@ -651,7 +604,7 @@ class ProcessingEngine:
 
                         ocr_text = pytesseract.image_to_string(_PILImage.fromarray(img_rgb))
                     else:
-                        reader = ocr_engine.get_reader()
+                        reader = self._ocr.get_reader() if self._ocr else None
                         if reader:
                             res = reader.readtext(img_rgb)
                             ocr_text = "\n".join([r[1] for r in res])
@@ -671,7 +624,15 @@ class ProcessingEngine:
                 ocr_text = (ocr_text or "") + f"\n[AI Context]: {dense_caption}"
                 tags.add("AI_Caption")
 
-            return sorted(list(tags)), sorted(list(identities)), best_tier, final_q_score, (ocr_text if ocr_text else None), detections_payload, clip_embedding
+            return (
+                sorted(list(tags)),
+                sorted(list(identities)),
+                best_tier,
+                final_q_score,
+                (ocr_text if ocr_text else None),
+                detections_payload,
+                clip_embedding,
+            )
 
         except Exception as e:
             err = f"Error en _process_image: {e}"
@@ -695,6 +656,19 @@ class ProcessingEngine:
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+
+def _gps_decimal(values: Any, ref: Any) -> float:
+    """Convierte grados EXIF (racionales o números) a decimal firmado."""
+
+    def as_float(value: Any) -> float:
+        if isinstance(value, tuple):
+            return float(value[0]) / float(value[1])
+        return float(value)
+
+    degrees, minutes, seconds = (as_float(value) for value in values)
+    decimal = degrees + minutes / 60.0 + seconds / 3600.0
+    return -decimal if str(ref).upper() in {"S", "W"} else decimal
 
 
 def _read_exif(filepath: str) -> dict[str, Any]:
@@ -745,9 +719,17 @@ def _read_exif(filepath: str) -> dict[str, Any]:
                 else:
                     res["exposure"] = str(exp)
 
-            # 3. GPS (Simplificado)
-            # ... GPS logic usually requires helper for deg/min/sec ...
-            # Por ahora mantenemos el valor crudo o None si no queremos complicar
+            # 3. GPS EXIF. Pillow devuelve IFDRational o tuplas según el formato.
+            gps_tag = tag_map.get("GPSInfo")
+            gps_raw = exif.get(gps_tag) if gps_tag else None
+            if gps_raw:
+                gps = {ExifTags.GPSTAGS.get(k, k): v for k, v in gps_raw.items()}
+
+                if "GPSLatitude" in gps and "GPSLongitude" in gps:
+                    res["gps"] = (
+                        _gps_decimal(gps["GPSLatitude"], gps.get("GPSLatitudeRef", "N")),
+                        _gps_decimal(gps["GPSLongitude"], gps.get("GPSLongitudeRef", "E")),
+                    )
     except Exception as e:
         log.warning(f"EXIF read fail for {filepath}: {e}")
     return res

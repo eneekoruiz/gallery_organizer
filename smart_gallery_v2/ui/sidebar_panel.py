@@ -102,7 +102,7 @@ def render_help_sidebar(db: DatabaseManager) -> None:
           <div style='font-size:13px;color:#d7dcec;line-height:1.55'>
             Detecta y corrige estados huérfanos: archivos borrados en disco, symlinks rotos o índices desactualizados.
           </div>
-          <div style='margin-top:8px;font-size:12px;color:#7f88a8'>Estado: {'Atención requerida' if maintenance_pending else 'Limpio'}</div>
+          <div style='margin-top:8px;font-size:12px;color:#7f88a8'>Estado: {"Atención requerida" if maintenance_pending else "Limpio"}</div>
         </div>
         """,
         unsafe_allow_html=True,

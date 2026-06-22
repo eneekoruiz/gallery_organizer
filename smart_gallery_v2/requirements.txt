@@ -2,6 +2,7 @@
 # UI & Dashboard
 # ==========================================
 streamlit>=1.35.0
+streamlit-cropper>=0.2.2
 
 # ==========================================
 # Computer Vision & Image Processing

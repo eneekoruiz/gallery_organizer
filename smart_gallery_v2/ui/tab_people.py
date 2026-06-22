@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import base64
 from pathlib import Path
+
 import streamlit as st
 
 from core.database import DatabaseManager
@@ -28,7 +29,7 @@ def render_people_management(db: DatabaseManager) -> None:
         .people-header { margin-bottom: 18px; }
         .people-title { margin: 0; font-size: 28px; font-weight: 700; color: #e2e8f0; font-family: 'Inter', sans-serif; }
         .people-subtitle { color: #94a3b8; margin: 4px 0 0; font-size: 14px; }
-        
+
         /* Face Cards */
         .face-card {
             position: relative;
@@ -60,7 +61,7 @@ def render_people_management(db: DatabaseManager) -> None:
             font-weight: 600; text-align: center; white-space: nowrap;
             overflow: hidden; text-overflow: ellipsis;
         }
-        
+
         /* Cluster Stacks */
         .cluster-stack {
             position: relative; width: 100%; aspect-ratio: 1/1;
@@ -75,7 +76,7 @@ def render_people_management(db: DatabaseManager) -> None:
         .stack-img-1 { top: 0; left: 0; z-index: 1; opacity: 0.6; }
         .stack-img-2 { top: 10%; left: 10%; z-index: 2; opacity: 0.8; }
         .stack-img-3 { top: 20%; left: 20%; z-index: 3; }
-        
+
         .cluster-badge {
             position: absolute; bottom: 8px; right: 8px; background: #3b82f6;
             color: white; border-radius: 999px; padding: 4px 10px;
@@ -139,17 +140,17 @@ def _render_known_people(db: DatabaseManager) -> None:
             pid = person["id"]
             name = person["name"]
             crop_path = person["face_crop_path"]
-            
+
             with cols[i]:
                 is_selected = pid in st.session_state.selected_people
                 sel_class = "face-card-selected" if is_selected else ""
-                
+
                 if crop_path and Path(crop_path).exists():
                     b64 = _get_b64(crop_path)
                     img_html = f'<img src="data:image/jpeg;base64,{b64}">'
                 else:
                     img_html = '<div style="font-size: 40px; color: #475569;">👤</div>'
-                
+
                 st.markdown(
                     f"""
                     <div class="face-card {sel_class}">
@@ -159,14 +160,14 @@ def _render_known_people(db: DatabaseManager) -> None:
                     """,
                     unsafe_allow_html=True,
                 )
-                
+
                 changed = st.checkbox(
                     f"Selec. {name}",
                     value=is_selected,
                     key=f"chk_p_{pid}",
-                    label_visibility="collapsed"
+                    label_visibility="collapsed",
                 )
-                
+
                 if changed != is_selected:
                     if changed:
                         st.session_state.selected_people.add(pid)
@@ -208,18 +209,20 @@ def _render_unverified_clusters(db: DatabaseManager) -> None:
             cid = cl["cluster_id"]
             count = cl["count"]
             samples = cl["samples"]
-            
+
             with cols[i]:
                 is_selected = cid in st.session_state.selected_clusters
-                sel_style = "border: 2px solid #3b82f6; transform: scale(0.95);" if is_selected else ""
-                
+                sel_style = (
+                    "border: 2px solid #3b82f6; transform: scale(0.95);" if is_selected else ""
+                )
+
                 stack_html = ""
                 for j, s in enumerate(samples[:3]):
                     path = s["face_crop_path"]
                     if path and Path(path).exists():
                         b64 = _get_b64(path)
-                        stack_html += f'<img src="data:image/jpeg;base64,{b64}" class="stack-img stack-img-{j+1}">'
-                
+                        stack_html += f'<img src="data:image/jpeg;base64,{b64}" class="stack-img stack-img-{j + 1}">'
+
                 if not stack_html:
                     stack_html = '<div class="stack-img stack-img-3" style="background:#334155; display:flex; align-items:center; justify-content:center; font-size:32px;">👤</div>'
 
@@ -232,14 +235,10 @@ def _render_unverified_clusters(db: DatabaseManager) -> None:
                     """,
                     unsafe_allow_html=True,
                 )
-                
+
                 # Checkbox con ID del cluster
-                changed = st.checkbox(
-                    f"Grupo #{cid}",
-                    value=is_selected,
-                    key=f"chk_c_{cid}"
-                )
-                
+                changed = st.checkbox(f"Grupo #{cid}", value=is_selected, key=f"chk_c_{cid}")
+
                 if changed != is_selected:
                     if changed:
                         st.session_state.selected_clusters.add(cid)
@@ -253,12 +252,18 @@ def _render_unverified_clusters(db: DatabaseManager) -> None:
         _render_merge_panel(db, clusters, selected_cids, is_cluster=True)
 
 
-def _render_merge_panel(db: DatabaseManager, items: list[dict], selected_ids: list[int], is_cluster: bool) -> None:
+def _render_merge_panel(
+    db: DatabaseManager, items: list[dict], selected_ids: list[int], is_cluster: bool
+) -> None:
     st.divider()
     st.markdown("### 🧬 Visualizador de Fusión")
-    
+
     if is_cluster:
-        options = {i["cluster_id"]: f"Grupo #{i['cluster_id']} ({i['count']} fotos)" for i in items if i["cluster_id"] in selected_ids}
+        options = {
+            i["cluster_id"]: f"Grupo #{i['cluster_id']} ({i['count']} fotos)"
+            for i in items
+            if i["cluster_id"] in selected_ids
+        }
     else:
         options = {i["id"]: i["name"] for i in items if i["id"] in selected_ids}
 
@@ -271,10 +276,10 @@ def _render_merge_panel(db: DatabaseManager, items: list[dict], selected_ids: li
         )
 
     source_ids = [s for s in selected_ids if s != target_id]
-    
+
     st.markdown("<br>", unsafe_allow_html=True)
     c_src, c_arrow, c_tgt = st.columns([4, 1, 3])
-    
+
     with c_src:
         st.markdown("**Se reasignarán a:**")
         cols = st.columns(len(source_ids) if source_ids else 1)
@@ -288,18 +293,18 @@ def _render_merge_panel(db: DatabaseManager, items: list[dict], selected_ids: li
                     item = next(i for i in items if i["id"] == sid)
                     path = item["face_crop_path"]
                     name = item["name"]
-                    
+
                 if path and Path(path).exists():
                     st.image(path, use_container_width=True, caption=name)
                 else:
                     st.markdown("👤", unsafe_allow_html=True)
-                    
+
     with c_arrow:
         st.markdown(
-            "<div style='height:100%; display:flex; align-items:center; justify-content:center; font-size:48px; color:#3b82f6; margin-top:20px'>➔</div>", 
-            unsafe_allow_html=True
+            "<div style='height:100%; display:flex; align-items:center; justify-content:center; font-size:48px; color:#3b82f6; margin-top:20px'>➔</div>",
+            unsafe_allow_html=True,
         )
-        
+
     with c_tgt:
         st.markdown("**Identidad Principal Final:**")
         if is_cluster:
@@ -310,7 +315,7 @@ def _render_merge_panel(db: DatabaseManager, items: list[dict], selected_ids: li
             item = next(i for i in items if i["id"] == target_id)
             path = item["face_crop_path"]
             name = item["name"]
-            
+
         if path and Path(path).exists():
             st.image(path, width=150, caption=f"{name} (IA Recalculada)")
         else:

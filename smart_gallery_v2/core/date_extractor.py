@@ -11,7 +11,9 @@ log = logging.getLogger(__name__)
 
 class DateExtractor:
     @staticmethod
-    def extract(filepath: Path | str) -> tuple[
+    def extract(
+        filepath: Path | str,
+    ) -> tuple[
         str | None,
         str | None,
         str | None,

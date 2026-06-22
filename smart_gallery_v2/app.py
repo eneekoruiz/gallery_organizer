@@ -14,7 +14,6 @@ Estructura de carpetas esperada:
 
 from __future__ import annotations
 
-import gc
 import logging
 import sys
 
@@ -42,16 +41,8 @@ st.set_page_config(
 from core.database import DatabaseManager
 from ui.sidebar_panel import render_help_sidebar
 from ui.styles import BBOX_SCRIPT, PREMIUM_CSS
-from ui.tab_cleanup import render_cleanup
 from ui.tab_dashboard import _boot as _boot_runtime
 from ui.tab_dashboard import render_dashboard
-from ui.tab_errors import render_errors
-from ui.tab_gallery import render_gallery
-from ui.tab_maintenance import render_maintenance
-from ui.tab_people import render_people_management
-from ui.tab_explorer import render_semantic_explorer
-from ui.tab_timeline import render_timeline
-from ui.tab_triage import render_triage
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -86,6 +77,24 @@ def main() -> None:
     _boot_runtime(db)
 
     with st.sidebar:
+        page = st.radio(
+            "Navegación",
+            [
+                "Dashboard",
+                "Galería",
+                "Triaje",
+                "Personas",
+                "Eventos",
+                "Explorador 3D",
+                "Limpieza",
+                "Línea de Tiempo",
+                "Errores",
+                "Mantenimiento",
+            ],
+            key="active_page",
+            label_visibility="collapsed",
+        )
+        st.divider()
         render_help_sidebar(db)
 
     # ── Header ────────────────────────────────────────────────────────────
@@ -116,52 +125,47 @@ def main() -> None:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # ── Navegación principal ──────────────────────────────────────────────
-    t1, t2, t3, t4, t5, t6, t7, t8, t9 = st.tabs(
-        [
-            "🎛️  Dashboard",
-            "🖼️  Galería",
-            "⚖️  Triaje",
-            "👥  Personas",
-            "🌌  Explorador 3D",
-            "🧹  Limpieza",
-            "📅  Línea de Tiempo",
-            "⚠️  Errores",
-            "🛠️  Mantenimiento",
-        ]
-    )
-
-    with t1:
+    # Renderizado lazy: Streamlit solo ejecuta la página seleccionada.
+    if page == "Dashboard":
         render_dashboard(db)
+    elif page == "Galería":
+        from ui.tab_gallery import render_gallery
 
-    with t2:
         render_gallery(db)
-        # Inspector de archivo desde galería
         if st.session_state.get("inspect_file_id") and not st.session_state.get("inspect_det_id"):
             _render_file_inspector(db)
+    elif page == "Triaje":
+        from ui.tab_triage import render_triage
 
-    with t3:
         render_triage(db)
+    elif page == "Personas":
+        from ui.tab_people import render_people_management
 
-    with t4:
         render_people_management(db)
+    elif page == "Eventos":
+        from ui.tab_events import render_events_and_locations
 
-    with t5:
+        render_events_and_locations(db)
+    elif page == "Explorador 3D":
+        from ui.tab_explorer import render_semantic_explorer
+
         render_semantic_explorer(db)
+    elif page == "Limpieza":
+        from ui.tab_cleanup import render_cleanup
 
-    with t6:
         render_cleanup(db)
+    elif page == "Línea de Tiempo":
+        from ui.tab_timeline import render_timeline
 
-    with t7:
         render_timeline(db)
+    elif page == "Errores":
+        from ui.tab_errors import render_errors
 
-    with t8:
         render_errors(db)
+    elif page == "Mantenimiento":
+        from ui.tab_maintenance import render_maintenance
 
-    with t9:
         render_maintenance(db)
-
-    gc.collect()
 
 
 # ── Inspector de archivo (desde galería) ──────────────────────────────────────
@@ -218,7 +222,7 @@ def _render_file_inspector(db: DatabaseManager) -> None:
             left = int(b["left"] * scale)
             right = int(b["right"] * scale)
             cv2.rectangle(disp, (left, top), (right, bot), col, 2)
-            label = f'{det["assigned_name"]} {det["confidence"]*100:.0f}%'
+            label = f"{det['assigned_name']} {det['confidence'] * 100:.0f}%"
             (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
             cv2.rectangle(disp, (left, top - th - 10), (left + tw + 10, top), col, -1)
             cv2.putText(
@@ -240,7 +244,7 @@ def _render_file_inspector(db: DatabaseManager) -> None:
         st.markdown(f"**{len(dets)} detecciones**")
         known = db.get_all_identity_names()
         for det in dets:
-            with st.expander(f'👤 {det["assigned_name"]} ({det["confidence"]*100:.0f}%)'):
+            with st.expander(f"👤 {det['assigned_name']} ({det['confidence'] * 100:.0f}%)"):
                 opts = ["(Sin cambios)"] + known + ["➕ Nuevo nombre"]
                 s = st.selectbox("", opts, key=f"fi_sel_{det['id']}", label_visibility="collapsed")
                 nw = ""
