@@ -80,7 +80,7 @@ def test_fuzzy_search(temp_db):
         tags=["perro", "playa"],
         triage_tier="safe",
         best_datetime="2023-08-15T14:30:00Z",
-        ocr_text="DNI de prueba"
+        ocr_text="DNI de prueba",
     )
 
     fid2, _ = temp_db.upsert_file("fotos/diciembre/gato.jpg", "gato.jpg")
@@ -89,7 +89,7 @@ def test_fuzzy_search(temp_db):
         tags=["gato", "cocina"],
         triage_tier="safe",
         best_datetime="2023-12-25T10:00:00Z",
-        ocr_text="Factura de gas"
+        ocr_text="Factura de gas",
     )
 
     # 1. Buscar "perro en la playa en agosto" -> Debería retornar perro_playa.jpg
@@ -135,20 +135,24 @@ def test_merge_identities(temp_db):
         file_id=fid1,
         embedding=emb_alice,
         bbox={"top": 0, "right": 10, "bottom": 10, "left": 0},
-        assigned_name="Alice"
+        assigned_name="Alice",
     )
     # Agregar detección de Bob (usando su embedding)
     temp_db.add_detection(
         file_id=fid2,
         embedding=emb_bob,
         bbox={"top": 0, "right": 10, "bottom": 10, "left": 0},
-        assigned_name="Bob"
+        assigned_name="Bob",
     )
 
     # También agregar relaciones en FileIdentities
     with temp_db._write() as c:
-        c.execute("INSERT OR IGNORE INTO FileIdentities (file_id, identity) VALUES (?,?)", (fid1, "Alice"))
-        c.execute("INSERT OR IGNORE INTO FileIdentities (file_id, identity) VALUES (?,?)", (fid2, "Bob"))
+        c.execute(
+            "INSERT OR IGNORE INTO FileIdentities (file_id, identity) VALUES (?,?)", (fid1, "Alice")
+        )
+        c.execute(
+            "INSERT OR IGNORE INTO FileIdentities (file_id, identity) VALUES (?,?)", (fid2, "Bob")
+        )
 
     # Verificar estado inicial
     faces = temp_db.get_known_faces_with_crops()
@@ -167,7 +171,9 @@ def test_merge_identities(temp_db):
 
     # 2. Las detecciones de Bob deben haberse reasignado a Alice
     with temp_db._read() as c:
-        rows = c.execute("SELECT assigned_name, embedding FROM Detections WHERE file_id = ?", (fid2,)).fetchall()
+        rows = c.execute(
+            "SELECT assigned_name, embedding FROM Detections WHERE file_id = ?", (fid2,)
+        ).fetchall()
         assert len(rows) == 1
         assert rows[0]["assigned_name"] == "Alice"
 

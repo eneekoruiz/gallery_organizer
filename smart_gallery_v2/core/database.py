@@ -197,32 +197,84 @@ def normalize_text(text: str) -> str:
     # Convertir a minúsculas
     text = text.lower()
     # Eliminar acentos y diacríticos
-    text = "".join(
-        c for c in unicodedata.normalize("NFD", text)
-        if unicodedata.category(c) != "Mn"
-    )
+    text = "".join(c for c in unicodedata.normalize("NFD", text) if unicodedata.category(c) != "Mn")
     return text
 
 
 MONTHS_MAP = {
-    "enero": "01", "january": "01", "jan": "01", "ene": "01",
-    "febrero": "02", "february": "02", "feb": "02",
-    "marzo": "03", "march": "03", "mar": "03",
-    "abril": "04", "april": "04", "apr": "04", "abr": "04",
-    "mayo": "05", "may": "05",
-    "junio": "06", "june": "06", "jun": "06",
-    "julio": "07", "july": "07", "jul": "07",
-    "agosto": "08", "august": "08", "ago": "08", "aug": "08",
-    "septiembre": "09", "september": "09", "sep": "09", "sept": "09",
-    "octubre": "10", "october": "10", "oct": "10",
-    "noviembre": "11", "november": "11", "nov": "11",
-    "diciembre": "12", "december": "12", "dec": "12", "dic": "12"
+    "enero": "01",
+    "january": "01",
+    "jan": "01",
+    "ene": "01",
+    "febrero": "02",
+    "february": "02",
+    "feb": "02",
+    "marzo": "03",
+    "march": "03",
+    "mar": "03",
+    "abril": "04",
+    "april": "04",
+    "apr": "04",
+    "abr": "04",
+    "mayo": "05",
+    "may": "05",
+    "junio": "06",
+    "june": "06",
+    "jun": "06",
+    "julio": "07",
+    "july": "07",
+    "jul": "07",
+    "agosto": "08",
+    "august": "08",
+    "ago": "08",
+    "aug": "08",
+    "septiembre": "09",
+    "september": "09",
+    "sep": "09",
+    "sept": "09",
+    "octubre": "10",
+    "october": "10",
+    "oct": "10",
+    "noviembre": "11",
+    "november": "11",
+    "nov": "11",
+    "diciembre": "12",
+    "december": "12",
+    "dec": "12",
+    "dic": "12",
 }
 
 STOP_WORDS = {
-    "en", "la", "el", "de", "con", "y", "o", "un", "una", "unos", "unas",
-    "para", "por", "al", "del", "in", "on", "at", "with", "a", "the", "of",
-    "and", "or", "los", "las", "sobre", "bajo", "delante", "detras"
+    "en",
+    "la",
+    "el",
+    "de",
+    "con",
+    "y",
+    "o",
+    "un",
+    "una",
+    "unos",
+    "unas",
+    "para",
+    "por",
+    "al",
+    "del",
+    "in",
+    "on",
+    "at",
+    "with",
+    "a",
+    "the",
+    "of",
+    "and",
+    "or",
+    "los",
+    "las",
+    "sobre",
+    "bajo",
+    "delante",
+    "detras",
 }
 
 
@@ -256,6 +308,9 @@ class DatabaseManager:
             # Para las migraciones sí usamos el cursor con transacciones manuales si es necesario,
             # pero aquí las manejaremos dentro de la función.
             self._run_migrations(conn.cursor())
+            from core.migrations.v5_identity_events import migrate
+
+            migrate(conn)
         finally:
             conn.close()
 
@@ -524,6 +579,7 @@ class DatabaseManager:
                 )
             # 3. SRE Phase 4: Atomic insertion of Detections
             if detections_payload:
+                c.execute("DELETE FROM Detections WHERE file_id=? AND is_faceless=0", (file_id,))
                 for det in detections_payload:
                     c.execute(
                         "INSERT INTO Detections (file_id, embedding, bbox_json, face_crop_path, "
@@ -1191,6 +1247,8 @@ class DatabaseManager:
             triage_tier="safe",
             is_faceless=True,
         )
+        with self._write() as c:
+            c.execute("UPDATE Detections SET is_verified=1 WHERE id=?", (det_id,))
         # Asegurar que la identidad existe en KnownFaces
         with self._read() as c:
             c.execute(
@@ -1532,7 +1590,7 @@ class DatabaseManager:
         """Búsqueda difusa de lenguaje natural traducido a SQL compleja."""
         query_clean = normalize_text(query).strip()
         # Eliminar puntuación común
-        query_clean = re.sub(r'[^\w\s]', '', query_clean)
+        query_clean = re.sub(r"[^\w\s]", "", query_clean)
         words = query_clean.split()
 
         matched_months = []
@@ -1560,7 +1618,9 @@ class DatabaseManager:
         if matched_months:
             month_conditions = []
             for m in matched_months:
-                month_conditions.append("(strftime('%m', IFNULL(f.best_datetime, f.exif_date)) = ?)")
+                month_conditions.append(
+                    "(strftime('%m', IFNULL(f.best_datetime, f.exif_date)) = ?)"
+                )
                 where_params.append(m)
             where_clauses.append("(" + " OR ".join(month_conditions) + ")")
 
@@ -1599,16 +1659,24 @@ class DatabaseManager:
                     score_terms.append("CASE WHEN NORMALIZE_TXT(f.tags) LIKE ? THEN 4 ELSE 0 END")
                     score_params.append(f"%{token}%")
                 if "ocr_text" in available_cols:
-                    score_terms.append("CASE WHEN NORMALIZE_TXT(f.ocr_text) LIKE ? THEN 3 ELSE 0 END")
+                    score_terms.append(
+                        "CASE WHEN NORMALIZE_TXT(f.ocr_text) LIKE ? THEN 3 ELSE 0 END"
+                    )
                     score_params.append(f"%{token}%")
                 if "filepath" in available_cols:
-                    score_terms.append("CASE WHEN NORMALIZE_TXT(f.filepath) LIKE ? THEN 1 ELSE 0 END")
+                    score_terms.append(
+                        "CASE WHEN NORMALIZE_TXT(f.filepath) LIKE ? THEN 1 ELSE 0 END"
+                    )
                     score_params.append(f"%{token}%")
                 if "filename" in available_cols:
-                    score_terms.append("CASE WHEN NORMALIZE_TXT(f.filename) LIKE ? THEN 1 ELSE 0 END")
+                    score_terms.append(
+                        "CASE WHEN NORMALIZE_TXT(f.filename) LIKE ? THEN 1 ELSE 0 END"
+                    )
                     score_params.append(f"%{token}%")
                 if "camera_model" in available_cols:
-                    score_terms.append("CASE WHEN NORMALIZE_TXT(f.camera_model) LIKE ? THEN 2 ELSE 0 END")
+                    score_terms.append(
+                        "CASE WHEN NORMALIZE_TXT(f.camera_model) LIKE ? THEN 2 ELSE 0 END"
+                    )
                     score_params.append(f"%{token}%")
 
         score_sql = " + ".join(score_terms) if score_terms else "1"
@@ -1648,17 +1716,19 @@ class DatabaseManager:
                 crop_row = c.execute(
                     "SELECT face_crop_path FROM Detections "
                     "WHERE assigned_name = ? AND face_crop_path IS NOT NULL AND face_crop_path != '' LIMIT 1",
-                    (name,)
+                    (name,),
                 ).fetchone()
 
                 crop_path = crop_row["face_crop_path"] if crop_row else None
-                results.append({
-                    "id": r["id"],
-                    "name": name,
-                    "is_faceless": bool(r["is_faceless"]),
-                    "source_img": r["source_img"],
-                    "face_crop_path": crop_path
-                })
+                results.append(
+                    {
+                        "id": r["id"],
+                        "name": name,
+                        "is_faceless": bool(r["is_faceless"]),
+                        "source_img": r["source_img"],
+                        "face_crop_path": crop_path,
+                    }
+                )
             return results
 
     def merge_known_faces(self, target_id: int, source_ids: list[int]) -> None:
@@ -1674,7 +1744,9 @@ class DatabaseManager:
             # 1. Obtener nombre de la identidad destino
             target = c.execute("SELECT name FROM KnownFaces WHERE id = ?", (target_id,)).fetchone()
             if not target:
-                log.error(f"Error al fusionar: No se encontró la identidad destino con ID {target_id}")
+                log.error(
+                    f"Error al fusionar: No se encontró la identidad destino con ID {target_id}"
+                )
                 return
             target_name = target["name"]
 
@@ -1692,28 +1764,35 @@ class DatabaseManager:
             placeholders = ",".join("?" for _ in source_names)
             c.execute(
                 f"UPDATE Detections SET assigned_name = ?, triage_tier='safe', is_verified=1 WHERE assigned_name IN ({placeholders})",
-                [target_name] + source_names
+                [target_name] + source_names,
             )
 
             # 4. Reasignar en FileIdentities (evitando conflictos de unicidad)
             file_ids_with_target = {
                 row["file_id"]
-                for row in c.execute("SELECT file_id FROM FileIdentities WHERE identity = ?", (target_name,)).fetchall()
+                for row in c.execute(
+                    "SELECT file_id FROM FileIdentities WHERE identity = ?", (target_name,)
+                ).fetchall()
             }
 
             for s_name in source_names:
-                source_links = c.execute("SELECT id, file_id FROM FileIdentities WHERE identity = ?", (s_name,)).fetchall()
+                source_links = c.execute(
+                    "SELECT id, file_id FROM FileIdentities WHERE identity = ?", (s_name,)
+                ).fetchall()
                 for link_id, file_id in source_links:
                     if file_id in file_ids_with_target:
                         c.execute("DELETE FROM FileIdentities WHERE id = ?", (link_id,))
                     else:
-                        c.execute("UPDATE FileIdentities SET identity = ? WHERE id = ?", (target_name, link_id))
+                        c.execute(
+                            "UPDATE FileIdentities SET identity = ? WHERE id = ?",
+                            (target_name, link_id),
+                        )
                         file_ids_with_target.add(file_id)
 
             # 5. Recalcular el embedding promedio para la identidad destino
             rows = c.execute(
                 "SELECT embedding FROM Detections WHERE assigned_name = ? AND embedding IS NOT NULL",
-                (target_name,)
+                (target_name,),
             ).fetchall()
 
             if rows:
@@ -1721,14 +1800,15 @@ class DatabaseManager:
                 mean_emb = np.mean(embs, axis=0)
                 mean_emb_bytes = mean_emb.astype(np.float32).tobytes()
                 c.execute(
-                    "UPDATE KnownFaces SET embedding = ? WHERE id = ?",
-                    (mean_emb_bytes, target_id)
+                    "UPDATE KnownFaces SET embedding = ? WHERE id = ?", (mean_emb_bytes, target_id)
                 )
 
             # 6. Eliminar las identidades origen de KnownFaces
             c.execute(f"DELETE FROM KnownFaces WHERE id IN ({placeholders})", source_ids)
 
-        log.info(f"Identidades {source_names} fusionadas con éxito en '{target_name}' (ID {target_id})")
+        log.info(
+            f"Identidades {source_names} fusionadas con éxito en '{target_name}' (ID {target_id})"
+        )
 
     def merge_dbscan_clusters(self, target_cluster_id: int, source_cluster_ids: list[int]) -> None:
         """
@@ -1742,10 +1822,12 @@ class DatabaseManager:
             placeholders = ",".join("?" for _ in source_cluster_ids)
             c.execute(
                 f"UPDATE Detections SET cluster_id = ? WHERE cluster_id IN ({placeholders})",
-                [target_cluster_id] + source_cluster_ids
+                [target_cluster_id] + source_cluster_ids,
             )
 
-        log.info(f"Clústeres {source_cluster_ids} fusionados con éxito en el clúster #{target_cluster_id}")
+        log.info(
+            f"Clústeres {source_cluster_ids} fusionados con éxito en el clúster #{target_cluster_id}"
+        )
 
 
 # ── Helper ────────────────────────────────────────────────────────────────────

@@ -106,7 +106,7 @@ def render_dashboard(db: DatabaseManager) -> None:
 
     # ── Progreso ──────────────────────────────────────────────────────────
     pct = done / total if total else 0.0
-    st.progress(pct, text=f"{done}/{total} archivos · {pct*100:.1f}%")
+    st.progress(pct, text=f"{done}/{total} archivos · {pct * 100:.1f}%")
 
     st.markdown("<br>", unsafe_allow_html=True)
 

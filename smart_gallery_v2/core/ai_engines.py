@@ -397,6 +397,9 @@ class CLIPEngine:
             return None
 
     def embed_text(self, text: str) -> Optional[np.ndarray]:
+        self._ensure_loaded()
+        if self._native is None and self._txt is None:
+            self._load_native()
         if self._native is None:
             return None
         try:
@@ -459,7 +462,7 @@ class FaissIndex:
 
         # Convertir distancia L2 a confidence (Similitud Coseno aproximada para vectores normalizados)
         # sim = 1 - (dist^2 / 2)
-        confidence = max(0.0, 1.0 - (dist**2 / 2.0))
+        confidence = max(0.0, min(1.0, 1.0 - dist / 2.0))
         tier = _conf_to_tier(confidence)
         name = self._names[int(indices[0][0])]
         return name, confidence, tier
@@ -559,6 +562,7 @@ class OCREngine:
                 log.error(f"OCR Engine load failed: {e}")
         return self._reader
 
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Dense Caption Engine (Phase 3: IA Nivel Dios)
 # ──────────────────────────────────────────────────────────────────────────────
@@ -583,9 +587,7 @@ class DenseCaptionEngine:
         if self._model or self._load_failed:
             return
         try:
-            import torch
             from transformers import AutoModelForCausalLM, AutoTokenizer
-            from PIL import Image
 
             model_id = "vikhyatk/moondream2"
             revision = "2024-05-20"
@@ -601,12 +603,15 @@ class DenseCaptionEngine:
             log.error(f"Error cargando Moondream2: {e}")
             self._load_failed = True
 
-    def generate_caption(self, img_rgb: np.ndarray, prompt: str = "Describe this image in detail.") -> Optional[str]:
+    def generate_caption(
+        self, img_rgb: np.ndarray, prompt: str = "Describe this image in detail."
+    ) -> Optional[str]:
         self._ensure_loaded()
         if not self._model:
             return None
         try:
             from PIL import Image as _PILImage
+
             pil_img = _PILImage.fromarray(img_rgb)
             enc_image = self._model.encode_image(pil_img)
             answer = self._model.answer_question(enc_image, prompt, self._tokenizer)

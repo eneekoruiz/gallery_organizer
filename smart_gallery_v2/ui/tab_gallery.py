@@ -124,7 +124,9 @@ def render_gallery(db: DatabaseManager) -> None:
         if df.empty:
             st.warning(f"Sin resultados para: '{query}'")
             return
-        st.caption(f"🎯 {len(df)} resultados ordenados por relevancia para: *{query}* ({search_mode})")
+        st.caption(
+            f"🎯 {len(df)} resultados ordenados por relevancia para: *{query}* ({search_mode})"
+        )
     else:
         df = db.get_files_with_thumbs_df(
             status=status_param,
@@ -289,23 +291,28 @@ def _bulk_rename_files(db: DatabaseManager, file_ids: list[int], name: str) -> N
 def _masonry(db: DatabaseManager, df: pd.DataFrame) -> None:
     if df.empty:
         return
-        
+
     if "exif_date" in df.columns:
         df["date_group"] = pd.to_datetime(df["exif_date"], errors="coerce").dt.strftime("%Y-%m-%d")
         df["date_group"] = df["date_group"].fillna("Sin fecha")
     elif "best_datetime" in df.columns:
-        df["date_group"] = pd.to_datetime(df["best_datetime"], errors="coerce").dt.strftime("%Y-%m-%d")
+        df["date_group"] = pd.to_datetime(df["best_datetime"], errors="coerce").dt.strftime(
+            "%Y-%m-%d"
+        )
         df["date_group"] = df["date_group"].fillna("Sin fecha")
     else:
         df["date_group"] = "Sin fecha"
-        
+
     date_groups = df.groupby("date_group", sort=False)
-    
+
     n_cols = 6
-    
+
     for date_str, group_df in date_groups:
-        st.markdown(f"#### 📅 {date_str} <span style='font-size:12px;color:#505570;font-weight:normal'>· {len(group_df)} fotos</span>", unsafe_allow_html=True)
-        
+        st.markdown(
+            f"#### 📅 {date_str} <span style='font-size:12px;color:#505570;font-weight:normal'>· {len(group_df)} fotos</span>",
+            unsafe_allow_html=True,
+        )
+
         rows = [group_df.iloc[i : i + n_cols] for i in range(0, len(group_df), n_cols)]
         for row_df in rows:
             cols = st.columns(n_cols)
@@ -350,7 +357,7 @@ def _image_card(rec: pd.Series) -> None:
             f'<div style="position:relative; margin-bottom:15px; text-align:center;">'
             f'<img src="data:image/webp;base64,{b64_thumb}" '
             f'style="width:100%; aspect-ratio:1/1; object-fit:cover; border-radius:12px; border:1px solid #1c1f2e; box-shadow:0 4px 6px rgba(0,0,0,0.1); {blur_style}">'
-            f'</div>',
+            f"</div>",
             unsafe_allow_html=True,
         )
     else:
@@ -365,7 +372,7 @@ def _image_card(rec: pd.Series) -> None:
     q_color = "#34d399" if q_score > 0.7 else "#fbbf24" if q_score > 0.4 else "#f87171"
     st.markdown(
         f'<div style="height:3px;background:#1c1f2e;width:100%;margin:4px 0">'
-        f'<div style="height:100%;background:{q_color};width:{q_score*100}%"></div></div>',
+        f'<div style="height:100%;background:{q_color};width:{q_score * 100}%"></div></div>',
         unsafe_allow_html=True,
     )
 
@@ -425,12 +432,14 @@ def _is_person(tag: str) -> bool:
 CACHE_DIR = Path(".cache_thumbs")
 CACHE_DIR.mkdir(exist_ok=True)
 
+
 def _get_optimized_thumbnail(image_path: str, size: tuple[int, int] = (250, 250)) -> str:
-    import os
-    import io
     import base64
+    import io
+    import os
+
     from PIL import Image
-    
+
     path = Path(image_path)
     if not path.exists():
         return ""

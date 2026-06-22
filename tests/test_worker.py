@@ -37,7 +37,6 @@ def test_pipeline_step_dispatch(mock_engine, temp_db):
         patch("core.worker.Path.stat") as mock_stat,
         patch("builtins.open", MagicMock()),
     ):
-
         mock_stat.return_value.st_size = 100
         res = mock_engine.process_one(record)
 
@@ -60,7 +59,6 @@ def test_error_handling_in_pipeline(mock_engine, temp_db):
         patch("core.worker.Path.stat") as mock_stat,
         patch("builtins.open", MagicMock()),
     ):
-
         mock_stat.return_value.st_size = 100
         res = mock_engine.process_one(record)
 

@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Optional
 
 import cv2
 import numpy as np
@@ -16,8 +15,11 @@ import pandas as pd
 import streamlit as st
 from PIL import Image
 
+from application.identity_corrections import CorrectIdentity, IdentityRegion
 from core.database import DatabaseManager
 from core.symlink_manager import create_faceless_symlink
+from domain.models import RegionKind
+from infrastructure.sqlite.identity_repository import SqliteIdentityCorrectionRepository
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -200,11 +202,28 @@ def _render_faceless_panel(db: DatabaseManager) -> None:
     file_id = int(sel_row["id"])
     filepath = sel_row["filepath"]
 
+    crop_box = None
+    image_size = (1, 1)
     col_img, col_form = st.columns([3, 2])
 
     with col_img:
         if Path(filepath).exists():
-            st.image(Image.open(filepath), use_container_width=True, caption=f"📷 {sel_name}")
+            image = Image.open(filepath)
+            image_size = image.size
+            try:
+                from streamlit_cropper import st_cropper
+
+                st.caption("Arrastra y redimensiona el área sobre la persona, ropa o silueta.")
+                crop_box = st_cropper(
+                    image,
+                    realtime_update=True,
+                    box_color="#007aff",
+                    return_type="box",
+                    key=f"identity_crop_{file_id}",
+                )
+            except ImportError:
+                st.image(image, use_container_width=True, caption=f"📷 {sel_name}")
+                st.info("Instala streamlit-cropper para dibujar directamente sobre la foto.")
         else:
             st.warning("Archivo no encontrado en disco.")
 
@@ -223,15 +242,24 @@ def _render_faceless_panel(db: DatabaseManager) -> None:
                 placeholder="Ej: Carlos Ruiz",
             )
 
-        st.markdown("**Región (opcional)** — coordenadas en píxeles")
-        with st.expander("Definir bounding box manual"):
-            bcol1, bcol2 = st.columns(2)
-            with bcol1:
-                fl_top = st.number_input("Top", min_value=0, value=0, key="fl_top")
-                fl_left = st.number_input("Left", min_value=0, value=0, key="fl_left")
-            with bcol2:
-                fl_bot = st.number_input("Bottom", min_value=0, value=200, key="fl_bot")
-                fl_right = st.number_input("Right", min_value=0, value=200, key="fl_right")
+        region_mode = st.radio(
+            "Presencia en la imagen",
+            ["Área seleccionada", "Toda la fotografía"],
+            horizontal=True,
+            help="Toda la fotografía fuerza la presencia sin asociarla a una zona concreta.",
+        )
+        hard_case = st.selectbox(
+            "Caso útil para aprendizaje activo",
+            ["other", "back_view", "occluded", "helmet", "small_region", "low_light"],
+            format_func=lambda value: {
+                "other": "Normal",
+                "back_view": "De espaldas",
+                "occluded": "Tapada/o",
+                "helmet": "Casco",
+                "small_region": "Región pequeña",
+                "low_light": "Poca luz",
+            }[value],
+        )
 
         if st.button("✅ Asignar identidad faceless", type="primary"):
             nombre_final = new_id.strip() if sel_id == "(Nueva identidad)" else sel_id
@@ -239,17 +267,26 @@ def _render_faceless_panel(db: DatabaseManager) -> None:
                 st.error("Introduce un nombre válido.")
                 return
 
-            bbox: Optional[dict] = None
-            if fl_top or fl_left or fl_bot or fl_right:
-                bbox = {
-                    "top": fl_top,
-                    "right": fl_right,
-                    "bottom": fl_bot,
-                    "left": fl_left,
-                }
+            region = IdentityRegion()
+            if region_mode == "Área seleccionada":
+                if not crop_box:
+                    st.error("Dibuja un área o selecciona ‘Toda la fotografía’.")
+                    return
+                width, height = image_size
+                region = IdentityRegion(
+                    kind=RegionKind.RECTANGLE,
+                    x=max(0.0, float(crop_box["left"]) / width),
+                    y=max(0.0, float(crop_box["top"]) / height),
+                    width=min(1.0, float(crop_box["width"]) / width),
+                    height=min(1.0, float(crop_box["height"]) / height),
+                )
 
-            # Añadir a DB
-            db.add_faceless_tag(file_id, nombre_final, bbox)
+            CorrectIdentity(SqliteIdentityCorrectionRepository(db)).execute(
+                media_id=file_id,
+                display_name=nombre_final,
+                region=region,
+                hard_case=hard_case if hard_case != "other" else None,
+            )
 
             # Crear symlink
             src = Path(filepath)
@@ -358,7 +395,7 @@ def _render_det_card(
     tb_css = {"safe": "tb-safe", "review": "tb-review", "unclassified": "tb-unk"}.get(
         tier, "tb-unk"
     )
-    conf_pct = f"{conf*100:.0f}%" if conf > 0 else "—"
+    conf_pct = f"{conf * 100:.0f}%" if conf > 0 else "—"
     st.markdown(
         f'<span class="tier-badge {tb_css}">{conf_pct}</span> '
         f'<span style="font-size:12px;color:#8892a4">{name}</span>',
@@ -563,7 +600,7 @@ def _render_inspector(db: DatabaseManager) -> None:
             col = colors[i % len(colors)]
 
             cv2.rectangle(disp_rgb, (left, top), (right, bot), col, 2)
-            label = f"{name} {conf*100:.0f}%" if conf > 0 else name
+            label = f"{name} {conf * 100:.0f}%" if conf > 0 else name
             (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.52, 1)
             cv2.rectangle(disp_rgb, (left, top - th - 10), (left + tw + 10, top), col, -1)
             cv2.putText(
@@ -589,7 +626,7 @@ def _render_inspector(db: DatabaseManager) -> None:
         for det in dets:
             tier = det.get("triage_tier", "unclassified")
             tb = {"safe": "tb-safe", "review": "tb-review"}.get(tier, "tb-unk")
-            with st.expander(f'👤 {det["assigned_name"]} ' f'({det["confidence"]*100:.0f}%)'):
+            with st.expander(f"👤 {det['assigned_name']} ({det['confidence'] * 100:.0f}%)"):
                 if det.get("face_crop_path") and Path(det["face_crop_path"]).exists():
                     st.image(det["face_crop_path"], width=90)
                 st.markdown(
