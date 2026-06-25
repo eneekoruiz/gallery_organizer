@@ -369,6 +369,8 @@ class DatabaseManager:
             "failed_stage": "TEXT",
             "error_message": "TEXT",
             "ocr_text": "TEXT",
+            "priority": "INTEGER DEFAULT 0",
+            "current_stage": "TEXT",
         }
         for col, ctype in new_fq_cols.items():
             if col not in cols:
@@ -380,6 +382,15 @@ class DatabaseManager:
         if "cluster_id" not in d_cols:
             log.info("Migration: Adding cluster_id to Detections.")
             cursor.execute("ALTER TABLE Detections ADD COLUMN cluster_id INTEGER")
+        if "gaze_direction" not in d_cols:
+            log.info("Migration: Adding gaze_direction to Detections.")
+            cursor.execute("ALTER TABLE Detections ADD COLUMN gaze_direction TEXT")
+        if "eye_contact" not in d_cols:
+            log.info("Migration: Adding eye_contact to Detections.")
+            cursor.execute("ALTER TABLE Detections ADD COLUMN eye_contact BOOLEAN DEFAULT 1")
+        if "landmarks_json" not in d_cols:
+            log.info("Migration: Adding landmarks_json to Detections.")
+            cursor.execute("ALTER TABLE Detections ADD COLUMN landmarks_json TEXT")
 
         # Crear los nuevos índices si no existen
         cursor.execute(
@@ -583,8 +594,8 @@ class DatabaseManager:
                 for det in detections_payload:
                     c.execute(
                         "INSERT INTO Detections (file_id, embedding, bbox_json, face_crop_path, "
-                        "confidence, assigned_name, triage_tier, is_high_quality) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        "confidence, assigned_name, triage_tier, is_high_quality, gaze_direction, eye_contact, landmarks_json) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (
                             file_id,
                             det.get("embedding"),
@@ -594,6 +605,9 @@ class DatabaseManager:
                             det.get("assigned_name", "Desconocido"),
                             det.get("triage_tier", "unclassified"),
                             1 if det.get("is_high_quality", True) else 0,
+                            det.get("gaze_direction"),
+                            1 if det.get("eye_contact", True) else 0,
+                            json.dumps(det.get("landmarks", [])) if det.get("landmarks") else None,
                         ),
                     )
             # 4. SRE Phase 4: Atomic insertion of CLIP Embeddings
@@ -636,6 +650,19 @@ class DatabaseManager:
                 "VALUES (?, ?, ?, ?, ?)",
                 (file_id, filepath, stage, message, current_retries),
             )
+
+    def update_stage(self, file_id: int, stage: str) -> None:
+        with self._write() as c:
+            c.execute(
+                "UPDATE FileQueue SET current_stage=?, last_updated=? WHERE id=?",
+                (stage, _now(), file_id),
+            )
+
+    def prioritize_file(self, file_id: int) -> None:
+        with self._write() as c:
+            row = c.execute("SELECT MAX(priority) FROM FileQueue WHERE status='PENDING'").fetchone()
+            max_p = row[0] if row and row[0] is not None else 0
+            c.execute("UPDATE FileQueue SET priority = ? WHERE id = ?", (max_p + 1, file_id))
 
     def retry_all_errors(self) -> int:
         """Reinicia todos los archivos con estado ERROR a PENDING y resetea retries."""
@@ -744,7 +771,7 @@ class DatabaseManager:
     def next_batch_pending(self, limit: int = 1) -> list[dict[str, Any]]:
         with self._write() as c:
             c.execute(
-                "SELECT * FROM FileQueue WHERE status='PENDING' ORDER BY id LIMIT ?",
+                "SELECT * FROM FileQueue WHERE status='PENDING' ORDER BY priority DESC, id LIMIT ?",
                 (limit,),
             )
             rows = c.fetchall()
@@ -786,6 +813,12 @@ class DatabaseManager:
             row = c.fetchone()
             return dict(row) if row else None
 
+    def get_file_record(self, file_id: int) -> Optional[dict]:
+        with self._read() as c:
+            c.execute("SELECT * FROM FileQueue WHERE id=?", (file_id,))
+            row = c.fetchone()
+            return dict(row) if row else None
+
     def get_detections_for_file(self, file_id: int) -> list[dict]:
         with self._read() as c:
             c.execute(
@@ -793,6 +826,20 @@ class DatabaseManager:
                 (file_id,),
             )
             return [dict(r) for r in c.fetchall()]
+
+    def update_detection_gaze(self, detection_id: int, eye_contact: bool, gaze_direction: str) -> None:
+        with self._write() as c:
+            c.execute(
+                "UPDATE Detections SET eye_contact=?, gaze_direction=? WHERE id=?",
+                (1 if eye_contact else 0, gaze_direction, detection_id),
+            )
+
+    def update_detection_gaze_full(self, detection_id: int, eye_contact: bool, gaze_direction: str, landmarks: list) -> None:
+        with self._write() as c:
+            c.execute(
+                "UPDATE Detections SET eye_contact=?, gaze_direction=?, landmarks_json=? WHERE id=?",
+                (1 if eye_contact else 0, gaze_direction, json.dumps(landmarks) if landmarks else None, detection_id),
+            )
 
     def get_symlink_paths_for_file(self, file_id: int) -> list[str]:
         with self._read() as c:
@@ -848,6 +895,26 @@ class DatabaseManager:
         params += [limit, offset]
         conn = self._connect()
         df = pd.read_sql_query(sql, conn, params=params)
+        conn.close()
+        return df
+
+    def get_queue_files_df(self, limit: int = 50) -> pd.DataFrame:
+        sql = """
+            SELECT id, filepath, filename, media_type, status, priority, current_stage, failed_stage, error_message, last_updated 
+            FROM FileQueue 
+            ORDER BY 
+              CASE status 
+                WHEN 'PROCESSING' THEN 1 
+                WHEN 'PENDING' THEN 2 
+                WHEN 'ERROR' THEN 3 
+                ELSE 4 
+              END, 
+              priority DESC, 
+              id DESC 
+            LIMIT ?
+        """
+        conn = self._connect()
+        df = pd.read_sql_query(sql, conn, params=(limit,))
         conn.close()
         return df
 
@@ -941,7 +1008,7 @@ class DatabaseManager:
         """Agrupa archivos que tienen el mismo phash."""
         sql = """
             SELECT phash, COUNT(*) as cnt 
-            FROM Detections 
+            FROM FileQueue 
             WHERE phash IS NOT NULL AND phash != ''
             GROUP BY phash 
             HAVING cnt > 1
@@ -952,11 +1019,10 @@ class DatabaseManager:
         groups = []
         for h in hashes:
             sql_group = """
-                SELECT f.*, t.thumb_path as cached_thumb, d.phash
+                SELECT f.*, t.thumb_path as cached_thumb
                 FROM FileQueue f
-                JOIN Detections d ON f.id = d.file_id
                 LEFT JOIN ThumbnailCache t ON f.id = t.file_id
-                WHERE d.phash = ?
+                WHERE f.phash = ?
             """
             conn = self._connect()
             df = pd.read_sql_query(sql_group, conn, params=(h,))

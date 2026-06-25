@@ -200,8 +200,8 @@ class ArcFaceEngine:
             except ImportError:
                 log.error("ArcFaceEngine: sin backend.")
 
-    def get_faces(self, img_rgb: np.ndarray) -> list[tuple[dict[str, int], np.ndarray, float]]:
-        """Devuelve [(bbox_dict, embedding_float32, confidence)]"""
+    def get_faces(self, img_rgb: np.ndarray) -> list[tuple[dict[str, int], np.ndarray, float, Optional[Any]]]:
+        """Devuelve [(bbox_dict, embedding_float32, confidence, landmarks)]"""
         self._ensure_loaded()
         if self._ort:
             return self._faces_ort(img_rgb)
@@ -211,7 +211,7 @@ class ArcFaceEngine:
 
     def _faces_deepface(
         self, img_rgb: np.ndarray
-    ) -> list[tuple[dict[str, int], np.ndarray, float]]:
+    ) -> list[tuple[dict[str, int], np.ndarray, float, Optional[Any]]]:
         from deepface import DeepFace
 
         try:
@@ -236,10 +236,21 @@ class ArcFaceEngine:
                 "left": fa["x"],
             }
             emb = _norm(np.array(f["embedding"], dtype=np.float32))
-            out.append((bbox, emb, float(f["face_confidence"])))
+            
+            # Extraer landmarks de DeepFace
+            landmarks = f.get("landmarks")
+            if not landmarks:
+                landmarks = {
+                    "left_eye": fa.get("left_eye"),
+                    "right_eye": fa.get("right_eye"),
+                    "nose": fa.get("nose") or [fa["x"] + fa["w"]*0.5, fa["y"] + fa["h"]*0.5],
+                    "mouth_left": fa.get("mouth_left") or [fa["x"] + fa["w"]*0.3, fa["y"] + fa["h"]*0.8],
+                    "mouth_right": fa.get("mouth_right") or [fa["x"] + fa["w"]*0.7, fa["y"] + fa["h"]*0.8],
+                }
+            out.append((bbox, emb, float(f["face_confidence"]), landmarks))
         return out
 
-    def _faces_ort(self, img_rgb: np.ndarray) -> list[tuple[dict[str, int], np.ndarray, float]]:
+    def _faces_ort(self, img_rgb: np.ndarray) -> list[tuple[dict[str, int], np.ndarray, float, Optional[Any]]]:
         try:
             from retinaface import RetinaFace  # type: ignore
 
@@ -262,7 +273,8 @@ class ArcFaceEngine:
             if emb is None:
                 continue
             bbox = {"top": top, "right": right, "bottom": bottom, "left": left}
-            out.append((bbox, emb, conf))
+            landmarks = face.get("landmarks")
+            out.append((bbox, emb, conf, landmarks))
         return out
 
     def _embed_ort(self, crop_rgb: np.ndarray) -> Optional[np.ndarray]:

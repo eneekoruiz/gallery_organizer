@@ -84,6 +84,7 @@ def main() -> None:
                 "Galería",
                 "Triaje",
                 "Personas",
+                "Detector de Miradas",
                 "Eventos",
                 "Explorador 3D",
                 "Limpieza",
@@ -142,6 +143,10 @@ def main() -> None:
         from ui.tab_people import render_people_management
 
         render_people_management(db)
+    elif page == "Detector de Miradas":
+        from ui.tab_gaze import render_gaze_management
+
+        render_gaze_management(db)
     elif page == "Eventos":
         from ui.tab_events import render_events_and_locations
 
@@ -194,7 +199,8 @@ def _render_file_inspector(db: DatabaseManager) -> None:
         st.error("Archivo no encontrado en disco.")
         return
 
-    dets = db.get_detections_for_file(file_id)
+    from ui.tab_gaze import _ensure_gaze_calculated
+    dets = _ensure_gaze_calculated(db, file_id, filepath)
 
     stream = np.fromfile(filepath, dtype=np.uint8)
     img_bgr = cv2.imdecode(stream, cv2.IMREAD_COLOR)
@@ -204,42 +210,15 @@ def _render_file_inspector(db: DatabaseManager) -> None:
 
     h, w = img_bgr.shape[:2]
     scale = min(1.0, 860 / w)
-    disp = cv2.cvtColor(cv2.resize(img_bgr, (int(w * scale), int(h * scale))), cv2.COLOR_BGR2RGB)
+    img_resized = cv2.resize(img_bgr, (int(w * scale), int(h * scale)))
 
-    COLORS = [
-        (99, 102, 241),
-        (236, 72, 153),
-        (52, 211, 153),
-        (251, 191, 36),
-        (96, 165, 250),
-    ]
-    for i, det in enumerate(dets):
-        try:
-            b = json.loads(det["bbox_json"])
-            col = COLORS[i % len(COLORS)]
-            top = int(b["top"] * scale)
-            bot = int(b["bottom"] * scale)
-            left = int(b["left"] * scale)
-            right = int(b["right"] * scale)
-            cv2.rectangle(disp, (left, top), (right, bot), col, 2)
-            label = f"{det['assigned_name']} {det['confidence'] * 100:.0f}%"
-            (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
-            cv2.rectangle(disp, (left, top - th - 10), (left + tw + 10, top), col, -1)
-            cv2.putText(
-                disp,
-                label,
-                (left + 5, top - 5),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.5,
-                (255, 255, 255),
-                1,
-            )
-        except Exception as e:
-            log.debug(f"Failed to draw bbox for detection {det.get('id')}: {e}")
+    from core.gaze_detector import draw_gaze_overlay
+    disp = draw_gaze_overlay(img_resized, dets, scale=scale)
+    disp_rgb = cv2.cvtColor(disp, cv2.COLOR_BGR2RGB)
 
     img_c, info_c = st.columns([3, 2])
     with img_c:
-        st.image(disp, use_container_width=True)
+        st.image(disp_rgb, use_container_width=True)
     with info_c:
         st.markdown(f"**{len(dets)} detecciones**")
         known = db.get_all_identity_names()

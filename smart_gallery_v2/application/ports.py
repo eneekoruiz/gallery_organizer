@@ -37,6 +37,7 @@ class PipelineSteps(Protocol):
 
 class JobRepository(Protocol):
     def update_error(self, file_id: int, stage: str, message: str) -> None: ...
+    def update_stage(self, file_id: int, stage: str) -> None: ...
 
 
 class MediaLocationRepository(Protocol):

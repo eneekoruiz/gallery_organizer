@@ -535,7 +535,7 @@ class ProcessingEngine:
             detections_payload = []
             if self._arcface and self._faiss:
                 faces = self._arcface.get_faces(img_rgb)
-                for bbox, emb, det_conf in faces:
+                for bbox, emb, det_conf, landmarks in faces:
                     face_crop = None
                     try:
                         top = max(0, int(bbox["top"]))
@@ -561,6 +561,10 @@ class ProcessingEngine:
 
                     crop_path = self._save_crop(img_bgr, bbox)
 
+                    # Estimación de mirada y contacto visual
+                    from core.gaze_detector import estimate_gaze_from_landmarks
+                    eye_contact, gaze_dir, gaze_vec, landmarks_list = estimate_gaze_from_landmarks(landmarks)
+
                     detections_payload.append(
                         {
                             "embedding": emb,
@@ -570,6 +574,9 @@ class ProcessingEngine:
                             "assigned_name": name,
                             "triage_tier": tier,
                             "is_high_quality": is_high_q,
+                            "gaze_direction": gaze_dir,
+                            "eye_contact": 1 if eye_contact else 0,
+                            "landmarks": landmarks_list,
                         }
                     )
 

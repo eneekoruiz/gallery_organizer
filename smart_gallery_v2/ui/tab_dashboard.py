@@ -197,13 +197,113 @@ def render_dashboard(db: DatabaseManager) -> None:
     st.divider()
 
     # ── Log Terminal ──────────────────────────────────────────────────────
+    # ── Log Terminal ──────────────────────────────────────────────────────
     st.markdown("#### 📋 Actividad del Motor")
     _drain(log_q)
     html = "\n".join(st.session_state.logs[-40:])
     st.markdown(f'<div class="log-term">{html}</div>', unsafe_allow_html=True)
 
-    # ── Auto-refresh si motor activo ──────────────────────────────────────
-    if is_running and not is_paused:
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ── Ingestion Queue Management ────────────────────────────────────────
+    st.markdown("#### ⚡ Cola de Ingesta y Procesamiento Manual")
+    queue_df = db.get_queue_files_df(limit=15)
+
+    if queue_df.empty:
+        st.info("No hay archivos en la cola de procesamiento.")
+    else:
+        st.markdown(
+            "<p style='color:#606880;font-size:13px;margin:-8px 0 16px;'>"
+            "Visualiza el progreso detallado de la ingesta. Puedes priorizar archivos pendientes o procesarlos síncronamente al instante."
+            "</p>",
+            unsafe_allow_html=True
+        )
+
+        # Encabezado de la tabla de cola
+        cols_h = st.columns([1, 4, 3, 2, 4])
+        cols_h[0].markdown("**ID**")
+        cols_h[1].markdown("**Archivo**")
+        cols_h[2].markdown("**Estado**")
+        cols_h[3].markdown("**Prioridad**")
+        cols_h[4].markdown("**Acciones**")
+        st.divider()
+
+        for _idx, row in queue_df.iterrows():
+            cols = st.columns([1, 4, 3, 2, 4])
+            file_id = int(row["id"])
+            filename = row["filename"]
+            status = row["status"]
+            media_type = row["media_type"]
+            priority = int(row.get("priority", 0))
+            current_stage = row.get("current_stage")
+            failed_stage = row.get("failed_stage")
+            err_msg = row.get("error_message")
+
+            cols[0].write(f"#{file_id}")
+            icon = "🎥" if media_type == "video" else "🖼️"
+            cols[1].markdown(f"**{icon} {filename}**")
+
+            # Colorear estado y etapa activa
+            if status == "PENDING":
+                cols[2].markdown("<span style='color:#fbbf24;font-weight:600;'>⏳ Pendiente</span>", unsafe_allow_html=True)
+            elif status == "PROCESSING":
+                stage_lbl = f" ({current_stage})" if current_stage else ""
+                cols[2].markdown(f"<span style='color:#60a5fa;font-weight:600;'>⚙️ Procesando{stage_lbl}</span>", unsafe_allow_html=True)
+            elif status == "ERROR":
+                stage_lbl = f" ({failed_stage})" if failed_stage else ""
+                cols[2].markdown(f"<span style='color:#f87171;font-weight:600;'>💥 Error{stage_lbl}</span>", unsafe_allow_html=True)
+            else:
+                cols[2].markdown("<span style='color:#34d399;font-weight:600;'>✅ Procesado</span>", unsafe_allow_html=True)
+
+            cols[3].write(f"{priority}")
+
+            # Acciones
+            with cols[4]:
+                c_act1, c_act2 = st.columns(2)
+                with c_act1:
+                    if status == "PENDING":
+                        if st.button("⬆ Priorizar", key=f"pri_{file_id}", use_container_width=True):
+                            db.prioritize_file(file_id)
+                            st.toast(f"Priorizado archivo #{file_id}")
+                            st.rerun()
+                    else:
+                        st.write("") # placeholder
+                with c_act2:
+                    lbl_btn = "⚡ Procesar" if status == "PENDING" else "🔁 Reprocesar"
+                    if st.button(lbl_btn, key=f"prc_{file_id}", use_container_width=True):
+                        with st.spinner(f"Analizando '{filename}'..."):
+                            from core.models_types import MediaRecord
+                            # 1. Preparar record
+                            record = MediaRecord(
+                                id=file_id,
+                                filepath=row["filepath"],
+                                media_type=media_type,
+                                retries=0
+                            )
+                            # 2. Configurar base de datos a PROCESSING
+                            db.update_stage(file_id, "stability")
+                            conn = db._connect()
+                            conn.execute(
+                                "UPDATE FileQueue SET status='PROCESSING', retries=0, error_message=NULL, failed_stage=NULL WHERE id=?",
+                                (file_id,)
+                            )
+                            conn.close()
+
+                            # 3. Lanzar pipeline
+                            engine = st.session_state.engine
+                            if not engine._yolo:
+                                engine._load_engines()
+
+                            res = engine.process_one(record)
+                            if res.status == "DONE":
+                                st.toast(f"✓ '{filename}' completado con éxito!")
+                            else:
+                                st.error(f"💥 Error al procesar: {res.message}")
+                            st.rerun()
+            st.markdown("<hr style='margin:4px 0;'/>", unsafe_allow_html=True)
+
+    # ── Auto-refresh si motor activo o procesando ─────────────────────────
+    if (is_running and not is_paused) or not queue_df[queue_df["status"] == "PROCESSING"].empty:
         if st_autorefresh is not None:
             st_autorefresh(interval=1200, key="dashboard_refresh")
         else:
