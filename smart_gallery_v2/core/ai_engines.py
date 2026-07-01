@@ -9,6 +9,7 @@ from __future__ import annotations
 import gc
 import logging
 import warnings
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Optional
 
@@ -46,7 +47,7 @@ def _load_ort(model_path: Path):
         return ort.InferenceSession(
             str(model_path), sess_options=opts, providers=["CPUExecutionProvider"]
         )
-    except Exception as exc:
+    except (RuntimeError, OSError, ValueError, TypeError, KeyError, ImportError) as exc:
         log.debug("ONNX no disponible %s: %s", model_path, exc)
         return None
 
@@ -99,7 +100,7 @@ class YOLOEngine:
 
             self._native = YOLO("yolov8n.pt", verbose=False)
             log.info("YOLOEngine: ultralytics nativo")
-        except Exception as exc:
+        except (RuntimeError, OSError, ValueError, TypeError, KeyError, ImportError) as exc:
             log.error("YOLOEngine sin backend: %s", exc)
 
     def detect_batch(self, imgs_bgr: list[np.ndarray]) -> list[list[dict[str, Any]]]:
@@ -221,7 +222,7 @@ class ArcFaceEngine:
                 detector_backend="retinaface",
                 enforce_detection=False,
             )
-        except Exception as e:
+        except (RuntimeError, OSError, ValueError, TypeError, KeyError, ImportError) as e:
             log.error("DeepFace face extraction failed: %s", e)
             return []
         out = []
@@ -236,7 +237,7 @@ class ArcFaceEngine:
                 "left": fa["x"],
             }
             emb = _norm(np.array(f["embedding"], dtype=np.float32))
-            
+
             # Extraer landmarks de DeepFace
             landmarks = f.get("landmarks")
             if not landmarks:
@@ -255,7 +256,7 @@ class ArcFaceEngine:
             from retinaface import RetinaFace  # type: ignore
 
             raw = RetinaFace.detect_faces(img_rgb)
-        except Exception:
+        except (RuntimeError, OSError, ValueError, TypeError, KeyError, ImportError):
             return []
         if not isinstance(raw, dict):
             return []
@@ -284,7 +285,7 @@ class ArcFaceEngine:
             blob = img.transpose(2, 0, 1)[np.newaxis]
             out = self._ort.run(None, {self._inp: blob})[0][0]
             return _norm(out.astype(np.float32))
-        except Exception as e:
+        except (RuntimeError, OSError, ValueError, TypeError, KeyError, ImportError) as e:
             log.error("DeepFace embedding failed: %s", e)
             return None
 
@@ -332,7 +333,7 @@ class CLIPEngine:
             self._prep = prep
             self._tokenizer = open_clip.get_tokenizer("ViT-B-32")
             log.info("CLIPEngine: open_clip nativo")
-        except Exception as e:
+        except (RuntimeError, OSError, ValueError, TypeError, KeyError, ImportError) as e:
             log.error("CLIPEngine open_clip load failed: %s", e)
             try:
                 from transformers import CLIPModel, CLIPProcessor  # type: ignore
@@ -340,7 +341,7 @@ class CLIPEngine:
                 self._native = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
                 self._tokenizer = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
                 log.info("CLIPEngine: transformers CLIP")
-            except Exception as exc:
+            except (RuntimeError, OSError, ValueError, TypeError, KeyError, ImportError) as exc:
                 log.warning("CLIPEngine sin backend: %s", exc)
 
     def _pre_img(self, img_rgb: np.ndarray) -> np.ndarray:
@@ -361,7 +362,7 @@ class CLIPEngine:
                 inp_batch = np.stack(blobs)
                 outs = self._vis.run(None, {self._inp: inp_batch})[0]
                 return [_norm(out.astype(np.float32)) for out in outs]
-            except Exception as e:
+            except (RuntimeError, OSError, ValueError, TypeError, KeyError, ImportError) as e:
                 log.error(f"CLIP ORT batch failed: {e}")
                 return []
         if self._native:
@@ -384,7 +385,7 @@ class CLIPEngine:
                 with torch.no_grad():
                     f = self._native.get_image_features(**inp)
                 return [_norm(vec.numpy().astype(np.float32)) for vec in f]
-        except Exception as e:
+        except (RuntimeError, OSError, ValueError, TypeError, KeyError, ImportError) as e:
             log.error(f"CLIP native batch failed: {e}")
             return []
 
@@ -404,10 +405,11 @@ class CLIPEngine:
                 with torch.no_grad():
                     f = self._native.get_image_features(**inp)
                 return _norm(f.squeeze().numpy().astype(np.float32))
-        except Exception as e:
+        except (RuntimeError, OSError, ValueError, TypeError, KeyError, ImportError) as e:
             log.error("CLIP native embedding failed: %s", e)
             return None
 
+    @lru_cache(maxsize=1024)
     def embed_text(self, text: str) -> Optional[np.ndarray]:
         self._ensure_loaded()
         if self._native is None and self._txt is None:
@@ -428,7 +430,7 @@ class CLIPEngine:
                     with torch.no_grad():
                         f = self._native.get_text_features(**inp)
                     return _norm(f.squeeze().numpy().astype(np.float32))
-        except Exception as e:
+        except (RuntimeError, OSError, ValueError, TypeError, KeyError, ImportError) as e:
             log.error("CLIP text embedding failed: %s", e)
             return None
         return None
@@ -465,7 +467,7 @@ class FaissIndex:
             q = query.astype(np.float32).reshape(1, -1)
             distances, indices = self._index.search(q, 1)
             dist = float(distances[0][0])
-        except Exception as e:
+        except (RuntimeError, OSError, ValueError, TypeError, KeyError, ImportError) as e:
             log.error("FAISS search failed: %s", e)
             return "Desconocido", 0.0, "unclassified"
 
@@ -570,7 +572,7 @@ class OCREngine:
 
                 self._reader = easyocr.Reader(["en", "es"], gpu=False)
                 log.info("OCR Engine: EasyOCR loaded.")
-            except Exception as e:
+            except (RuntimeError, OSError, ValueError, TypeError, KeyError, ImportError) as e:
                 log.error(f"OCR Engine load failed: {e}")
         return self._reader
 
@@ -611,7 +613,7 @@ class DenseCaptionEngine:
         except ImportError:
             log.warning("transformers o torch no instalados. Moondream2 desactivado.")
             self._load_failed = True
-        except Exception as e:
+        except (RuntimeError, OSError, ValueError, TypeError, KeyError, ImportError) as e:
             log.error(f"Error cargando Moondream2: {e}")
             self._load_failed = True
 
@@ -628,6 +630,7 @@ class DenseCaptionEngine:
             enc_image = self._model.encode_image(pil_img)
             answer = self._model.answer_question(enc_image, prompt, self._tokenizer)
             return answer
-        except Exception as e:
+        except (RuntimeError, OSError, ValueError, TypeError, KeyError, ImportError) as e:
             log.error(f"DenseCaptionEngine inferencia fallida: {e}")
             return None
+

@@ -82,6 +82,8 @@ CREATE TABLE IF NOT EXISTS FileQueue (
     confidence_score REAL NOT NULL DEFAULT 1.0,
     failed_stage TEXT,
     error_message TEXT,
+    priority INTEGER NOT NULL DEFAULT 0,
+    current_stage TEXT,
     last_updated TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
 );
 CREATE INDEX IF NOT EXISTS idx_fq_status  ON FileQueue(status);
@@ -91,6 +93,7 @@ CREATE INDEX IF NOT EXISTS idx_fq_updated ON FileQueue(last_updated);
 CREATE INDEX IF NOT EXISTS idx_fq_media   ON FileQueue(media_type);
 CREATE INDEX IF NOT EXISTS idx_fq_best_datetime ON FileQueue(best_datetime);
 CREATE INDEX IF NOT EXISTS idx_fq_review_required ON FileQueue(review_required);
+CREATE INDEX IF NOT EXISTS idx_fq_pending_priority ON FileQueue(status, priority DESC, id);
 
 -- ── DETECCIONES (HITL) ────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS Detections (
@@ -400,6 +403,9 @@ class DatabaseManager:
         cursor.execute(
             "CREATE INDEX IF NOT EXISTS idx_fq_review_required ON FileQueue(review_required);"
         )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_fq_pending_priority ON FileQueue(status, priority DESC, id);"
+        )
 
         # Migrar DONE a AUTO_CLASSIFIED / NEEDS_REVIEW si hay datos legacy
         cursor.execute(
@@ -509,7 +515,7 @@ class DatabaseManager:
     def set_processing(self, file_id: int) -> None:
         with self._write() as c:
             c.execute(
-                "UPDATE FileQueue SET status='PROCESSING', last_updated=? WHERE id=?",
+                "UPDATE FileQueue SET status='PROCESSING', current_stage=NULL, last_updated=? WHERE id=?",
                 (_now(), file_id),
             )
 
@@ -552,7 +558,7 @@ class DatabaseManager:
                 "camera_model=?, lens_model=?, iso=?, f_number=?, exposure=?, "
                 "quality_score=?, exif_datetime=?, filename_datetime=?, folder_datetime=?, "
                 "filesystem_datetime=?, best_datetime=?, date_source=?, date_confidence=?, "
-                "review_required=?, review_reasons=?, confidence_score=?, ocr_text=?, last_updated=? WHERE id=?",
+                "review_required=?, review_reasons=?, confidence_score=?, ocr_text=?, priority=0, current_stage=NULL, failed_stage=NULL, error_message=NULL, last_updated=? WHERE id=?",
                 (
                     status,
                     triage_tier,
@@ -640,7 +646,7 @@ class DatabaseManager:
             # Decidir si pasar a ERROR final o dejar en PENDING para reintento automático
             status = "ERROR" if current_retries >= 3 else "PENDING"
             c.execute(
-                "UPDATE FileQueue SET status=?, failed_stage=?, error_message=?, last_updated=? WHERE id=?",
+                "UPDATE FileQueue SET status=?, failed_stage=?, error_message=?, priority=0, current_stage=NULL, last_updated=? WHERE id=?",
                 (status, stage, message, _now(), file_id),
             )
 
@@ -660,15 +666,48 @@ class DatabaseManager:
 
     def prioritize_file(self, file_id: int) -> None:
         with self._write() as c:
+            pending = c.execute(
+                "SELECT 1 FROM FileQueue WHERE id=? AND status='PENDING'",
+                (file_id,),
+            ).fetchone()
+            if not pending:
+                return
             row = c.execute("SELECT MAX(priority) FROM FileQueue WHERE status='PENDING'").fetchone()
             max_p = row[0] if row and row[0] is not None else 0
-            c.execute("UPDATE FileQueue SET priority = ? WHERE id = ?", (max_p + 1, file_id))
+            c.execute(
+                "UPDATE FileQueue SET priority=?, last_updated=? WHERE id=?",
+                (max_p + 1, _now(), file_id),
+            )
+
+    def prepare_manual_processing(self, file_id: int) -> Optional[dict[str, Any]]:
+        """Move a queue item into PROCESSING for immediate manual execution."""
+        with self._write() as c:
+            row = c.execute(
+                "SELECT * FROM FileQueue WHERE id=? AND status NOT IN ('PROCESSING', 'IGNORED')",
+                (file_id,),
+            ).fetchone()
+            if not row:
+                return None
+            c.execute(
+                "UPDATE FileQueue SET status='PROCESSING', retries=0, priority=0, "
+                "current_stage=NULL, failed_stage=NULL, error_message=NULL, last_updated=? "
+                "WHERE id=?",
+                (_now(), file_id),
+            )
+            result = dict(row)
+            result["status"] = "PROCESSING"
+            result["retries"] = 0
+            result["priority"] = 0
+            result["current_stage"] = None
+            result["failed_stage"] = None
+            result["error_message"] = None
+            return result
 
     def retry_all_errors(self) -> int:
         """Reinicia todos los archivos con estado ERROR a PENDING y resetea retries."""
         with self._write() as c:
             c.execute(
-                "UPDATE FileQueue SET status='PENDING', retries=0, last_updated=? WHERE status='ERROR'",
+                "UPDATE FileQueue SET status='PENDING', retries=0, priority=0, current_stage=NULL, failed_stage=NULL, error_message=NULL, last_updated=? WHERE status='ERROR'",
                 (_now(),),
             )
             count = c.rowcount
@@ -1652,6 +1691,58 @@ class DatabaseManager:
                 (name, cluster_id),
             )
 
+    def search_semantic(self, query: str, threshold: float = 0.2, limit: int = 50) -> pd.DataFrame:
+        """
+        [Fast-Path] Búsqueda semántica ultrarrápida (Vector Search).
+        Usa la caché LRU de CLIP para el texto y producto punto (Cosine Similarity) vía NumPy
+        sobre los embeddings cargados de SQLite.
+        """
+        from core.ai_engines import CLIPEngine
+        
+        # 1. Obtener embedding de texto cacheado O(1) si ya se buscó antes
+        engine = CLIPEngine()
+        txt_emb = engine.embed_text(query)
+        if txt_emb is None:
+            return pd.DataFrame()
+            
+        # 2. Cargar todos los blobs de ClipEmbeddings
+        conn = self._connect()
+        df_clip = pd.read_sql("SELECT id, embedding FROM ClipEmbeddings", conn)
+        conn.close()
+        
+        if df_clip.empty:
+            return pd.DataFrame()
+            
+        # 3. Deserializar blobs a NumPy
+        # Convertir list de bytes a matriz 2D
+        embeddings_list = [np.frombuffer(b, dtype=np.float32) for b in df_clip['embedding']]
+        if not embeddings_list:
+            return pd.DataFrame()
+            
+        img_embs = np.stack(embeddings_list)
+        
+        # 4. Multiplicación de matrices súper rápida (Cosine Similarity)
+        # txt_emb ya está normalizado (forma: (dim,))
+        # img_embs ya están normalizados (forma: (N, dim))
+        similarities = img_embs @ txt_emb
+        
+        # 5. Filtrar y ordenar
+        df_clip['similarity'] = similarities
+        df_matched = df_clip[df_clip['similarity'] >= threshold].copy()
+        df_matched.sort_values('similarity', ascending=False, inplace=True)
+        df_matched = df_matched.head(limit)
+        
+        if df_matched.empty:
+            return pd.DataFrame()
+            
+        # 6. Hacer JOIN con FileQueue para obtener los detalles
+        ids = df_matched['id'].tolist()
+        df_info = self.get_files_by_ids(ids)
+        
+        # Mantener el orden de similitud
+        df_final = pd.merge(df_matched, df_info, on='id', how='left')
+        return df_final
+
     def search_files_fuzzy(self, query: str, limit: int = 100) -> pd.DataFrame:
         """Búsqueda difusa de lenguaje natural traducido a SQL compleja."""
         query_clean = normalize_text(query).strip()
@@ -1909,3 +2000,4 @@ def _norm_path(path_str: str) -> str:
     except Exception:
         log.debug("Path normalization failed for %s", path_str)
         return path_str
+
