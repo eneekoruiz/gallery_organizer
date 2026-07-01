@@ -216,7 +216,7 @@ def render_dashboard(db: DatabaseManager) -> None:
             "<p style='color:#606880;font-size:13px;margin:-8px 0 16px;'>"
             "Visualiza el progreso detallado de la ingesta. Puedes priorizar archivos pendientes o procesarlos síncronamente al instante."
             "</p>",
-            unsafe_allow_html=True
+            unsafe_allow_html=True,
         )
 
         # Encabezado de la tabla de cola
@@ -245,15 +245,27 @@ def render_dashboard(db: DatabaseManager) -> None:
 
             # Colorear estado y etapa activa
             if status == "PENDING":
-                cols[2].markdown("<span style='color:#fbbf24;font-weight:600;'>⏳ Pendiente</span>", unsafe_allow_html=True)
+                cols[2].markdown(
+                    "<span style='color:#fbbf24;font-weight:600;'>⏳ Pendiente</span>",
+                    unsafe_allow_html=True,
+                )
             elif status == "PROCESSING":
                 stage_lbl = f" ({current_stage})" if current_stage else ""
-                cols[2].markdown(f"<span style='color:#60a5fa;font-weight:600;'>⚙️ Procesando{stage_lbl}</span>", unsafe_allow_html=True)
+                cols[2].markdown(
+                    f"<span style='color:#60a5fa;font-weight:600;'>⚙️ Procesando{stage_lbl}</span>",
+                    unsafe_allow_html=True,
+                )
             elif status == "ERROR":
                 stage_lbl = f" ({failed_stage})" if failed_stage else ""
-                cols[2].markdown(f"<span style='color:#f87171;font-weight:600;'>💥 Error{stage_lbl}</span>", unsafe_allow_html=True)
+                cols[2].markdown(
+                    f"<span style='color:#f87171;font-weight:600;'>💥 Error{stage_lbl}</span>",
+                    unsafe_allow_html=True,
+                )
             else:
-                cols[2].markdown("<span style='color:#34d399;font-weight:600;'>✅ Procesado</span>", unsafe_allow_html=True)
+                cols[2].markdown(
+                    "<span style='color:#34d399;font-weight:600;'>✅ Procesado</span>",
+                    unsafe_allow_html=True,
+                )
 
             cols[3].write(f"{priority}")
 
@@ -267,29 +279,25 @@ def render_dashboard(db: DatabaseManager) -> None:
                             st.toast(f"Priorizado archivo #{file_id}")
                             st.rerun()
                     else:
-                        st.write("") # placeholder
+                        st.write("")  # placeholder
                 with c_act2:
                     lbl_btn = "⚡ Procesar" if status == "PENDING" else "🔁 Reprocesar"
                     if st.button(lbl_btn, key=f"prc_{file_id}", use_container_width=True):
                         with st.spinner(f"Analizando '{filename}'..."):
+                            prepared = db.prepare_manual_processing(file_id)
+                            if prepared is None:
+                                st.warning("Este archivo ya está procesándose o está ignorado.")
+                                st.rerun()
+
                             from core.models_types import MediaRecord
-                            # 1. Preparar record
+
                             record = MediaRecord(
                                 id=file_id,
-                                filepath=row["filepath"],
-                                media_type=media_type,
-                                retries=0
+                                filepath=prepared["filepath"],
+                                media_type=prepared.get("media_type", media_type),
+                                retries=0,
                             )
-                            # 2. Configurar base de datos a PROCESSING
-                            db.update_stage(file_id, "stability")
-                            conn = db._connect()
-                            conn.execute(
-                                "UPDATE FileQueue SET status='PROCESSING', retries=0, error_message=NULL, failed_stage=NULL WHERE id=?",
-                                (file_id,)
-                            )
-                            conn.close()
 
-                            # 3. Lanzar pipeline
                             engine = st.session_state.engine
                             if not engine._yolo:
                                 engine._load_engines()

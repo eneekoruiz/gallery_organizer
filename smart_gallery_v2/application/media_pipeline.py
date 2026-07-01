@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 
 from application.ports import JobRepository, PipelineSteps
+
 from core.models_types import ExifResult, MediaRecord, ProcessResult
 
 log = logging.getLogger(__name__)

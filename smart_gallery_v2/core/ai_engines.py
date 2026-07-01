@@ -201,7 +201,9 @@ class ArcFaceEngine:
             except ImportError:
                 log.error("ArcFaceEngine: sin backend.")
 
-    def get_faces(self, img_rgb: np.ndarray) -> list[tuple[dict[str, int], np.ndarray, float, Optional[Any]]]:
+    def get_faces(
+        self, img_rgb: np.ndarray
+    ) -> list[tuple[dict[str, int], np.ndarray, float, Optional[Any]]]:
         """Devuelve [(bbox_dict, embedding_float32, confidence, landmarks)]"""
         self._ensure_loaded()
         if self._ort:
@@ -244,14 +246,18 @@ class ArcFaceEngine:
                 landmarks = {
                     "left_eye": fa.get("left_eye"),
                     "right_eye": fa.get("right_eye"),
-                    "nose": fa.get("nose") or [fa["x"] + fa["w"]*0.5, fa["y"] + fa["h"]*0.5],
-                    "mouth_left": fa.get("mouth_left") or [fa["x"] + fa["w"]*0.3, fa["y"] + fa["h"]*0.8],
-                    "mouth_right": fa.get("mouth_right") or [fa["x"] + fa["w"]*0.7, fa["y"] + fa["h"]*0.8],
+                    "nose": fa.get("nose") or [fa["x"] + fa["w"] * 0.5, fa["y"] + fa["h"] * 0.5],
+                    "mouth_left": fa.get("mouth_left")
+                    or [fa["x"] + fa["w"] * 0.3, fa["y"] + fa["h"] * 0.8],
+                    "mouth_right": fa.get("mouth_right")
+                    or [fa["x"] + fa["w"] * 0.7, fa["y"] + fa["h"] * 0.8],
                 }
             out.append((bbox, emb, float(f["face_confidence"]), landmarks))
         return out
 
-    def _faces_ort(self, img_rgb: np.ndarray) -> list[tuple[dict[str, int], np.ndarray, float, Optional[Any]]]:
+    def _faces_ort(
+        self, img_rgb: np.ndarray
+    ) -> list[tuple[dict[str, int], np.ndarray, float, Optional[Any]]]:
         try:
             from retinaface import RetinaFace  # type: ignore
 
@@ -633,4 +639,3 @@ class DenseCaptionEngine:
         except (RuntimeError, OSError, ValueError, TypeError, KeyError, ImportError) as e:
             log.error(f"DenseCaptionEngine inferencia fallida: {e}")
             return None
-

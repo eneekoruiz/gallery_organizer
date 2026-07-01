@@ -866,18 +866,27 @@ class DatabaseManager:
             )
             return [dict(r) for r in c.fetchall()]
 
-    def update_detection_gaze(self, detection_id: int, eye_contact: bool, gaze_direction: str) -> None:
+    def update_detection_gaze(
+        self, detection_id: int, eye_contact: bool, gaze_direction: str
+    ) -> None:
         with self._write() as c:
             c.execute(
                 "UPDATE Detections SET eye_contact=?, gaze_direction=? WHERE id=?",
                 (1 if eye_contact else 0, gaze_direction, detection_id),
             )
 
-    def update_detection_gaze_full(self, detection_id: int, eye_contact: bool, gaze_direction: str, landmarks: list) -> None:
+    def update_detection_gaze_full(
+        self, detection_id: int, eye_contact: bool, gaze_direction: str, landmarks: list
+    ) -> None:
         with self._write() as c:
             c.execute(
                 "UPDATE Detections SET eye_contact=?, gaze_direction=?, landmarks_json=? WHERE id=?",
-                (1 if eye_contact else 0, gaze_direction, json.dumps(landmarks) if landmarks else None, detection_id),
+                (
+                    1 if eye_contact else 0,
+                    gaze_direction,
+                    json.dumps(landmarks) if landmarks else None,
+                    detection_id,
+                ),
             )
 
     def get_symlink_paths_for_file(self, file_id: int) -> list[str]:
@@ -1698,49 +1707,49 @@ class DatabaseManager:
         sobre los embeddings cargados de SQLite.
         """
         from core.ai_engines import CLIPEngine
-        
+
         # 1. Obtener embedding de texto cacheado O(1) si ya se buscó antes
         engine = CLIPEngine()
         txt_emb = engine.embed_text(query)
         if txt_emb is None:
             return pd.DataFrame()
-            
+
         # 2. Cargar todos los blobs de ClipEmbeddings
         conn = self._connect()
         df_clip = pd.read_sql("SELECT id, embedding FROM ClipEmbeddings", conn)
         conn.close()
-        
+
         if df_clip.empty:
             return pd.DataFrame()
-            
+
         # 3. Deserializar blobs a NumPy
         # Convertir list de bytes a matriz 2D
-        embeddings_list = [np.frombuffer(b, dtype=np.float32) for b in df_clip['embedding']]
+        embeddings_list = [np.frombuffer(b, dtype=np.float32) for b in df_clip["embedding"]]
         if not embeddings_list:
             return pd.DataFrame()
-            
+
         img_embs = np.stack(embeddings_list)
-        
+
         # 4. Multiplicación de matrices súper rápida (Cosine Similarity)
         # txt_emb ya está normalizado (forma: (dim,))
         # img_embs ya están normalizados (forma: (N, dim))
         similarities = img_embs @ txt_emb
-        
+
         # 5. Filtrar y ordenar
-        df_clip['similarity'] = similarities
-        df_matched = df_clip[df_clip['similarity'] >= threshold].copy()
-        df_matched.sort_values('similarity', ascending=False, inplace=True)
+        df_clip["similarity"] = similarities
+        df_matched = df_clip[df_clip["similarity"] >= threshold].copy()
+        df_matched.sort_values("similarity", ascending=False, inplace=True)
         df_matched = df_matched.head(limit)
-        
+
         if df_matched.empty:
             return pd.DataFrame()
-            
+
         # 6. Hacer JOIN con FileQueue para obtener los detalles
-        ids = df_matched['id'].tolist()
+        ids = df_matched["id"].tolist()
         df_info = self.get_files_by_ids(ids)
-        
+
         # Mantener el orden de similitud
-        df_final = pd.merge(df_matched, df_info, on='id', how='left')
+        df_final = pd.merge(df_matched, df_info, on="id", how="left")
         return df_final
 
     def search_files_fuzzy(self, query: str, limit: int = 100) -> pd.DataFrame:
@@ -2000,4 +2009,3 @@ def _norm_path(path_str: str) -> str:
     except Exception:
         log.debug("Path normalization failed for %s", path_str)
         return path_str
-

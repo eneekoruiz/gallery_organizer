@@ -12,14 +12,14 @@ select = ["E", "F", "W", "I", "B"]
 ignore = ["B008", "E501", "B905", "E402", "F841", "W291"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["smart_gallery_v2"]
+known-first-party = ["core", "ui", "services"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
-pythonpath = ["smart_gallery_v2"]
+testpaths = ["../tests"]
+pythonpath = ["."]
 
 [tool.pyright]
-extraPaths = ["smart_gallery_v2"]
+extraPaths = ["."]
 reportMissingImports = false
 reportMissingTypeStubs = false
 pythonVersion = "3.10"

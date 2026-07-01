@@ -13,13 +13,13 @@ import cv2
 import numpy as np
 import pandas as pd
 import streamlit as st
-from PIL import Image
-
 from application.identity_corrections import CorrectIdentity, IdentityRegion
-from core.database import DatabaseManager
-from core.symlink_manager import create_faceless_symlink
 from domain.models import RegionKind
 from infrastructure.sqlite.identity_repository import SqliteIdentityCorrectionRepository
+from PIL import Image
+
+from core.database import DatabaseManager
+from core.symlink_manager import create_faceless_symlink
 
 
 # ──────────────────────────────────────────────────────────────────────────────

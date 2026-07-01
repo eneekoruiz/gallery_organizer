@@ -185,3 +185,68 @@ def test_merge_identities(temp_db):
 
     expected_emb = np.ones(512, dtype=np.float32) * 2.0
     assert np.allclose(alice_emb, expected_emb)
+
+
+def test_queue_priority_is_atomic_and_cleared(temp_db):
+    """La cola debe respetar prioridad y limpiar estado temporal al completar."""
+    first_id, _ = temp_db.upsert_file("first.jpg", "first.jpg")
+    priority_id, _ = temp_db.upsert_file("priority.jpg", "priority.jpg")
+    third_id, _ = temp_db.upsert_file("third.jpg", "third.jpg")
+
+    temp_db.prioritize_file(priority_id)
+    batch = temp_db.next_batch_pending(limit=2)
+
+    assert [row["id"] for row in batch] == [priority_id, first_id]
+
+    temp_db.update_done(priority_id, ["tag"], "safe")
+    with temp_db._read() as c:
+        done_row = c.execute(
+            "SELECT priority, current_stage, failed_stage, error_message FROM FileQueue WHERE id=?",
+            (priority_id,),
+        ).fetchone()
+        pending_row = c.execute("SELECT status FROM FileQueue WHERE id=?", (third_id,)).fetchone()
+
+    assert done_row["priority"] == 0
+    assert done_row["current_stage"] is None
+    assert done_row["failed_stage"] is None
+    assert done_row["error_message"] is None
+    assert pending_row["status"] == "PENDING"
+
+
+def test_prioritize_ignores_non_pending_files(temp_db):
+    """Un archivo ya finalizado no debe saltar la cola por accidente."""
+    file_id, _ = temp_db.upsert_file("done.jpg", "done.jpg")
+    temp_db.update_done(file_id, ["tag"], "safe")
+
+    temp_db.prioritize_file(file_id)
+
+    with temp_db._read() as c:
+        row = c.execute("SELECT priority FROM FileQueue WHERE id=?", (file_id,)).fetchone()
+    assert row["priority"] == 0
+
+
+def test_prepare_manual_processing_supports_reprocess(temp_db):
+    """Procesar ahora debe ser una transición única desde la capa de persistencia."""
+    file_id, _ = temp_db.upsert_file("manual.jpg", "manual.jpg")
+    temp_db.update_done(file_id, ["old"], "safe")
+
+    row = temp_db.prepare_manual_processing(file_id)
+
+    assert row is not None
+    assert row["id"] == file_id
+    assert row["status"] == "PROCESSING"
+    assert row["retries"] == 0
+    assert row["priority"] == 0
+
+    with temp_db._read() as c:
+        db_row = c.execute(
+            "SELECT status, retries, priority, failed_stage, error_message FROM FileQueue WHERE id=?",
+            (file_id,),
+        ).fetchone()
+
+    assert db_row["status"] == "PROCESSING"
+    assert db_row["retries"] == 0
+    assert db_row["priority"] == 0
+    assert db_row["failed_stage"] is None
+    assert db_row["error_message"] is None
+

@@ -7,13 +7,13 @@ from typing import Callable
 
 import pandas as pd
 import streamlit as st
-
 from application.event_management import EventManagementService
-from core.database import DatabaseManager
-from core.event_engine import EventEngine, EventSettings
 from infrastructure.filesystem.folder_opener import NativeFolderOpener
 from infrastructure.sqlite.location_repository import SqliteMediaLocationRepository
 from presentation.location_controller import LocationController, LocationView
+
+from core.database import DatabaseManager
+from core.event_engine import EventEngine, EventSettings
 
 
 def render_events_and_locations(db: DatabaseManager) -> None:

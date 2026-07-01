@@ -14,7 +14,10 @@ import numpy as np
 
 log = logging.getLogger(__name__)
 
-def estimate_gaze_from_landmarks(landmarks: Any) -> tuple[bool, str, tuple[float, float], list[list[float]]]:
+
+def estimate_gaze_from_landmarks(
+    landmarks: Any,
+) -> tuple[bool, str, tuple[float, float], list[list[float]]]:
     """
     Analiza la posición relativa de la nariz respecto al centro de los ojos y la boca
     para determinar el contacto visual y la dirección tridimensional de la mirada.
@@ -77,7 +80,7 @@ def estimate_gaze_from_landmarks(landmarks: Any) -> tuple[bool, str, tuple[float
         dy = nose[1] - face_cy
 
         # Escalar el vector por la distancia entre los ojos (normalización de escala)
-        eye_dist = ((re[0] - le[0])**2 + (re[1] - le[1])**2)**0.5
+        eye_dist = ((re[0] - le[0]) ** 2 + (re[1] - le[1]) ** 2) ** 0.5
         if eye_dist < 1e-6:
             eye_dist = 1.0
 
@@ -105,10 +108,9 @@ def estimate_gaze_from_landmarks(landmarks: Any) -> tuple[bool, str, tuple[float
         log.error(f"Error estimando mirada: {e}")
         return True, "front", (0.0, 0.0), []
 
+
 def draw_gaze_overlay(
-    img_bgr: np.ndarray,
-    detections: list[dict],
-    scale: float = 1.0
+    img_bgr: np.ndarray, detections: list[dict], scale: float = 1.0
 ) -> np.ndarray:
     """
     Dibuja en la imagen (BGR) las cajas de las caras, los landmarks y los vectores de la mirada.
@@ -173,7 +175,7 @@ def draw_gaze_overlay(
                 vx = nose[0] - face_cx
                 vy = nose[1] - face_cy
 
-                eye_dist = ((re[0] - le[0])**2 + (re[1] - le[1])**2)**0.5
+                eye_dist = ((re[0] - le[0]) ** 2 + (re[1] - le[1]) ** 2) ** 0.5
                 if eye_dist < 1e-6:
                     eye_dist = 1.0
 
@@ -194,7 +196,9 @@ def draw_gaze_overlay(
                     end_y = max(0, min(h_img - 1, end_y))
 
                     # Dibujar la flecha de mirada
-                    cv2.arrowedLine(disp, (start_x, start_y), (end_x, end_y), color_bgr, 3, tipLength=0.35)
+                    cv2.arrowedLine(
+                        disp, (start_x, start_y), (end_x, end_y), color_bgr, 3, tipLength=0.35
+                    )
 
             # 4. Rotular
             label = f"{det.get('assigned_name', 'Desconocido')}"

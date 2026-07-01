@@ -68,11 +68,13 @@ def render_gaze_management(db: DatabaseManager) -> None:
     # Dropdown de búsqueda principal
     choices = []
     for _, row in df.iterrows():
-        choices.append({
-            "id": row["id"],
-            "filepath": row["filepath"],
-            "label": f"#{row['id']} - {row['filename']} ({row['status']})"
-        })
+        choices.append(
+            {
+                "id": row["id"],
+                "filepath": row["filepath"],
+                "label": f"#{row['id']} - {row['filename']} ({row['status']})",
+            }
+        )
 
     # Determinar index seleccionado por defecto
     default_idx = 0
@@ -87,7 +89,7 @@ def render_gaze_management(db: DatabaseManager) -> None:
         "O busca en toda tu galería por nombre de archivo:",
         range(len(choices)),
         index=default_idx,
-        format_func=lambda x: choices[x]["label"]
+        format_func=lambda x: choices[x]["label"],
     )
 
     current_choice = choices[selected_idx]
@@ -139,27 +141,40 @@ def render_gaze_management(db: DatabaseManager) -> None:
                 gaze_dir = det.get("gaze_direction", "front")
 
                 with st.container():
-                    status_html = "<span style='color:#34d399'>👁️ Mirando a cámara</span>" if eye_contact else f"<span style='color:#f87171'>❌ Mirando a la {gaze_dir}</span>"
+                    status_html = (
+                        "<span style='color:#34d399'>👁️ Mirando a cámara</span>"
+                        if eye_contact
+                        else f"<span style='color:#f87171'>❌ Mirando a la {gaze_dir}</span>"
+                    )
                     st.markdown(
                         f"<div style='border:1px solid #1c1f2e;padding:12px;border-radius:12px;margin-bottom:10px;background:#10121a;'>"
                         f"👤 <b>{name}</b><br>"
                         f"📍 Estado: {status_html}"
                         f"</div>",
-                        unsafe_allow_html=True
+                        unsafe_allow_html=True,
                     )
 
                     # Botón interactivo para cambiar mirada
                     if eye_contact:
-                        if st.button("🔴 Marcar como 'No está mirando'", key=f"tg_gaze_{det['id']}", use_container_width=True):
+                        if st.button(
+                            "🔴 Marcar como 'No está mirando'",
+                            key=f"tg_gaze_{det['id']}",
+                            use_container_width=True,
+                        ):
                             db.update_detection_gaze(det["id"], False, "away")
                             st.toast(f"Corregida la mirada de {name}: No está mirando")
                             st.rerun()
                     else:
-                        if st.button("🟢 Marcar como 'Sí está mirando'", key=f"tg_gaze_{det['id']}", use_container_width=True):
+                        if st.button(
+                            "🟢 Marcar como 'Sí está mirando'",
+                            key=f"tg_gaze_{det['id']}",
+                            use_container_width=True,
+                        ):
                             db.update_detection_gaze(det["id"], True, "front")
                             st.toast(f"Corregida la mirada de {name}: Mirando a cámara")
                             st.rerun()
                 st.markdown("<br>", unsafe_allow_html=True)
+
 
 def _ensure_gaze_calculated(db: DatabaseManager, file_id: int, filepath: str) -> list[dict]:
     """
@@ -180,6 +195,7 @@ def _ensure_gaze_calculated(db: DatabaseManager, file_id: int, filepath: str) ->
 
             # Cargar ArcFace al vuelo para extraer landmarks
             from core.ai_engines import ArcFaceEngine
+
             arcface = ArcFaceEngine()
             faces = arcface.get_faces(img_rgb)
 
@@ -202,13 +218,18 @@ def _ensure_gaze_calculated(db: DatabaseManager, file_id: int, filepath: str) ->
 
                     # Si coincide razonablemente (>40% IoU)
                     if best_det_id and best_iou > 0.4:
-                        eye_contact, gaze_dir, _, landmarks_list = estimate_gaze_from_landmarks(landmarks)
-                        db.update_detection_gaze_full(best_det_id, eye_contact, gaze_dir, landmarks_list)
+                        eye_contact, gaze_dir, _, landmarks_list = estimate_gaze_from_landmarks(
+                            landmarks
+                        )
+                        db.update_detection_gaze_full(
+                            best_det_id, eye_contact, gaze_dir, landmarks_list
+                        )
 
                 # Recargar detecciones actualizadas
                 dets = db.get_detections_for_file(file_id)
 
     return dets
+
 
 def _calculate_iou(box1: dict, box2: dict) -> float:
     """Calcula la Intersección sobre la Unión (IoU) entre dos bounding boxes."""

@@ -1,32 +1,51 @@
-# Core
-numpy
-pandas
-opencv-python-headless
-Pillow
-imagehash
-scipy
-scikit-learn
+# ==========================================
+# UI & Dashboard
+# ==========================================
+streamlit>=1.35.0
+streamlit-cropper>=0.2.2
 
-# UI
-streamlit
-streamlit-cropper
+# ==========================================
+# Computer Vision & Image Processing
+# ==========================================
+opencv-python-headless>=4.9.0
+Pillow>=10.3.0
+numpy>=1.26.0
 
-# AI Engines
-onnxruntime
-ultralytics
-deepface
-sentence-transformers
-faiss-cpu
-easyocr
-torch
-torchvision
+# ==========================================
+# AI Models & Engines
+# ==========================================
+ultralytics>=8.2.0
+deepface>=0.0.93
+onnxruntime>=1.18.0
+open-clip-torch>=2.24.0
 
-# System & Utils
-watchdog
-tqdm
-pytesseract
+# ==========================================
+# Vector Search
+# ==========================================
+faiss-cpu>=1.8.0
 
-# Dev/Test
-pytest
-black
-ruff
+# ==========================================
+# Database & Data Science
+# ==========================================
+pandas>=2.2.0
+scikit-learn>=1.4.0
+
+# ==========================================
+# File System Watcher
+# ==========================================
+watchdog>=4.0.0
+
+# ==========================================
+# Utilities & OCR
+# ==========================================
+tqdm>=4.66.0
+imagehash>=4.3.0
+pytesseract>=0.3.10
+easyocr>=1.6.0
+
+# ==========================================
+# Testing & Development
+# ==========================================
+pytest>=7.0.0
+ruff>=0.4.0
+black>=24.0.0

@@ -212,7 +212,7 @@ class ProcessingEngine:
         except (OSError, IOError) as e:
             log.warning(f"Thumbnail save failed for {filepath}: {e}")
             return ThumbnailResult(error=str(e))
-        except Exception as e:
+        except (RuntimeError, OSError, ValueError, TypeError, KeyError, ImportError) as e:
             return ThumbnailResult(error=str(e))
 
     def exif(self, filepath: str) -> ExifResult:
@@ -230,7 +230,7 @@ class ProcessingEngine:
         except (OSError, IOError) as e:
             log.warning(f"Exif read failed for {filepath}: {e}")
             return ExifResult(error=str(e))
-        except Exception as e:
+        except (RuntimeError, OSError, ValueError, TypeError, KeyError, ImportError) as e:
             log.exception(f"Unexpected Exif error for {filepath}: {e}")
             return ExifResult(error=str(e))
 
@@ -250,7 +250,7 @@ class ProcessingEngine:
         except (OSError, IOError) as e:
             log.warning(f"Dedupe hash calculation failed: {e}")
             return DedupeResult(error=str(e))
-        except Exception as e:
+        except (RuntimeError, OSError, ValueError, TypeError, KeyError, ImportError) as e:
             log.exception(f"Unexpected dedupe error: {e}")
             return DedupeResult(error=str(e))
 
@@ -286,7 +286,7 @@ class ProcessingEngine:
                 detections_payload=detections,
                 clip_embedding=clip_emb,
             )
-        except Exception as e:
+        except (RuntimeError, OSError, ValueError, TypeError, KeyError, ImportError) as e:
             log.exception(f"Fallo en _step_ai_image: {e}")
             return AIResult(error=str(e))
 
@@ -333,7 +333,7 @@ class ProcessingEngine:
                 detections_payload=[],  # Videos will need a similar approach if extracting multiple faces
                 clip_embedding=None,
             )
-        except Exception as e:
+        except (RuntimeError, OSError, ValueError, TypeError, KeyError, ImportError) as e:
             log.exception(f"Fallo en _step_ai_video: {e}")
             return AIResult(error=str(e))
 
@@ -449,7 +449,14 @@ class ProcessingEngine:
                 if not dest.exists():
                     try:
                         shutil.copy2(str(src), str(dest))
-                    except Exception as e:
+                    except (
+                        RuntimeError,
+                        OSError,
+                        ValueError,
+                        TypeError,
+                        KeyError,
+                        ImportError,
+                    ) as e:
                         log.warning(f"Materialize copy fail: {e}")
 
     # ── IA Logic ──────────────────────────────────────────────────────────
@@ -505,7 +512,7 @@ class ProcessingEngine:
             return variance > 80  # Umbral empírico para caras "nítidas"
         except (cv2.error, ValueError) as e:
             log.warning(f"Quality check failed for crop: {e}")
-        except Exception as e:
+        except (RuntimeError, OSError, ValueError, TypeError, KeyError, ImportError) as e:
             log.exception(f"Unexpected quality check error: {e}")
         return False
 
@@ -547,7 +554,14 @@ class ProcessingEngine:
                     except (cv2.error, ValueError, IndexError) as e:
                         log.warning(f"Face crop extraction failed for bbox {bbox}: {e}")
                         is_high_q = False
-                    except Exception as e:
+                    except (
+                        RuntimeError,
+                        OSError,
+                        ValueError,
+                        TypeError,
+                        KeyError,
+                        ImportError,
+                    ) as e:
                         log.debug(f"Unexpected error in face quality check: {e}")
                         is_high_q = False
 
@@ -563,7 +577,10 @@ class ProcessingEngine:
 
                     # Estimación de mirada y contacto visual
                     from core.gaze_detector import estimate_gaze_from_landmarks
-                    eye_contact, gaze_dir, gaze_vec, landmarks_list = estimate_gaze_from_landmarks(landmarks)
+
+                    eye_contact, gaze_dir, gaze_vec, landmarks_list = estimate_gaze_from_landmarks(
+                        landmarks
+                    )
 
                     detections_payload.append(
                         {
@@ -615,7 +632,7 @@ class ProcessingEngine:
                         if reader:
                             res = reader.readtext(img_rgb)
                             ocr_text = "\n".join([r[1] for r in res])
-                except Exception as e:
+                except (RuntimeError, OSError, ValueError, TypeError, KeyError, ImportError) as e:
                     log.warning(f"OCR intermediate fail: {e}")
 
                 if ocr_text and len(ocr_text) >= OCR_MIN_TEXT_LEN:
@@ -641,7 +658,7 @@ class ProcessingEngine:
                 clip_embedding,
             )
 
-        except Exception as e:
+        except (RuntimeError, OSError, ValueError, TypeError, KeyError, ImportError) as e:
             err = f"Error en _process_image: {e}"
             log.exception(err)
             return [], [], "unclassified", 0.5, None, [], None
@@ -658,7 +675,7 @@ class ProcessingEngine:
     def _emit(self, tipo: str, msg: Any) -> None:
         try:
             self._log_q.put_nowait((tipo, msg))
-        except Exception as e:
+        except (RuntimeError, OSError, ValueError, TypeError, KeyError, ImportError) as e:
             log.warning(f"Log emission failed: {e}")
 
 
@@ -705,7 +722,7 @@ def _read_exif(filepath: str) -> dict[str, Any]:
                         dt = datetime.strptime(exif[tid], "%Y:%m:%d %H:%M:%S")
                         res["exif_date"] = dt.strftime("%Y-%m-%dT%H:%M:%S")
                         break
-                    except Exception:
+                    except (RuntimeError, OSError, ValueError, TypeError, KeyError, ImportError):
                         continue
 
             # 2. Camera & Lens
@@ -737,7 +754,7 @@ def _read_exif(filepath: str) -> dict[str, Any]:
                         _gps_decimal(gps["GPSLatitude"], gps.get("GPSLatitudeRef", "N")),
                         _gps_decimal(gps["GPSLongitude"], gps.get("GPSLongitudeRef", "E")),
                     )
-    except Exception as e:
+    except (RuntimeError, OSError, ValueError, TypeError, KeyError, ImportError) as e:
         log.warning(f"EXIF read fail for {filepath}: {e}")
     return res
 
@@ -753,7 +770,7 @@ def _make_thumb(filepath: str) -> Optional[str]:
                 img = img.convert("RGB")
             img.save(str(dest), format="WEBP", quality=80)
         return str(dest)
-    except Exception as e:
+    except (RuntimeError, OSError, ValueError, TypeError, KeyError, ImportError) as e:
         log.error("Generic embedding error: %s", e)
         return None
 

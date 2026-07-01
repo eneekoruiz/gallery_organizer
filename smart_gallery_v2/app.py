@@ -179,7 +179,6 @@ def _render_file_inspector(db: DatabaseManager) -> None:
     Inspector global: muestra la imagen con bboxes de todas sus detecciones.
     Se activa desde cualquier tab cuando inspect_file_id está en session_state.
     """
-    import json
     from pathlib import Path
 
     import cv2
@@ -200,6 +199,7 @@ def _render_file_inspector(db: DatabaseManager) -> None:
         return
 
     from ui.tab_gaze import _ensure_gaze_calculated
+
     dets = _ensure_gaze_calculated(db, file_id, filepath)
 
     stream = np.fromfile(filepath, dtype=np.uint8)
@@ -213,6 +213,7 @@ def _render_file_inspector(db: DatabaseManager) -> None:
     img_resized = cv2.resize(img_bgr, (int(w * scale), int(h * scale)))
 
     from core.gaze_detector import draw_gaze_overlay
+
     disp = draw_gaze_overlay(img_resized, dets, scale=scale)
     disp_rgb = cv2.cvtColor(disp, cv2.COLOR_BGR2RGB)
 

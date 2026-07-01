@@ -25,9 +25,7 @@ gallery.log
 # ==========================================
 # Local Dynamic / Monitored Folders (Ignore from Git)
 # ==========================================
-smart_gallery_v2/.thumbnails/
-smart_gallery_v2/.face_crops/
-smart_gallery_v2/Galería/
+data/
 smart_gallery_v2/models/
 Resultados/
 

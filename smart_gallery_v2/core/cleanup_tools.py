@@ -18,6 +18,7 @@ from core.database import DatabaseManager
 
 log = logging.getLogger(__name__)
 
+
 def get_similar_photo_groups(db: DatabaseManager, max_hamming: int = 8) -> list[pd.DataFrame]:
     """
     Agrupa fotos similares basadas en la distancia de Hamming de sus perceptual hashes (phash).
@@ -38,9 +39,9 @@ def get_similar_photo_groups(db: DatabaseManager, max_hamming: int = 8) -> list[
     visited = set()
     groups = []
 
-    ids = df['id'].tolist()
-    filepaths = df['filepath'].tolist()
-    phashes = [int(p, 16) for p in df['phash'].tolist()]
+    ids = df["id"].tolist()
+    filepaths = df["filepath"].tolist()
+    phashes = [int(p, 16) for p in df["phash"].tolist()]
 
     # Comprobar la existencia física del archivo para evitar procesar fantasmas
     existing_indices = []
@@ -61,7 +62,7 @@ def get_similar_photo_groups(db: DatabaseManager, max_hamming: int = 8) -> list[
                 continue
 
             # Distancia de Hamming rápida usando XOR de enteros
-            dist = bin(phashes[i] ^ phashes[j]).count('1')
+            dist = bin(phashes[i] ^ phashes[j]).count("1")
             if dist <= max_hamming:
                 current_group.append(j)
 
@@ -70,14 +71,15 @@ def get_similar_photo_groups(db: DatabaseManager, max_hamming: int = 8) -> list[
                 visited.add(ids[idx])
 
             group_df = df.iloc[current_group].copy()
-            group_ids = group_df['id'].tolist()
+            group_ids = group_df["id"].tolist()
 
             # Obtener cached_thumb
             thumbs_df = db.get_files_by_ids_with_thumbs(group_ids)
-            group_df = group_df.merge(thumbs_df[['id', 'cached_thumb']], on='id', how='left')
+            group_df = group_df.merge(thumbs_df[["id", "cached_thumb"]], on="id", how="left")
             groups.append(group_df)
 
     return groups
+
 
 def propose_best_photo(group_df: pd.DataFrame) -> int:
     """
@@ -88,9 +90,9 @@ def propose_best_photo(group_df: pd.DataFrame) -> int:
     best_score = -1.0
 
     for _, row in group_df.iterrows():
-        file_id = row['id']
-        filepath = row['filepath']
-        q_score = float(row.get('quality_score', 0.0))
+        file_id = row["id"]
+        filepath = row["filepath"]
+        q_score = float(row.get("quality_score", 0.0))
 
         # Obtener el tamaño del archivo
         size_mb = 0.0
@@ -107,13 +109,11 @@ def propose_best_photo(group_df: pd.DataFrame) -> int:
             best_score = score
             best_id = file_id
 
-    return best_id or group_df.iloc[0]['id']
+    return best_id or group_df.iloc[0]["id"]
+
 
 def compress_image(
-    input_path: str | Path,
-    output_path: str | Path,
-    quality: int = 75,
-    scale: float = 0.8
+    input_path: str | Path, output_path: str | Path, quality: int = 75, scale: float = 0.8
 ) -> bool:
     """
     Comprime una imagen en formato JPEG/WebP reduciendo su calidad y dimensiones.
@@ -150,11 +150,9 @@ def compress_image(
         log.error(f"Error comprimiendo imagen {input_path}: {e}")
         return False
 
+
 def compress_video_opencv(
-    input_path: str | Path,
-    output_path: str | Path,
-    scale: float = 0.5,
-    target_fps: int = 24
+    input_path: str | Path, output_path: str | Path, scale: float = 0.5, target_fps: int = 24
 ) -> bool:
     """
     Comprime un vídeo usando OpenCV nativo (VideoCapture y VideoWriter).
@@ -187,13 +185,13 @@ def compress_video_opencv(
             return False
 
         # Probar codec mp4v (universal)
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
         fps = min(float(target_fps), orig_fps)
 
         out = cv2.VideoWriter(str(p_out), fourcc, fps, (new_w, new_h))
         if not out.isOpened():
             # Caída a XVID si falla
-            fourcc = cv2.VideoWriter_fourcc(*'XVID')
+            fourcc = cv2.VideoWriter_fourcc(*"XVID")
             out = cv2.VideoWriter(str(p_out), fourcc, fps, (new_w, new_h))
 
         if not out.isOpened():
@@ -221,6 +219,7 @@ def compress_video_opencv(
         log.error(f"Error comprimiendo vídeo {input_path}: {e}")
         return False
 
+
 def get_cleanup_recommendations(db: DatabaseManager) -> dict[str, Any]:
     """
     Escanea la base de datos y el disco para sugerir recomendaciones y oportunidades
@@ -233,7 +232,7 @@ def get_cleanup_recommendations(db: DatabaseManager) -> dict[str, Any]:
         "total_size_mb": 0.0,
         "large_files": [],
         "blurry_photos": [],
-        "potential_savings_mb": 0.0
+        "potential_savings_mb": 0.0,
     }
 
     # 1. Obtener todos los archivos procesados
@@ -268,24 +267,28 @@ def get_cleanup_recommendations(db: DatabaseManager) -> dict[str, Any]:
             is_large_img = row["media_type"] == "image" and sz_mb > 5.0
             is_large_vid = row["media_type"] == "video" and sz_mb > 15.0
             if is_large_img or is_large_vid:
-                large_list.append({
-                    "id": row["id"],
-                    "filepath": filepath,
-                    "filename": row["filename"],
-                    "media_type": row["media_type"],
-                    "size_mb": sz_mb,
-                    "quality_score": row.get("quality_score", 0.0)
-                })
+                large_list.append(
+                    {
+                        "id": row["id"],
+                        "filepath": filepath,
+                        "filename": row["filename"],
+                        "media_type": row["media_type"],
+                        "size_mb": sz_mb,
+                        "quality_score": row.get("quality_score", 0.0),
+                    }
+                )
 
             # Registrar para fotos borrosas (quality_score < 0.15 y no es vídeo)
             if row["media_type"] == "image" and float(row.get("quality_score", 0.0)) < 0.15:
-                blurry_list.append({
-                    "id": row["id"],
-                    "filepath": filepath,
-                    "filename": row["filename"],
-                    "size_mb": sz_mb,
-                    "quality_score": row.get("quality_score", 0.0)
-                })
+                blurry_list.append(
+                    {
+                        "id": row["id"],
+                        "filepath": filepath,
+                        "filename": row["filename"],
+                        "size_mb": sz_mb,
+                        "quality_score": row.get("quality_score", 0.0),
+                    }
+                )
         except OSError:
             pass
 

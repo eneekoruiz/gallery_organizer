@@ -5,8 +5,9 @@ from __future__ import annotations
 import json
 
 from application.identity_corrections import IdentityCorrection
-from core.database import DatabaseManager
 from domain.models import RegionKind
+
+from core.database import DatabaseManager
 
 
 class SqliteIdentityCorrectionRepository:

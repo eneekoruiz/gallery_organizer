@@ -5,8 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Protocol, Sequence
 
-from core.models_types import AIResult, DedupeResult, ExifResult, MediaRecord, ThumbnailResult
 from domain.models import MediaLocation
+
+from core.models_types import AIResult, DedupeResult, ExifResult, MediaRecord, ThumbnailResult
 
 
 class PipelineSteps(Protocol):

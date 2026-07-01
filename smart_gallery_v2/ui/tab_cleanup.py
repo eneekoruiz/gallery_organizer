@@ -34,12 +34,14 @@ def render_cleanup(db: DatabaseManager) -> None:
     )
 
     # 4 Sub-pestañas premium
-    tab_recs, tab_dupes, tab_similar, tab_compress = st.tabs([
-        "💡 Recomendaciones y Diagnóstico",
-        "👯 Duplicados Exactos",
-        "📸 Comparación de Similares",
-        "🗜️ Compresión de Archivos"
-    ])
+    tab_recs, tab_dupes, tab_similar, tab_compress = st.tabs(
+        [
+            "💡 Recomendaciones y Diagnóstico",
+            "👯 Duplicados Exactos",
+            "📸 Comparación de Similares",
+            "🗜️ Compresión de Archivos",
+        ]
+    )
 
     with tab_recs:
         _render_recommendations(db)
@@ -53,6 +55,7 @@ def render_cleanup(db: DatabaseManager) -> None:
     with tab_compress:
         _render_compression(db)
 
+
 def _render_recommendations(db: DatabaseManager) -> None:
     st.markdown("#### 📊 Diagnóstico del Almacenamiento")
     recs = get_cleanup_recommendations(db)
@@ -64,28 +67,28 @@ def _render_recommendations(db: DatabaseManager) -> None:
             f'<div class="mc"><div class="mc-l">Total Archivos</div>'
             f'<div class="mc-v c-blue">{recs["total_files"]}</div>'
             f'<div style="font-size:11px;color:#505570">{recs["total_images"]} imágenes · {recs["total_videos"]} vídeos</div></div>',
-            unsafe_allow_html=True
+            unsafe_allow_html=True,
         )
     with c2:
         st.markdown(
             f'<div class="mc"><div class="mc-l">Espacio Ocupado</div>'
             f'<div class="mc-v c-purple">{recs["total_size_mb"]:.1f} MB</div>'
             f'<div style="font-size:11px;color:#505570">En la carpeta organizada</div></div>',
-            unsafe_allow_html=True
+            unsafe_allow_html=True,
         )
     with c3:
         st.markdown(
             f'<div class="mc"><div class="mc-l">Ahorro en Duplicados</div>'
             f'<div class="mc-v c-green">{recs["potential_savings_mb"]:.1f} MB</div>'
             f'<div style="font-size:11px;color:#505570">Recuperables de inmediato</div></div>',
-            unsafe_allow_html=True
+            unsafe_allow_html=True,
         )
     with c4:
         st.markdown(
             f'<div class="mc"><div class="mc-l">Fotos Borrosas</div>'
             f'<div class="mc-v c-amber">{len(recs["blurry_photos"])}</div>'
             f'<div style="font-size:11px;color:#505570">Calidad menor al 15%</div></div>',
-            unsafe_allow_html=True
+            unsafe_allow_html=True,
         )
 
     st.markdown("<br>", unsafe_allow_html=True)
@@ -97,7 +100,7 @@ def _render_recommendations(db: DatabaseManager) -> None:
             "<h5 style='margin:0 0 6px 0;color:#eef0f8;'>🧹 Limpieza Rápida en Un Clic</h5>"
             "<p style='margin:0 0 12px 0;font-size:13px;color:#a0a8c0;'>Elimina automáticamente todos los duplicados exactos (dejando la versión recomendada) y fotos extremadamente borrosas.</p>"
             "</div>",
-            unsafe_allow_html=True
+            unsafe_allow_html=True,
         )
         if st.button("🚀 Ejecutar Limpieza Rápida", type="primary", key="quick_cleanup_btn"):
             with st.spinner("Limpiando..."):
@@ -118,14 +121,18 @@ def _render_recommendations(db: DatabaseManager) -> None:
                         _delete_file_silent(db, photo["id"], photo["filepath"])
                         deleted_blurry += 1
 
-                st.success(f"¡Limpieza completada! Se eliminaron {deleted_dupes} duplicados y {deleted_blurry} fotos inservibles.")
+                st.success(
+                    f"¡Limpieza completada! Se eliminaron {deleted_dupes} duplicados y {deleted_blurry} fotos inservibles."
+                )
                 st.rerun()
 
     # Listados detallados de archivos grandes y borrosos
     col_large, col_blurry = st.columns(2)
 
     with col_large:
-        st.markdown("<h5 style='margin:0 0 10px 0;'>🔥 Archivos Más Pesados</h5>", unsafe_allow_html=True)
+        st.markdown(
+            "<h5 style='margin:0 0 10px 0;'>🔥 Archivos Más Pesados</h5>", unsafe_allow_html=True
+        )
         if not recs["large_files"]:
             st.info("No hay archivos grandes detectados.")
         else:
@@ -133,7 +140,11 @@ def _render_recommendations(db: DatabaseManager) -> None:
                 with st.container():
                     c_img, c_info = st.columns([1, 4])
                     with c_img:
-                        th = db.get_files_by_ids_with_thumbs([item["id"]]).iloc[0].get("cached_thumb")
+                        th = (
+                            db.get_files_by_ids_with_thumbs([item["id"]])
+                            .iloc[0]
+                            .get("cached_thumb")
+                        )
                         if th and Path(th).exists():
                             st.image(th, use_container_width=True)
                         else:
@@ -143,7 +154,7 @@ def _render_recommendations(db: DatabaseManager) -> None:
                             f"**{item['filename']}**<br>"
                             f"<span style='font-size:12px;color:#fbbf24'>{item['size_mb']:.1f} MB</span> · "
                             f"<span style='font-size:11px;color:#606880'>Calidad: {item['quality_score']*100:.0f}%</span>",
-                            unsafe_allow_html=True
+                            unsafe_allow_html=True,
                         )
                         col_b1, col_b2 = st.columns(2)
                         with col_b1:
@@ -156,7 +167,10 @@ def _render_recommendations(db: DatabaseManager) -> None:
                 st.divider()
 
     with col_blurry:
-        st.markdown("<h5 style='margin:0 0 10px 0;'>🌫️ Fotos de Muy Baja Calidad / Borrosas</h5>", unsafe_allow_html=True)
+        st.markdown(
+            "<h5 style='margin:0 0 10px 0;'>🌫️ Fotos de Muy Baja Calidad / Borrosas</h5>",
+            unsafe_allow_html=True,
+        )
         if not recs["blurry_photos"]:
             st.success("¡Tu galería no tiene fotos borrosas detectadas! Excelente.")
         else:
@@ -164,7 +178,11 @@ def _render_recommendations(db: DatabaseManager) -> None:
                 with st.container():
                     c_img, c_info = st.columns([1, 4])
                     with c_img:
-                        th = db.get_files_by_ids_with_thumbs([item["id"]]).iloc[0].get("cached_thumb")
+                        th = (
+                            db.get_files_by_ids_with_thumbs([item["id"]])
+                            .iloc[0]
+                            .get("cached_thumb")
+                        )
                         if th and Path(th).exists():
                             st.image(th, use_container_width=True)
                     with c_info:
@@ -172,12 +190,13 @@ def _render_recommendations(db: DatabaseManager) -> None:
                             f"**{Path(item['filepath']).name}**<br>"
                             f"<span style='font-size:12px;color:#f87171'>Calidad: {item['quality_score']*100:.1f}%</span> · "
                             f"<span style='font-size:11px;color:#606880'>{item['size_mb']:.2f} MB</span>",
-                            unsafe_allow_html=True
+                            unsafe_allow_html=True,
                         )
                         if st.button("🗑 Eliminar toma borrosa", key=f"del_blr_{item['id']}"):
                             _delete_file(db, item["id"], item["filepath"])
                             st.rerun()
                 st.divider()
+
 
 def _render_duplicates(db: DatabaseManager) -> None:
     groups = db.get_duplicate_groups()
@@ -186,10 +205,15 @@ def _render_duplicates(db: DatabaseManager) -> None:
         st.success("🎉 ¡No se han encontrado duplicados exactos!")
         return
 
-    st.warning(f"Se han detectado {len(groups)} grupos de archivos idénticos (mismo hash perceptual).")
+    st.warning(
+        f"Se han detectado {len(groups)} grupos de archivos idénticos (mismo hash perceptual)."
+    )
 
     # Botón para limpiar todos los duplicados del tirón conservando la mejor opción
-    if st.button("🧹 Mantener recomendados y borrar todos los duplicados secundarios", key="clean_all_dupes_btn"):
+    if st.button(
+        "🧹 Mantener recomendados y borrar todos los duplicados secundarios",
+        key="clean_all_dupes_btn",
+    ):
         deleted = 0
         with st.spinner("Eliminando duplicados secundarios..."):
             for g_df in groups:
@@ -209,9 +233,15 @@ def _render_duplicates(db: DatabaseManager) -> None:
                 with col:
                     is_rec = row["id"] == best_id
                     if is_rec:
-                        st.markdown("<span class='tier-badge tb-safe'>💡 RECOMENDADA</span>", unsafe_allow_html=True)
+                        st.markdown(
+                            "<span class='tier-badge tb-safe'>💡 RECOMENDADA</span>",
+                            unsafe_allow_html=True,
+                        )
                     else:
-                        st.markdown("<span class='tier-badge tb-review'>REDUNDANTE</span>", unsafe_allow_html=True)
+                        st.markdown(
+                            "<span class='tier-badge tb-review'>REDUNDANTE</span>",
+                            unsafe_allow_html=True,
+                        )
 
                     th = row.get("cached_thumb")
                     if th and Path(th).exists():
@@ -221,23 +251,24 @@ def _render_duplicates(db: DatabaseManager) -> None:
                     st.markdown(
                         f"<p style='font-size:12px;margin:2px 0;'>{Path(row['filepath']).name}</p>"
                         f"<span style='font-size:11px;color:#a0a8c0;'>Calidad: {row.get('quality_score', 0.0)*100:.0f}%</span>",
-                        unsafe_allow_html=True
+                        unsafe_allow_html=True,
                     )
 
                     if st.button("🗑 Borrar este", key=f"del_dup_{row['id']}"):
                         _delete_file(db, row["id"], row["filepath"])
                         st.rerun()
 
+
 def _render_similar(db: DatabaseManager) -> None:
     st.markdown("#### 📸 Agrupación de Fotos Parecidas y Ráfagas")
 
     # Slider de Tolerancia de Hamming configurable
     hamming_tol = st.slider(
-        "Tolerancia de similitud (Distancia de Hamming):", 
-        min_value=1, 
-        max_value=16, 
+        "Tolerancia de similitud (Distancia de Hamming):",
+        min_value=1,
+        max_value=16,
         value=8,
-        help="Valores más bajos buscan fotos casi idénticas. Valores más altos agrupan fotos más variadas."
+        help="Valores más bajos buscan fotos casi idénticas. Valores más altos agrupan fotos más variadas.",
     )
 
     groups = get_similar_photo_groups(db, max_hamming=hamming_tol)
@@ -256,7 +287,7 @@ def _render_similar(db: DatabaseManager) -> None:
                 f"<div style='background:rgba(99,102,241,0.03);padding:8px 12px;border-radius:8px;font-size:13px;margin-bottom:12px;color:#a6afc9;'>"
                 f"💡 <b>Recomendación:</b> Mantén la foto con ID <b>{best_id}</b> (tiene el mejor encuadre, nitidez o balance de peso)."
                 f"</div>",
-                unsafe_allow_html=True
+                unsafe_allow_html=True,
             )
 
             cols = st.columns(len(df))
@@ -264,9 +295,14 @@ def _render_similar(db: DatabaseManager) -> None:
                 with col:
                     is_rec = row["id"] == best_id
                     if is_rec:
-                        st.markdown("<span class='tier-badge tb-safe'>🌟 LA MEJOR TOMA</span>", unsafe_allow_html=True)
+                        st.markdown(
+                            "<span class='tier-badge tb-safe'>🌟 LA MEJOR TOMA</span>",
+                            unsafe_allow_html=True,
+                        )
                     else:
-                        st.markdown("<span class='tier-badge tb-fp'>BORRAR</span>", unsafe_allow_html=True)
+                        st.markdown(
+                            "<span class='tier-badge tb-fp'>BORRAR</span>", unsafe_allow_html=True
+                        )
 
                     th = row.get("cached_thumb")
                     if th and Path(th).exists():
@@ -276,12 +312,13 @@ def _render_similar(db: DatabaseManager) -> None:
                     st.markdown(
                         f"<p style='font-size:12px;margin:2px 0;'>ID: {row['id']}</p>"
                         f"<span style='font-size:11px;color:#a0a8c0;'>Nitidez: {row.get('quality_score', 0.0)*100:.0f}%</span>",
-                        unsafe_allow_html=True
+                        unsafe_allow_html=True,
                     )
 
                     if st.button("🗑 Borrar", key=f"del_sim_{row['id']}"):
                         _delete_file(db, row["id"], row["filepath"])
                         st.rerun()
+
 
 def _render_compression(db: DatabaseManager) -> None:
     st.markdown("#### 🗜️ Compresión y Reducción de Calidad")
@@ -303,14 +340,16 @@ def _render_compression(db: DatabaseManager) -> None:
     for _, row in all_files_df.iterrows():
         fp = row["filepath"]
         if os.path.exists(fp):
-            sz = os.path.getsize(fp) / (1024*1024)
-            choices.append({
-                "id": row["id"],
-                "filepath": fp,
-                "label": f"[{row['media_type'].upper()}] {row['filename']} ({sz:.1f} MB)",
-                "size_mb": sz,
-                "type": row["media_type"]
-            })
+            sz = os.path.getsize(fp) / (1024 * 1024)
+            choices.append(
+                {
+                    "id": row["id"],
+                    "filepath": fp,
+                    "label": f"[{row['media_type'].upper()}] {row['filename']} ({sz:.1f} MB)",
+                    "size_mb": sz,
+                    "type": row["media_type"],
+                }
+            )
 
     if not choices:
         st.info("No se encontraron archivos en el disco para comprimir.")
@@ -319,7 +358,7 @@ def _render_compression(db: DatabaseManager) -> None:
     selected_idx = st.selectbox(
         "Selecciona el archivo a comprimir:",
         range(len(choices)),
-        format_func=lambda x: choices[x]["label"]
+        format_func=lambda x: choices[x]["label"],
     )
 
     sel = choices[selected_idx]
@@ -367,7 +406,9 @@ def _render_compression(db: DatabaseManager) -> None:
                             os.remove(temp_p)
                 else:
                     os.remove(temp_p)
-                    st.warning("La compresión no redujo el tamaño del archivo original. Se ha abortado para no perder calidad inútilmente.")
+                    st.warning(
+                        "La compresión no redujo el tamaño del archivo original. Se ha abortado para no perder calidad inútilmente."
+                    )
             else:
                 st.error("Error al procesar la compresión.")
 
@@ -383,7 +424,9 @@ def _render_compression(db: DatabaseManager) -> None:
     with c_m1:
         batch_type = st.radio("Tipo de archivo a comprimir en lote:", ["Vídeos", "Imágenes"])
     with c_m2:
-        threshold_size = st.number_input("Comprimir solo archivos mayores de (MB):", min_value=1.0, value=10.0)
+        threshold_size = st.number_input(
+            "Comprimir solo archivos mayores de (MB):", min_value=1.0, value=10.0
+        )
 
     # Buscar candidatos
     candidates = []
@@ -396,13 +439,17 @@ def _render_compression(db: DatabaseManager) -> None:
     st.write(f"Se han encontrado **{len(candidates)}** archivos candidatos para compresión masiva.")
 
     if candidates:
-        if st.button(f"⚡ Comprimir {len(candidates)} {batch_type.lower()}", key="batch_compress_btn"):
+        if st.button(
+            f"⚡ Comprimir {len(candidates)} {batch_type.lower()}", key="batch_compress_btn"
+        ):
             progress_bar = st.progress(0.0)
             status_text = st.empty()
             saved_total = 0.0
 
             for idx, item in enumerate(candidates):
-                status_text.text(f"Comprimiendo {idx+1}/{len(candidates)}: {Path(item['filepath']).name}...")
+                status_text.text(
+                    f"Comprimiendo {idx+1}/{len(candidates)}: {Path(item['filepath']).name}..."
+                )
                 orig_p = Path(item["filepath"])
                 temp_p = orig_p.with_name(f"_temp_batch_{orig_p.name}")
 
@@ -419,7 +466,7 @@ def _render_compression(db: DatabaseManager) -> None:
                         try:
                             os.remove(orig_p)
                             os.rename(temp_p, orig_p)
-                            saved_total += (orig_size - new_size) / (1024*1024)
+                            saved_total += (orig_size - new_size) / (1024 * 1024)
                         except Exception:
                             if temp_p.exists():
                                 os.remove(temp_p)
@@ -428,8 +475,11 @@ def _render_compression(db: DatabaseManager) -> None:
                 progress_bar.progress((idx + 1) / len(candidates))
 
             status_text.empty()
-            st.success(f"¡Compresión masiva finalizada! Se han liberado **{saved_total:.1f} MB** de almacenamiento.")
+            st.success(
+                f"¡Compresión masiva finalizada! Se han liberado **{saved_total:.1f} MB** de almacenamiento."
+            )
             st.rerun()
+
 
 def _delete_file(db: DatabaseManager, file_id: int, filepath: str):
     """Borra el archivo físicamente y de la base de datos."""
@@ -441,6 +491,7 @@ def _delete_file(db: DatabaseManager, file_id: int, filepath: str):
         st.toast(f"✅ Archivo eliminado: {p.name}")
     except Exception as e:
         st.error(f"Error al eliminar: {e}")
+
 
 def _delete_file_silent(db: DatabaseManager, file_id: int, filepath: str):
     """Borra de forma silenciosa para ejecuciones por lotes."""

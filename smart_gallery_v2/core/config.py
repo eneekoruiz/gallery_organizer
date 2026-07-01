@@ -9,15 +9,17 @@ from pathlib import Path
 
 # ─── RUTAS ────────────────────────────────────────────────────────────────────
 ROOT = Path(__file__).parent.parent.resolve()
-GALERIA = ROOT / "Galería"
+DATA_DIR = ROOT.parent / "data"
+
+GALERIA = DATA_DIR / "Galería"
 DIR_ENTRADA = GALERIA / "Para Organizar"
 DIR_FOTOS = GALERIA / "Fotos"
 DIR_RESULT = GALERIA / "Resultados"
-DIR_THUMBS = ROOT / ".thumbnails"
-DIR_FACES = ROOT / ".face_crops"
+DIR_THUMBS = DATA_DIR / ".thumbnails"
+DIR_FACES = DATA_DIR / ".face_crops"
 DIR_MODELS = ROOT / "models" / "onnx"
-DB_PATH = ROOT / "gallery.db"
-LOG_PATH = ROOT / "gallery.log"
+DB_PATH = DATA_DIR / "gallery.db"
+LOG_PATH = DATA_DIR / "gallery.log"
 
 # ─── EXTENSIONES ──────────────────────────────────────────────────────────────
 EXT_IMAGEN: frozenset[str] = frozenset({".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tiff", ".heic"})

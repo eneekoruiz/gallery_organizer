@@ -1,47 +1,28 @@
-# gallery_organizer
+# Smart AI Gallery Organizer (Local)
 
-Local photo and video organizer built with Python and Streamlit.
+Herramienta personal para organizar y buscar en tu galería local utilizando modelos de Inteligencia Artificial (YOLO, ArcFace, CLIP) sin depender de la nube.
 
-The project indexes a local media folder, stores metadata in SQLite, and exposes a dashboard for review, search and cleanup. It experiments with local AI models for object detection, face grouping and semantic search, but the results still need human review.
+## 🌟 Características Reales
+- **Detección de Objetos**: Clasificación automática (personas, mascotas, vehículos, etc.) mediante YOLOv8.
+- **Reconocimiento Facial**: Agrupación de rostros y búsqueda por identidad con ArcFace.
+- **Búsqueda Semántica**: Encuentra fotos con descripciones naturales ("playa al atardecer") gracias a CLIP.
+- **Privacidad Total**: Todo el procesamiento es local. Tus datos no salen de tu máquina.
+- **Gestión de Errores**: Registro detallado de fallos para depuración técnica.
+- **Mantenimiento**: Herramientas integradas para limpiar caché y reconstruir índices.
 
-## What it does
+## ⚠️ Limitaciones y Notas
+- **Hardware**: El rendimiento depende de tu CPU/GPU. La primera indexación puede ser lenta en equipos modestos.
+- **Precisión**: Los modelos de IA pueden cometer errores. El sistema incluye una bandeja de "Revisión" para ajustes manuales.
+- **Personal**: Diseñado para uso individual, no es una plataforma multiusuario ni enterprise.
+- **Formatos**: Soporta los formatos de imagen y vídeo más comunes (JPG, PNG, WEBP, MP4, MOV).
 
-- scans a local media folder
-- extracts dates from EXIF data, filenames and folder structure
-- stores file metadata in SQLite
-- groups faces and detections for manual review
-- provides a Streamlit interface for triage, search and cleanup
+## 🚀 Instalación Rápida
+1. Instala las dependencias: `pip install -r requirements.txt`
+2. Los modelos ONNX deben colocarse en `models/onnx/` (ver guía de descarga).
+3. Lanza la app: `streamlit run app.py`
 
-## Limits
-
-- AI models can be wrong and should not be treated as final decisions.
-- Performance depends on the local machine and gallery size.
-- The app is designed for one local user, not for a shared production service.
-- Some features require local ONNX models in `models/onnx/`.
-
-## Local setup
-
-```bash
-pip install -r requirements.txt
-streamlit run smart_gallery_v2/app.py
-```
-
-Before indexing a real gallery, review the paths in `smart_gallery_v2/core/config.py`.
-
-## Tests
-
-```bash
-pytest
-```
-
-## Social preview
-
-GitHub social preview asset: `docs/images/social-preview.png`
-
-## Architecture
-
-The Streamlit interface drives a scanning and metadata pipeline backed by SQLite. Optional ONNX detection and embedding stages enrich indexed media before results enter the review workflow; destructive file decisions remain explicit user actions rather than automatic model output.
-
-## Documentation
-
-- DeepWiki: https://deepwiki.com/eneekoruiz/gallery_organizer
+## 🛠️ Desarrollo e Higiene
+- Formateado con **Black**.
+- Linting con **Ruff**.
+- Tests unitarios con **Pytest**.
+- CI integrado en GitHub Actions.

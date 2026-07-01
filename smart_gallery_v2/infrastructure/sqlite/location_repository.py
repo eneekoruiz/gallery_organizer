@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from core.database import DatabaseManager
 from domain.models import GeoPoint, MediaLocation
+
+from core.database import DatabaseManager
 
 
 class SqliteMediaLocationRepository:
