@@ -72,6 +72,7 @@ class ProcessingEngine:
         self._faiss_class: Any = None
         self._video: Optional[VideoKeyframeExtractor] = None
         self._faiss_count = 0  # Para detectar cambios
+        self._faiss_revision = -1
         self._thumb_lock = threading.Lock()
 
     def start(self) -> None:
@@ -212,7 +213,7 @@ class ProcessingEngine:
         except (OSError, IOError) as e:
             log.warning(f"Thumbnail save failed for {filepath}: {e}")
             return ThumbnailResult(error=str(e))
-        except (RuntimeError, OSError, ValueError, TypeError, KeyError, ImportError) as e:
+        except (RuntimeError, ValueError, TypeError, KeyError, ImportError) as e:
             return ThumbnailResult(error=str(e))
 
     def exif(self, filepath: str) -> ExifResult:
@@ -230,7 +231,7 @@ class ProcessingEngine:
         except (OSError, IOError) as e:
             log.warning(f"Exif read failed for {filepath}: {e}")
             return ExifResult(error=str(e))
-        except (RuntimeError, OSError, ValueError, TypeError, KeyError, ImportError) as e:
+        except (RuntimeError, ValueError, TypeError, KeyError, ImportError) as e:
             log.exception(f"Unexpected Exif error for {filepath}: {e}")
             return ExifResult(error=str(e))
 
@@ -250,7 +251,7 @@ class ProcessingEngine:
         except (OSError, IOError) as e:
             log.warning(f"Dedupe hash calculation failed: {e}")
             return DedupeResult(error=str(e))
-        except (RuntimeError, OSError, ValueError, TypeError, KeyError, ImportError) as e:
+        except (RuntimeError, ValueError, TypeError, KeyError, ImportError) as e:
             log.exception(f"Unexpected dedupe error: {e}")
             return DedupeResult(error=str(e))
 
@@ -452,7 +453,6 @@ class ProcessingEngine:
                     except (
                         RuntimeError,
                         OSError,
-                        ValueError,
                         TypeError,
                         KeyError,
                         ImportError,
@@ -487,15 +487,23 @@ class ProcessingEngine:
         self._faiss = FaissIndex()
         self._faiss.rebuild(names, embs)
         self._faiss_count = len(names)
+        self._faiss_revision = self._db.get_identity_learning_revision()
 
     def _check_reload_faiss(self) -> None:
-        """Issue 2: Recarga el índice si hay nuevas caras en la DB."""
+        """Recarga FAISS si cambia el dataset aprendido o su revision."""
         with self._db._read() as c:
             count = c.execute(
                 "SELECT COUNT(*) FROM KnownFaces WHERE embedding IS NOT NULL"
             ).fetchone()[0]
-        if count != self._faiss_count:
-            log.info(f"Reloading FAISS: {self._faiss_count} -> {count} faces")
+        revision = self._db.get_identity_learning_revision()
+        if count != self._faiss_count or revision != self._faiss_revision:
+            log.info(
+                "Reloading FAISS: count %s -> %s, revision %s -> %s",
+                self._faiss_count,
+                count,
+                self._faiss_revision,
+                revision,
+            )
             self._reload_faiss()
 
     def _is_high_quality_face(self, crop: Optional[np.ndarray]) -> bool:
@@ -512,7 +520,7 @@ class ProcessingEngine:
             return variance > 80  # Umbral empírico para caras "nítidas"
         except (cv2.error, ValueError) as e:
             log.warning(f"Quality check failed for crop: {e}")
-        except (RuntimeError, OSError, ValueError, TypeError, KeyError, ImportError) as e:
+        except (RuntimeError, OSError, TypeError, KeyError, ImportError) as e:
             log.exception(f"Unexpected quality check error: {e}")
         return False
 
@@ -557,7 +565,6 @@ class ProcessingEngine:
                     except (
                         RuntimeError,
                         OSError,
-                        ValueError,
                         TypeError,
                         KeyError,
                         ImportError,
@@ -783,3 +790,4 @@ def _safe(name: str) -> str:
     return (
         "".join(c for c in name if c.isalnum() or c in " _-").strip().replace(" ", "_") or "otros"
     )
+

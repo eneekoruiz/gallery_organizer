@@ -71,3 +71,30 @@ def render_maintenance(db: DatabaseManager):
                             st.error(
                                 f"Error al borrar DB: {e}. Asegúrate de que el motor esté detenido."
                             )
+
+    st.divider()
+    st.markdown("### 🧠 Aprendizaje Activo y Métricas")
+    metrics = db.get_learning_metrics()
+    
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Prototipos (FAISS)", metrics["total_prototypes"])
+    m2.metric("Identidades Recalculadas", metrics["recalculated_identities"])
+    m3.metric("En Cola de Revisión", metrics["pending_rechecks"])
+    m4.metric("Revisión de Aprendizaje", db.get_identity_learning_revision())
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("**⚠️ Top Falsos Positivos**")
+        for fp in metrics["false_positives"]:
+            st.write(f"- **{fp['name']}**: {fp['count']} correcciones")
+            
+    with col2:
+        st.markdown("**📉 Identidades con Pocos Ejemplos (<3)**")
+        for fs in metrics["few_samples"]:
+            st.write(f"- **{fs['name']}**: {fs['count']} ejemplos")
+            
+    if st.button("💾 Exportar Dataset Humano"):
+        from pathlib import Path
+        out_dir = Path("data/dataset_export")
+        count = db.export_human_dataset(out_dir)
+        st.success(f"¡Dataset exportado a {out_dir}! ({count} ejemplos)")

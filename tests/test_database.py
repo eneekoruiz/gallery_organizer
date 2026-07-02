@@ -177,14 +177,21 @@ def test_merge_identities(temp_db):
         assert len(rows) == 1
         assert rows[0]["assigned_name"] == "Alice"
 
-    # 3. El embedding promedio de Alice debe haberse recalculado
-    # El promedio de [1,1,...] y [3,3,...] debería ser [2,2,...]
+    # 3. FAISS debe recibir prototipos múltiples; KnownFaces conserva el promedio para la UI.
     names_db, embs_db = temp_db.load_known_faces()
-    alice_idx = names_db.index("Alice")
-    alice_emb = embs_db[alice_idx]
+    alice_embs = [embs_db[i] for i, name in enumerate(names_db) if name == "Alice"]
+    assert len(alice_embs) == 2
+    assert any(np.allclose(emb, emb_alice) for emb in alice_embs)
+    assert any(np.allclose(emb, emb_bob) for emb in alice_embs)
 
+    faces_post = temp_db.get_known_faces_with_crops()
+    alice_face = next(face for face in faces_post if face["name"] == "Alice")
+    with temp_db._read() as c:
+        mean_blob = c.execute(
+            "SELECT embedding FROM KnownFaces WHERE id=?", (alice_face["id"],)
+        ).fetchone()["embedding"]
     expected_emb = np.ones(512, dtype=np.float32) * 2.0
-    assert np.allclose(alice_emb, expected_emb)
+    assert np.allclose(np.frombuffer(mean_blob, dtype=np.float32), expected_emb)
 
 
 def test_queue_priority_is_atomic_and_cleared(temp_db):
@@ -250,3 +257,79 @@ def test_prepare_manual_processing_supports_reprocess(temp_db):
     assert db_row["failed_stage"] is None
     assert db_row["error_message"] is None
 
+
+def test_verify_detection_rebuilds_learning_and_marks_nearby_candidates(temp_db):
+    import json
+
+    import numpy as np
+
+    emb = np.zeros(512, dtype=np.float32)
+    emb[0] = 1.0
+    corrected_file, _ = temp_db.upsert_file("corrected.jpg", "corrected.jpg")
+    candidate_file, _ = temp_db.upsert_file("candidate.jpg", "candidate.jpg")
+    det_id = temp_db.add_detection(
+        corrected_file,
+        emb,
+        {"top": 0, "right": 10, "bottom": 10, "left": 0},
+        assigned_name="Desconocido",
+    )
+    candidate_id = temp_db.add_detection(
+        candidate_file,
+        emb,
+        {"top": 0, "right": 10, "bottom": 10, "left": 0},
+        assigned_name="Desconocido",
+    )
+    with temp_db._write() as c:
+        c.execute("UPDATE FileQueue SET status='AUTO_CLASSIFIED' WHERE id=?", (candidate_file,))
+
+    temp_db.verify_detection(det_id, "Alice")
+
+    names, known = temp_db.load_known_faces()
+    assert names == ["Alice"]
+    assert np.allclose(known[0], emb)
+    assert temp_db.get_identity_learning_revision() == 1
+    with temp_db._read() as c:
+        candidate = c.execute(
+            "SELECT assigned_name,triage_tier,is_verified FROM Detections WHERE id=?",
+            (candidate_id,),
+        ).fetchone()
+        queue = c.execute(
+            "SELECT status,review_required,review_reasons FROM FileQueue WHERE id=?",
+            (candidate_file,),
+        ).fetchone()
+
+    assert candidate["assigned_name"] == "Alice"
+    assert candidate["triage_tier"] == "safe"
+    assert candidate["is_verified"] == 0
+    assert queue["status"] == "NEEDS_REVIEW"
+    assert queue["review_required"] == 1
+    assert "identity_learning_update" in json.loads(queue["review_reasons"])
+
+
+def test_false_positive_rebuilds_learning_and_removes_orphan_identity_link(temp_db):
+    import numpy as np
+
+    emb = np.zeros(512, dtype=np.float32)
+    emb[0] = 1.0
+    file_id, _ = temp_db.upsert_file("wrong.jpg", "wrong.jpg")
+    det_id = temp_db.add_detection(
+        file_id,
+        emb,
+        {"top": 0, "right": 10, "bottom": 10, "left": 0},
+        assigned_name="Desconocido",
+    )
+    temp_db.verify_detection(det_id, "Alice")
+
+    temp_db.mark_false_positive(det_id)
+
+    names, known = temp_db.load_known_faces()
+    assert names == []
+    assert known.shape[0] == 0
+    assert "Alice" not in temp_db.get_all_identity_names()
+    assert temp_db.get_identity_learning_revision() == 2
+    with temp_db._read() as c:
+        link_count = c.execute(
+            "SELECT COUNT(*) FROM FileIdentities WHERE file_id=? AND identity='Alice'",
+            (file_id,),
+        ).fetchone()[0]
+    assert link_count == 0

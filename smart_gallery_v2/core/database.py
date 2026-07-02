@@ -311,9 +311,11 @@ class DatabaseManager:
             # Para las migraciones sí usamos el cursor con transacciones manuales si es necesario,
             # pero aquí las manejaremos dentro de la función.
             self._run_migrations(conn.cursor())
-            from core.migrations.v5_identity_events import migrate
-
-            migrate(conn)
+            from core.migrations.v5_identity_events import migrate as migrate_v5
+            from core.migrations.v6_recheck_queue import migrate as migrate_v6
+            migrate_v5(conn)
+            migrate_v6(conn)
+            log.info("Database initialized with v5 and v6 migrations.")
         finally:
             conn.close()
 
@@ -1178,8 +1180,21 @@ class DatabaseManager:
 
     def load_known_faces(self) -> tuple[list[str], np.ndarray]:
         with self._read() as c:
-            c.execute("SELECT name,embedding FROM KnownFaces WHERE embedding IS NOT NULL")
-            rows = c.fetchall()
+            proto_rows = c.execute(
+                """
+                SELECT i.display_name as name, p.embedding
+                FROM IdentityPrototypes p
+                JOIN Identities i ON p.identity_id = i.id
+                WHERE p.active = 1 AND p.modality = 'face'
+                ORDER BY i.display_name, p.id
+                """
+            ).fetchall()
+            if proto_rows:
+                rows = proto_rows
+            else:
+                rows = c.execute(
+                    "SELECT name,embedding FROM KnownFaces WHERE embedding IS NOT NULL ORDER BY name,id"
+                ).fetchall()
         if not rows:
             return [], np.empty((0, ARCFACE_DIM), dtype=np.float32)
         names = [r["name"] for r in rows]
@@ -1188,8 +1203,358 @@ class DatabaseManager:
 
     def get_all_identity_names(self) -> list[str]:
         with self._read() as c:
-            c.execute("SELECT DISTINCT name FROM KnownFaces ORDER BY name")
+            c.execute("""
+                SELECT DISTINCT name FROM KnownFaces
+                UNION
+                SELECT DISTINCT display_name as name FROM Identities
+                ORDER BY name
+            """)
             return [r["name"] for r in c.fetchall()]
+
+    def get_learning_metrics(self) -> dict[str, Any]:
+        with self._read() as c:
+            c.execute("SELECT COUNT(*) as c FROM IdentityPrototypes")
+            total_protos = c.fetchone()["c"]
+
+            c.execute("SELECT COUNT(*) as c FROM IdentityRecheckQueue WHERE resolved_at IS NULL")
+            pending_rechecks = c.fetchone()["c"]
+
+            c.execute("SELECT COUNT(DISTINCT identity_id) as c FROM IdentityPrototypes")
+            recalculated_identities = c.fetchone()["c"]
+
+            c.execute("SELECT assigned_name, COUNT(*) as c FROM Detections WHERE is_false_positive=1 GROUP BY assigned_name ORDER BY c DESC LIMIT 5")
+            false_positives = [{"name": r["assigned_name"], "count": r["c"]} for r in c.fetchall()]
+
+            c.execute("""
+                SELECT i.display_name, COUNT(p.id) as c 
+                FROM Identities i 
+                LEFT JOIN IdentityPrototypes p ON i.id = p.identity_id 
+                GROUP BY i.id HAVING c < 3 ORDER BY c ASC LIMIT 5
+            """)
+            few_samples = [{"name": r["display_name"], "count": r["c"]} for r in c.fetchall()]
+
+            return {
+                "total_prototypes": total_protos,
+                "pending_rechecks": pending_rechecks,
+                "recalculated_identities": recalculated_identities,
+                "false_positives": false_positives,
+                "few_samples": few_samples,
+            }
+
+    def get_pending_identity_rechecks(self, limit: int = 50) -> list[dict[str, Any]]:
+        with self._read() as c:
+            rows = c.execute(
+                """
+                SELECT r.*, f.filepath, d.face_crop_path
+                FROM IdentityRecheckQueue r
+                JOIN FileQueue f ON r.file_id = f.id
+                JOIN Detections d ON r.detection_id = d.id
+                WHERE r.resolved_at IS NULL
+                ORDER BY r.distance ASC, r.id ASC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def mark_identity_recheck_resolved(self, recheck_id: int) -> bool:
+        with self._write() as c:
+            c.execute(
+                "UPDATE IdentityRecheckQueue SET resolved_at=? "
+                "WHERE id=? AND resolved_at IS NULL",
+                (_now(), recheck_id),
+            )
+            return c.rowcount > 0
+
+    def resolve_identity_recheck(
+        self,
+        recheck_id: int,
+        name: Optional[str] = None,
+        *,
+        false_positive: bool = False,
+    ) -> bool:
+        with self._read() as c:
+            row = c.execute(
+                "SELECT detection_id FROM IdentityRecheckQueue "
+                "WHERE id=? AND resolved_at IS NULL",
+                (recheck_id,),
+            ).fetchone()
+        if not row:
+            return False
+
+        det_id = int(row["detection_id"])
+        if false_positive:
+            self.mark_false_positive(det_id)
+        elif name and name.strip():
+            self.verify_detection(det_id, name.strip())
+        else:
+            return False
+
+        return self.mark_identity_recheck_resolved(recheck_id)
+
+    def get_identity_learning_revision(self) -> int:
+        value = self.get_control_state("identity_learning_revision")
+        try:
+            return int(value or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    def export_human_dataset(self, out_dir: Path) -> int:
+        import json
+
+        out_dir.mkdir(parents=True, exist_ok=True)
+        count = 0
+        with self._read() as c:
+            # Export training examples
+            rows = c.execute("""
+                SELECT t.hard_case, e.decision, e.metadata_json,
+                       r.x, r.y, r.width, r.height, r.polygon_json,
+                       f.filepath, i.display_name
+                FROM TrainingExamples t
+                JOIN IdentityEvidence e ON t.evidence_id = e.id
+                JOIN RegionAnnotations r ON e.region_id = r.id
+                JOIN FileQueue f ON e.media_id = f.id
+                JOIN Identities i ON e.identity_id = i.id
+            """).fetchall()
+
+            records = []
+            for row in rows:
+                record = dict(row)
+                records.append(record)
+                count += 1
+
+            with open(out_dir / "dataset.json", "w", encoding="utf-8") as f:
+                json.dump(records, f, indent=2)
+
+        return count
+
+    @staticmethod
+    def _embedding_array(blob: bytes) -> np.ndarray:
+        return np.frombuffer(blob, dtype=np.float32).copy()
+
+    @staticmethod
+    def _merge_review_reason(raw: Optional[str], reason: str) -> str:
+        try:
+            reasons = json.loads(raw or "[]")
+            if not isinstance(reasons, list):
+                reasons = []
+        except Exception:
+            reasons = []
+        if reason not in reasons:
+            reasons.append(reason)
+        return json.dumps(reasons, ensure_ascii=False)
+
+    def _bump_identity_learning_revision(self, cursor: sqlite3.Cursor) -> int:
+        current = cursor.execute(
+            "SELECT value FROM ControlState WHERE key_name='identity_learning_revision'"
+        ).fetchone()
+        try:
+            revision = int(current["value"] if current else 0) + 1
+        except (TypeError, ValueError):
+            revision = 1
+        cursor.execute(
+            "INSERT OR REPLACE INTO ControlState (key_name,value,last_updated) VALUES (?,?,?)",
+            ("identity_learning_revision", str(revision), _now()),
+        )
+        return revision
+
+    def _refresh_identity_learning(
+        self,
+        cursor: sqlite3.Cursor,
+        affected_names: set[str],
+        source_file_ids: set[int] | None = None,
+        review_distance: float = 0.90,
+    ) -> dict[str, Any]:
+        names = {n.strip() for n in affected_names if n and n.strip() and n != "Desconocido"}
+        source_file_ids = source_file_ids or set()
+        if not names:
+            return {"revision": self._bump_identity_learning_revision(cursor), "review_candidates": 0}
+
+        prototypes: dict[str, list[np.ndarray]] = {}
+        for name in sorted(names):
+            rows = cursor.execute(
+                "SELECT embedding FROM Detections "
+                "WHERE assigned_name=? AND is_verified=1 AND is_false_positive=0 "
+                "AND is_faceless=0 AND embedding IS NOT NULL",
+                (name,),
+            ).fetchall()
+
+            cursor.execute("DELETE FROM KnownFaces WHERE name=? AND is_faceless=0", (name,))
+            cursor.execute("SELECT id FROM Identities WHERE display_name=?", (name,))
+            ident_row = cursor.fetchone()
+
+            if not rows:
+                if ident_row:
+                    ident_id = ident_row["id"]
+                    cursor.execute("DELETE FROM IdentityPrototypes WHERE identity_id=?", (ident_id,))
+                    has_evidence = cursor.execute(
+                        "SELECT 1 FROM IdentityEvidence WHERE identity_id=? LIMIT 1",
+                        (ident_id,),
+                    ).fetchone()
+                    has_file_link = cursor.execute(
+                        "SELECT 1 FROM FileIdentities WHERE identity=? LIMIT 1",
+                        (name,),
+                    ).fetchone()
+                    has_known_face = cursor.execute(
+                        "SELECT 1 FROM KnownFaces WHERE name=? LIMIT 1",
+                        (name,),
+                    ).fetchone()
+                    if not has_evidence and not has_file_link and not has_known_face:
+                        cursor.execute("DELETE FROM Identities WHERE id=?", (ident_id,))
+                continue
+
+            if not ident_row:
+                cursor.execute("INSERT INTO Identities(display_name) VALUES (?)", (name,))
+                ident_id = cursor.lastrowid
+            else:
+                ident_id = ident_row["id"]
+            cursor.execute("DELETE FROM IdentityPrototypes WHERE identity_id=?", (ident_id,))
+
+            # Extraer hasta 20 ejemplos (para no saturar si hay miles)
+            embs = [self._embedding_array(row["embedding"]) for row in rows[:20]]
+            prototypes[name] = embs
+
+            mean_emb = np.mean(embs, axis=0).astype(np.float32)
+            cursor.execute(
+                "INSERT INTO KnownFaces (name,embedding,is_faceless) VALUES (?,?,0)",
+                (name, mean_emb.tobytes()),
+            )
+
+            # Guardar múltiples prototipos para FAISS.
+            for emb in embs:
+                cursor.execute(
+                    "INSERT INTO IdentityPrototypes "
+                    "(identity_id, modality, embedding, embedding_dim, quality_score, "
+                    "model_name, model_version, active) VALUES (?, 'face', ?, 512, 1.0, "
+                    "'arcface_r100', '1.0', 1)",
+                    (ident_id, emb.tobytes()),
+                )
+
+        impacted_file_ids: set[int] = set()
+        if prototypes:
+            candidate_rows = cursor.execute(
+                "SELECT id,file_id,assigned_name,embedding FROM Detections "
+                "WHERE is_verified=0 AND is_false_positive=0 AND is_faceless=0 "
+                "AND embedding IS NOT NULL"
+            ).fetchall()
+            for row in candidate_rows:
+                file_id = int(row["file_id"])
+                if file_id in source_file_ids:
+                    continue
+                emb = self._embedding_array(row["embedding"])
+                best_name = ""
+                best_distance = 999.0
+
+                for name, protos in prototypes.items():
+                    for proto in protos:
+                        distance = float(np.linalg.norm(emb - proto))
+                        if distance < best_distance:
+                            best_name = name
+                            best_distance = distance
+
+                current_name = row["assigned_name"] or "Desconocido"
+                should_review = best_distance <= review_distance or current_name in names
+                if not should_review:
+                    continue
+
+                confidence = max(0.0, min(1.0, 1.0 - best_distance / 2.0))
+                tier = "safe" if best_distance <= 0.55 else "review"
+                if best_distance > 0.90:
+                    best_name = "Desconocido"
+                    confidence = 0.0
+                    tier = "unclassified"
+
+                cursor.execute(
+                    "UPDATE Detections SET assigned_name=?, confidence=?, triage_tier=? "
+                    "WHERE id=? AND is_verified=0",
+                    (best_name, confidence, tier, row["id"]),
+                )
+                impacted_file_ids.add(file_id)
+
+                affected_identity = best_name or current_name
+                reason = (
+                    f"Reevaluación de {current_name} a {best_name}. "
+                    f"Distancia {best_distance:.2f}."
+                )
+                cursor.execute(
+                    "UPDATE IdentityRecheckQueue "
+                    "SET old_name=?, distance=?, confidence=?, reason=? "
+                    "WHERE detection_id=? AND affected_identity=? "
+                    "AND IFNULL(suggested_name, '')=IFNULL(?, '') "
+                    "AND resolved_at IS NULL",
+                    (
+                        current_name,
+                        best_distance,
+                        confidence,
+                        reason,
+                        row["id"],
+                        affected_identity,
+                        best_name,
+                    ),
+                )
+                if cursor.rowcount == 0:
+                    cursor.execute(
+                        "INSERT INTO IdentityRecheckQueue "
+                        "(file_id, detection_id, affected_identity, old_name, suggested_name, "
+                        "distance, confidence, reason) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            file_id,
+                            row["id"],
+                            affected_identity,
+                            current_name,
+                            best_name,
+                            best_distance,
+                            confidence,
+                            reason,
+                        ),
+                    )
+
+        for file_id in impacted_file_ids:
+            fq = cursor.execute(
+                "SELECT status,review_reasons FROM FileQueue WHERE id=?", (file_id,)
+            ).fetchone()
+            if not fq:
+                continue
+            status = fq["status"]
+            next_status = "NEEDS_REVIEW" if status in ("AUTO_CLASSIFIED", "VERIFIED", "DONE") else status
+            reasons = self._merge_review_reason(fq["review_reasons"], "identity_learning_update")
+            cursor.execute(
+                "UPDATE FileQueue SET status=?, review_required=1, review_reasons=?, "
+                "last_updated=? WHERE id=?",
+                (next_status, reasons, _now(), file_id),
+            )
+
+        revision = self._bump_identity_learning_revision(cursor)
+        cursor.execute(
+            "INSERT OR REPLACE INTO ControlState (key_name,value,last_updated) VALUES (?,?,?)",
+            (
+                "identity_learning_last_impact",
+                json.dumps(
+                    {
+                        "revision": revision,
+                        "affected_identities": sorted(names),
+                        "review_candidates": len(impacted_file_ids),
+                    },
+                    ensure_ascii=False,
+                ),
+                _now(),
+            ),
+        )
+        return {"revision": revision, "review_candidates": len(impacted_file_ids)}
+
+    def _detection_context(
+        self, cursor: sqlite3.Cursor, det_ids: list[int]
+    ) -> list[dict[str, Any]]:
+        if not det_ids:
+            return []
+        placeholders = ",".join("?" for _ in det_ids)
+        rows = cursor.execute(
+            "SELECT id,file_id,assigned_name,embedding,is_high_quality,is_false_positive "
+            f"FROM Detections WHERE id IN ({placeholders})",
+            det_ids,
+        ).fetchall()
+        return [dict(row) for row in rows]
 
     # ── Detections ────────────────────────────────────────────────────────
     def add_detection(
@@ -1260,88 +1625,86 @@ class DatabaseManager:
 
     def verify_detection(self, det_id: int, name: str) -> None:
         _before = self._snap_detections([det_id])
-        emb_bytes: Optional[bytes] = None
-        file_id: int = 0
-        is_high_q: bool = True
-        with self._read() as c:
-            row = c.execute(
-                "SELECT embedding, file_id, is_high_quality FROM Detections WHERE id=?",
-                (det_id,),
-            ).fetchone()
-            if row:
-                emb_bytes = row["embedding"]
-                file_id = row["file_id"]
-                is_high_q = bool(row["is_high_quality"])
-
-        identity_id = None
         with self._write() as c:
+            context = self._detection_context(c, [det_id])
+            if not context:
+                return
+            row = context[0]
+            old_name = row.get("assigned_name") or "Desconocido"
+            file_id = int(row["file_id"])
             c.execute(
-                "UPDATE Detections SET assigned_name=?,is_verified=1,triage_tier='safe' WHERE id=?",
+                "UPDATE Detections SET assigned_name=?,is_verified=1,triage_tier='safe',"
+                "is_false_positive=0 WHERE id=?",
                 (name, det_id),
             )
-            # Issue 3 & 19: Deduplicación + Filtro de Calidad
-            # Solo "enseñamos" a la IA si la cara es nítida (is_high_q)
-            if emb_bytes and is_high_q:
-                count = c.execute(
-                    "SELECT COUNT(*) FROM KnownFaces WHERE name=?", (name,)
-                ).fetchone()[0]
-                if count < 10:
-                    c.execute(
-                        "INSERT INTO KnownFaces (name,embedding) VALUES (?,?)",
-                        (name, emb_bytes),
-                    )
-                    identity_id = c.lastrowid
-
-            # Issue 8: Actualizar symlinks en disco (vía FileIdentities)
             c.execute(
                 "INSERT OR IGNORE INTO FileIdentities (file_id, identity) VALUES (?,?)",
                 (file_id, name),
             )
+            learning = self._refresh_identity_learning(c, {old_name, name}, {file_id})
 
-        # Issue 4: Guardamos el ID de la identidad creada para el deshacer
-        self._record_tx("VERIFY", _before, {"name": name, "identity_id": identity_id})
+        self._record_tx("VERIFY", _before, {"name": name, "learning": learning})
 
     def mark_false_positive(self, det_id: int) -> None:
         with self._write() as c:
+            context = self._detection_context(c, [det_id])
+            if not context:
+                return
+            row = context[0]
+            old_name = row.get("assigned_name") or "Desconocido"
+            file_id = int(row["file_id"])
             c.execute(
-                "UPDATE Detections SET is_false_positive=1,is_verified=1 WHERE id=?",
+                "UPDATE Detections SET is_false_positive=1,is_verified=1,triage_tier='review' "
+                "WHERE id=?",
                 (det_id,),
             )
+            if old_name != "Desconocido":
+                remaining = c.execute(
+                    "SELECT 1 FROM Detections WHERE file_id=? AND assigned_name=? "
+                    "AND is_false_positive=0 LIMIT 1",
+                    (file_id, old_name),
+                ).fetchone()
+                if not remaining:
+                    c.execute(
+                        "DELETE FROM FileIdentities WHERE file_id=? AND identity=?",
+                        (file_id, old_name),
+                    )
+            self._refresh_identity_learning(c, {old_name}, {file_id})
 
     def bulk_verify(self, det_ids: list[int], name: str) -> None:
+        if not det_ids:
+            return
         _before = self._snap_detections(det_ids)
         with self._write() as c:
+            context = self._detection_context(c, det_ids)
+            affected = {str(row.get("assigned_name") or "Desconocido") for row in context}
+            affected.add(name)
+            file_ids = {int(row["file_id"]) for row in context}
             c.executemany(
-                "UPDATE Detections SET assigned_name=?,is_verified=1,triage_tier='safe' WHERE id=?",
+                "UPDATE Detections SET assigned_name=?,is_verified=1,triage_tier='safe',"
+                "is_false_positive=0 WHERE id=?",
                 [(name, did) for did in det_ids],
             )
-            # enseñar primer embedding (Upsert identity)
-            c.execute(
-                "SELECT embedding FROM Detections WHERE id=? AND embedding IS NOT NULL LIMIT 1",
-                (det_ids[0],),
+            c.executemany(
+                "INSERT OR IGNORE INTO FileIdentities (file_id, identity) VALUES (?,?)",
+                [(file_id, name) for file_id in file_ids],
             )
-            row = c.fetchone()
-            if row and row["embedding"]:
-                # Guardamos el ID de la identidad creada para el deshacer
-                c.execute(
-                    "INSERT INTO KnownFaces (name,embedding) VALUES (?,?)",
-                    (name, row["embedding"]),
-                )
-                identity_id = c.lastrowid
-                self._record_tx(
-                    "RENAME",
-                    _before,
-                    {"name": name, "ids": det_ids, "identity_id": identity_id},
-                )
-            else:
-                self._record_tx("RENAME", _before, {"name": name, "ids": det_ids})
+            learning = self._refresh_identity_learning(c, affected, file_ids)
+        self._record_tx("RENAME", _before, {"name": name, "ids": det_ids, "learning": learning})
 
     def bulk_false_positive(self, det_ids: list[int]) -> None:
+        if not det_ids:
+            return
         with self._write() as c:
+            context = self._detection_context(c, det_ids)
+            affected = {str(row.get("assigned_name") or "Desconocido") for row in context}
+            file_ids = {int(row["file_id"]) for row in context}
             c.executemany(
-                "UPDATE Detections SET is_false_positive=1,is_verified=1 WHERE id=?",
+                "UPDATE Detections SET is_false_positive=1,is_verified=1,triage_tier='review' "
+                "WHERE id=?",
                 [(did,) for did in det_ids],
             )
+            self._refresh_identity_learning(c, affected, file_ids)
 
     # ── Etiquetado Faceless ───────────────────────────────────────────────
     def add_faceless_tag(
@@ -1489,6 +1852,12 @@ class DatabaseManager:
                 if identity_id:
                     c.execute("DELETE FROM KnownFaces WHERE id=?", (identity_id,))
 
+                affected = {str(item.get("assigned_name") or "Desconocido") for item in before}
+                after_name = after.get("name")
+                if after_name:
+                    affected.add(str(after_name))
+                self._refresh_identity_learning(c, affected)
+
                 c.execute("UPDATE TxHistory SET undone=1 WHERE id=?", (row["id"],))
                 return f"Undo '{action}' → {len(before)} detecciones revertidas"
         return None
@@ -1590,19 +1959,22 @@ class DatabaseManager:
             return False
 
         with self._write() as c:
-            # 1. Actualizar identidades conocidas
+            changed = 0
             c.execute("UPDATE KnownFaces SET name=? WHERE name=?", (new_name, old_name))
-            # 2. Actualizar todas las detecciones históricas
+            changed += c.rowcount
             c.execute(
                 "UPDATE Detections SET assigned_name=? WHERE assigned_name=?",
                 (new_name, old_name),
             )
-            # 3. Actualizar relaciones de archivos (para symlinks)
+            changed += c.rowcount
             c.execute(
                 "UPDATE FileIdentities SET identity=? WHERE identity=?",
                 (new_name, old_name),
             )
-            return c.rowcount > 0
+            changed += c.rowcount
+            if changed:
+                self._refresh_identity_learning(c, {old_name, new_name})
+            return changed > 0
 
     def cleanup_db(self) -> dict[str, int]:
         """Issue 20: Eliminar huérfanos y optimizar DB."""
@@ -1694,11 +2066,24 @@ class DatabaseManager:
     def verify_cluster(self, cluster_id: int, name: str) -> None:
         """Asigna un nombre verificado a todo un cluster de una vez."""
         with self._write() as c:
+            rows = c.execute(
+                "SELECT id,file_id,assigned_name FROM Detections WHERE cluster_id=?",
+                (cluster_id,),
+            ).fetchall()
+            affected = {str(row["assigned_name"] or "Desconocido") for row in rows}
+            affected.add(name)
+            file_ids = {int(row["file_id"]) for row in rows}
             c.execute(
-                "UPDATE Detections SET assigned_name = ?, is_verified = 1, cluster_id = NULL "
+                "UPDATE Detections SET assigned_name = ?, is_verified = 1, "
+                "is_false_positive=0, triage_tier='safe', cluster_id = NULL "
                 "WHERE cluster_id = ?",
                 (name, cluster_id),
             )
+            c.executemany(
+                "INSERT OR IGNORE INTO FileIdentities (file_id, identity) VALUES (?,?)",
+                [(file_id, name) for file_id in file_ids],
+            )
+            self._refresh_identity_learning(c, affected, file_ids)
 
     def search_semantic(self, query: str, threshold: float = 0.2, limit: int = 50) -> pd.DataFrame:
         """
@@ -1955,6 +2340,12 @@ class DatabaseManager:
                         )
                         file_ids_with_target.add(file_id)
 
+            c.execute(
+                "UPDATE Detections SET triage_tier='safe', is_verified=1 "
+                "WHERE assigned_name=? AND is_false_positive=0",
+                (target_name,),
+            )
+
             # 5. Recalcular el embedding promedio para la identidad destino
             rows = c.execute(
                 "SELECT embedding FROM Detections WHERE assigned_name = ? AND embedding IS NOT NULL",
@@ -1971,6 +2362,7 @@ class DatabaseManager:
 
             # 6. Eliminar las identidades origen de KnownFaces
             c.execute(f"DELETE FROM KnownFaces WHERE id IN ({placeholders})", source_ids)
+            self._refresh_identity_learning(c, set(source_names) | {target_name})
 
         log.info(
             f"Identidades {source_names} fusionadas con éxito en '{target_name}' (ID {target_id})"

@@ -1,6 +1,7 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
+
 from core.models_types import (
     AIResult,
     DedupeResult,
@@ -65,3 +66,14 @@ def test_error_handling_in_pipeline(mock_engine, temp_db):
     assert res.status == "ERROR"
     # Verificar que el error se guardó como string
     assert res.exception == "Disk full"
+
+
+def test_worker_reloads_faiss_when_learning_revision_changes(mock_engine, temp_db):
+    mock_engine._faiss_count = 0
+    mock_engine._faiss_revision = 0
+    mock_engine._reload_faiss = MagicMock()
+    temp_db.set_control_state("identity_learning_revision", "1")
+
+    mock_engine._check_reload_faiss()
+
+    mock_engine._reload_faiss.assert_called_once()

@@ -47,13 +47,14 @@ def render_triage(db: DatabaseManager) -> None:
         unsafe_allow_html=True,
     )
 
-    tab_safe, tab_review, tab_unk, tab_faceless, tab_clusters = st.tabs(
+    tab_safe, tab_review, tab_unk, tab_faceless, tab_clusters, tab_recheck = st.tabs(
         [
             "✅ Seguros (>85%)",
             "🔶 Revisar (40–85%)",
             "❓ Sin Clasificar",
             "👤 Etiquetado Manual",
             "🪄 Agrupamiento IA",
+            "🧠 Revisión Aprendizaje",
         ]
     )
 
@@ -71,6 +72,9 @@ def render_triage(db: DatabaseManager) -> None:
 
     with tab_clusters:
         _render_clusters_tab(db)
+
+    with tab_recheck:
+        _render_recheck_queue(db)
 
     # Inspector modal si está activo
     if st.session_state.get("inspect_det_id"):
@@ -717,3 +721,54 @@ def _render_clusters_tab(db: DatabaseManager) -> None:
                         db.verify_cluster(cid, final_name)
                         st.toast(f"✅ {count} fotos asignadas a {final_name}")
                         st.rerun()
+
+def _render_recheck_queue(db: DatabaseManager) -> None:
+    st.markdown("### 🧠 Revisión de Aprendizaje")
+    st.info(
+        "Estas detecciones fueron reevaluadas automáticamente tras una corrección "
+        "manual y necesitan confirmación."
+    )
+
+    rows = db.get_pending_identity_rechecks(limit=50)
+    if not rows:
+        st.success("No hay revisiones pendientes. Todo está en orden.")
+        return
+
+    identity_names = db.get_all_identity_names()
+    for r in rows:
+        col1, col2, col3 = st.columns([1, 2, 2])
+        with col1:
+            crop_path = r.get("face_crop_path")
+            if crop_path and Path(crop_path).exists():
+                st.image(crop_path, width=100)
+            else:
+                st.caption("Recorte no disponible")
+
+        with col2:
+            st.markdown(f"**Identidad afectada:** {r['affected_identity']}")
+            st.markdown(f"**Razón:** {r['reason']}")
+            if r.get("distance") is not None:
+                st.markdown(f"**Distancia al prototipo:** {r['distance']:.3f}")
+
+        with col3:
+            st.markdown(f"**Sugerencia:** {r['suggested_name'] or 'Desconocido'}")
+            opts = ["(Seleccionar...)"] + identity_names + ["Nuevo nombre"]
+            sel = st.selectbox("Confirmar identidad", opts, key=f"recheck_sel_{r['id']}")
+            new_name = ""
+            if sel == "Nuevo nombre":
+                new_name = st.text_input("Nombre", key=f"recheck_txt_{r['id']}")
+
+            c_btn1, c_btn2 = st.columns(2)
+            with c_btn1:
+                if st.button("Confirmar", key=f"recheck_btn_{r['id']}", type="primary"):
+                    final_name = new_name if sel == "Nuevo nombre" else sel
+                    if final_name and final_name != "(Seleccionar...)":
+                        db.resolve_identity_recheck(r["id"], final_name)
+                        st.toast(f"Asignado a {final_name}")
+                        st.rerun()
+            with c_btn2:
+                if st.button("Falso positivo", key=f"recheck_fp_{r['id']}"):
+                    db.resolve_identity_recheck(r["id"], false_positive=True)
+                    st.toast("Falso positivo marcado.")
+                    st.rerun()
+        st.divider()

@@ -477,13 +477,13 @@ class FaissIndex:
             log.error("FAISS search failed: %s", e)
             return "Desconocido", 0.0, "unclassified"
 
-        if dist > FAISS_THRESHOLD:
-            return "Desconocido", dist, "unclassified"
+        if dist > 0.90:
+            return "Desconocido", 0.0, "unclassified"
 
         # Convertir distancia L2 a confidence (Similitud Coseno aproximada para vectores normalizados)
         # sim = 1 - (dist^2 / 2)
         confidence = max(0.0, min(1.0, 1.0 - dist / 2.0))
-        tier = _conf_to_tier(confidence)
+        tier = "safe" if dist <= 0.55 else "review"
         name = self._names[int(indices[0][0])]
         return name, confidence, tier
 
