@@ -48,6 +48,25 @@
             font-size: 0.85rem;
             font-weight: 600;
         }
+        .btn-download-zip {
+            background: linear-gradient(135deg, #10b981, #059669);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            padding: 10px 20px;
+            font-weight: 700;
+            font-size: 0.9rem;
+            cursor: pointer;
+            box-shadow: 0 4px 14px rgba(16, 185, 129, 0.3);
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .btn-download-zip:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(16, 185, 129, 0.4);
+        }
         main {
             flex: 1;
             padding: 32px;
@@ -96,7 +115,12 @@
                 <p style="color: #64748b; font-size: 0.85rem;" id="guest-person-sub">Álbum Privado Compartido</p>
             </div>
         </div>
-        <span class="badge-guest">🔒 Enlace Mágico Privado</span>
+        <div style="display: flex; align-items: center; gap: 16px;">
+            <button id="btn-zip" class="btn-download-zip" onclick="downloadAlbumZip()">
+                📥 Descargar Álbum Completo (ZIP)
+            </button>
+            <span class="badge-guest">🔒 Enlace Mágico Privado</span>
+        </div>
     </header>
 
     <main>
@@ -112,12 +136,17 @@
     <script>
         const token = window.location.pathname.split('/').pop();
 
+        function downloadAlbumZip() {
+            window.location.href = '/api/share/' + token + '/download_zip';
+        }
+
         fetch('/api/share/' + token + '/gallery')
             .then(r => r.json())
             .then(data => {
                 if (data.error) {
                     document.getElementById('guest-person-name').innerText = "Enlace Caducado o Inválido";
                     document.getElementById('empty-state').style.display = "block";
+                    document.getElementById('btn-zip').style.display = "none";
                     return;
                 }
 
