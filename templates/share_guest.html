@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Galería Privada Compartida</title>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            background: #0b0d14;
+            color: #f8fafc;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        header {
+            background: rgba(22, 25, 35, 0.8);
+            backdrop-filter: blur(16px);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 20px 32px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        .header-title {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .header-title h1 {
+            font-size: 1.4rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, #a855f7, #3b82f6);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .badge-guest {
+            background: rgba(168, 85, 247, 0.15);
+            border: 1px solid rgba(168, 85, 247, 0.3);
+            color: #c084fc;
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+        main {
+            flex: 1;
+            padding: 32px;
+            max-width: 1600px;
+            margin: 0 auto;
+            width: 100%;
+        }
+        .gallery-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 16px;
+        }
+        .card {
+            position: relative;
+            aspect-ratio: 1;
+            border-radius: 16px;
+            overflow: hidden;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .card:hover {
+            transform: translateY(-4px);
+            border-color: rgba(168, 85, 247, 0.4);
+            box-shadow: 0 12px 30px rgba(168, 85, 247, 0.2);
+        }
+        .card img, .card video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        .empty-state {
+            text-align: center;
+            padding: 80px 20px;
+            color: #94a3b8;
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <div class="header-title">
+            <span style="font-size: 1.8rem;">✨</span>
+            <div>
+                <h1 id="guest-person-name">Cargando Galería...</h1>
+                <p style="color: #64748b; font-size: 0.85rem;" id="guest-person-sub">Álbum Privado Compartido</p>
+            </div>
+        </div>
+        <span class="badge-guest">🔒 Enlace Mágico Privado</span>
+    </header>
+
+    <main>
+        <div class="gallery-grid" id="guest-grid">
+            <!-- Dynamic Guest Media Cards -->
+        </div>
+        <div id="empty-state" class="empty-state" style="display: none;">
+            <div style="font-size: 3rem; margin-bottom: 12px;">📷</div>
+            <h2>No hay fotografías disponibles en este álbum.</h2>
+        </div>
+    </main>
+
+    <script>
+        const token = window.location.pathname.split('/').pop();
+
+        fetch('/api/share/' + token + '/gallery')
+            .then(r => r.json())
+            .then(data => {
+                if (data.error) {
+                    document.getElementById('guest-person-name').innerText = "Enlace Caducado o Inválido";
+                    document.getElementById('empty-state').style.display = "block";
+                    return;
+                }
+
+                document.getElementById('guest-person-name').innerText = data.identity;
+                document.getElementById('guest-person-sub').innerText = `${data.items.length} fotografías y vídeos exclusivos para ti`;
+
+                const grid = document.getElementById('guest-grid');
+                grid.innerHTML = '';
+
+                if (data.items.length === 0) {
+                    document.getElementById('empty-state').style.display = "block";
+                    return;
+                }
+
+                data.items.forEach(item => {
+                    const card = document.createElement('div');
+                    card.className = 'card';
+                    
+                    const isVideo = item.path.toLowerCase().endsWith('.mp4') || item.path.toLowerCase().endsWith('.mov');
+                    if (isVideo) {
+                        card.innerHTML = `<video src="/api/media?path=${encodeURIComponent(item.path)}" controls preload="metadata"></video>`;
+                    } else {
+                        card.innerHTML = `<img src="/api/thumbnail?path=${encodeURIComponent(item.path)}" loading="lazy">`;
+                    }
+                    grid.appendChild(card);
+                });
+            })
+            .catch(err => {
+                document.getElementById('guest-person-name').innerText = "Error al cargar la galería";
+            });
+    </script>
+</body>
+</html>

@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: gallery-organizer-api
+    env: docker
+    plan: free
+    region: frankfurt
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: DATABASE_URL
+        sync: false
+      - key: AUTHORIZED_USER_EMAIL
+        sync: false
+      - key: WEBHOOK_URL
+        sync: false
+      - key: GOOGLE_DRIVE_API_KEY
+        sync: false
+      - key: STORAGE_MODE
+        value: gdrive
+      - key: GDRIVE_FOLDER_ID
+        value: 1Qr6KXPxcgdlzbSHVyDOg4cBb4GReSAfD
+      - key: DISABLE_AUTH
+        value: "false"

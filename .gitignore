@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+*.pkl
+*.db
+.env
+temp_*
+gdrive_raw.html
+pending_deletions.txt
+models/

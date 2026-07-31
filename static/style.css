@@ -1,0 +1,683 @@
+:root {
+    --bg-dark: #000000;
+    --bg-panel: #1c1c1e;
+    --bg-hover: #2c2c2e;
+    --accent: #0a84ff;
+    --accent-hover: #0070e0;
+    --text-main: #f5f5f7;
+    --text-muted: #86868b;
+    --border: #38383a;
+    --radius: 12px;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    font-family: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+body {
+    background-color: var(--bg-dark);
+    color: var(--text-main);
+    display: flex;
+    height: 100vh;
+    overflow: hidden;
+}
+
+/* Sidebar (Arbol) */
+.sidebar {
+    width: 280px;
+    background-color: rgba(28, 28, 30, 0.6);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-right: 1px solid rgba(255,255,255,0.05);
+    display: flex;
+    flex-direction: column;
+    padding: 20px 0;
+}
+
+.sidebar h2 {
+    padding: 0 20px 15px;
+    font-weight: 600;
+    font-size: 1.2rem;
+}
+
+.search-bar {
+    padding: 0 20px 15px;
+}
+.search-bar input {
+    width: 100%;
+    background: var(--bg-hover);
+    border: none;
+    padding: 8px 12px;
+    border-radius: 8px;
+    color: var(--text-main);
+    outline: none;
+}
+
+.tree-container {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0 10px;
+}
+.tree-folder {
+    padding: 8px 10px;
+    border-radius: 8px;
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.2s;
+}
+.tree-folder.category {
+    font-weight: 600;
+    color: var(--text-muted);
+    margin-top: 10px;
+    cursor: default;
+}
+.tree-folder.identity {
+    margin-left: 15px;
+    font-size: 0.95rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.tree-folder.identity:hover {
+    background: var(--bg-hover);
+}
+.badge-count {
+    background: var(--bg-hover);
+    font-size: 0.75rem;
+    padding: 2px 6px;
+    border-radius: 10px;
+}
+
+/* Main Gallery */
+.gallery-main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-dark);
+}
+
+.gallery-header {
+    padding: 30px 40px 10px;
+    background: rgba(0, 0, 0, 0.4);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+.gallery-header h1 {
+    font-size: 2.5rem;
+    font-weight: 600;
+}
+.gallery-header p {
+    color: var(--text-muted);
+}
+
+.grid-container {
+    flex: 1;
+    padding: 20px 40px;
+    overflow-y: auto;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 15px;
+    align-content: flex-start;
+}
+
+.thumbnail, .media-card {
+    position: relative;
+    width: 200px;
+    height: 200px;
+    background: var(--bg-panel);
+    border-radius: 12px;
+    overflow: hidden;
+    cursor: pointer;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    border: 1px solid rgba(255,255,255,0.05);
+    display: flex;
+    flex-direction: column;
+}
+.thumbnail:hover, .media-card:hover {
+    transform: translateY(-3px) scale(1.02);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+    border-color: rgba(10, 132, 255, 0.4);
+}
+.thumbnail img, .thumbnail video, .media-card img, .media-card video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.badge {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    padding: 3px 8px;
+    border-radius: 6px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    z-index: 5;
+    backdrop-filter: blur(8px);
+}
+.badge-dataset {
+    background: rgba(255, 159, 10, 0.9);
+    color: white;
+    border: 1px solid rgba(255, 214, 10, 0.4);
+}
+.badge-manual {
+    background: rgba(48, 209, 88, 0.9);
+    color: white;
+    border: 1px solid rgba(50, 215, 75, 0.4);
+}
+.badge-ia {
+    background: rgba(191, 90, 242, 0.9);
+    color: white;
+    border: 1px solid rgba(218, 143, 255, 0.4);
+}
+
+.play-icon {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(0, 0, 0, 0.65);
+    color: white;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.2rem;
+    backdrop-filter: blur(4px);
+    pointer-events: none;
+}
+
+.media-title {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    padding: 6px 10px;
+    background: linear-gradient(transparent, rgba(0, 0, 0, 0.85));
+    font-size: 0.75rem;
+    color: var(--text-main);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Modo Limpieza Rápida (Swipe / Tinder Mode) */
+.swipe-overlay-indicator {
+    position: fixed;
+    top: 50%;
+    transform: translateY(-50%);
+    padding: 20px 40px;
+    border-radius: 20px;
+    font-size: 2.5rem;
+    font-weight: bold;
+    color: white;
+    pointer-events: none;
+    z-index: 999;
+    opacity: 0;
+    transition: opacity 0.2s ease, transform 0.2s ease;
+    backdrop-filter: blur(15px);
+    box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+}
+.swipe-indicator-left {
+    left: 40px;
+    background: rgba(255, 59, 48, 0.9);
+    border: 3px solid #ff453a;
+}
+.swipe-indicator-right {
+    right: 40px;
+    background: rgba(48, 209, 88, 0.9);
+    border: 3px solid #30d158;
+}
+.swipe-active {
+    opacity: 1 !important;
+    transform: translateY(-50%) scale(1.1) !important;
+}
+
+/* Lightbox */
+.lightbox {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.95);
+    backdrop-filter: blur(20px);
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+}
+.lightbox.hidden {
+    display: none;
+}
+
+.lightbox-toolbar {
+    height: 60px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0 20px;
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+}
+.icon-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-main);
+    font-size: 1rem;
+    cursor: pointer;
+    padding: 8px 12px;
+    border-radius: 6px;
+}
+.icon-btn:hover {
+    background: rgba(255,255,255,0.1);
+}
+
+.lightbox-content {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+    height: 0; /* Fuerza a flex a respetar los límites de la pantalla */
+}
+
+.viewer-wrapper {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 10px;
+    position: relative;
+    overflow: hidden;
+    width: 100%;
+    height: 100%;
+    box-sizing: border-box;
+}
+.lb-media-container {
+    position: relative;
+    display: inline-block;
+    max-width: 100%;
+    max-height: 100%;
+    transition: transform 0.1s ease-out;
+    transform-origin: center center;
+}
+.lb-media-element {
+    max-width: 100%;
+    max-height: calc(100vh - 120px);
+    object-fit: contain;
+    display: block;
+    border-radius: 4px;
+}
+
+/* Burbujas y Cajas de IA (Estilo Pulcro) */
+.lb-bounding-box {
+    position: absolute;
+    border: 2px solid rgba(10, 132, 255, 0.7);
+    border-radius: 8px;
+    pointer-events: auto;
+    cursor: move;
+    box-shadow: 0 0 10px rgba(0,0,0,0.3);
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    z-index: 10;
+    user-select: none;
+    box-sizing: border-box;
+}
+.lb-bounding-box:hover, .lb-bounding-box.active {
+    border-color: #30d158;
+    box-shadow: 0 0 15px rgba(48, 209, 88, 0.6);
+    z-index: 50 !important;
+}
+.resize-handle {
+    position: absolute;
+    width: 8px;
+    height: 8px;
+    background: #30d158;
+    border: 1px solid #ffffff;
+    border-radius: 50%;
+    box-shadow: 0 0 4px rgba(0,0,0,0.6);
+    z-index: 20;
+    display: none;
+}
+.lb-bounding-box.active .resize-handle {
+    display: block;
+}
+.handle-tl { top: -6px; left: -6px; cursor: nwse-resize; }
+.handle-tr { top: -6px; right: -6px; cursor: nesw-resize; }
+.handle-bl { bottom: -6px; left: -6px; cursor: nesw-resize; }
+.handle-br { bottom: -6px; right: -6px; cursor: nwse-resize; }
+.lb-bb-badge {
+    position: absolute;
+    top: -14px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(10, 132, 255, 0.7);
+    color: white;
+    font-size: 8px;
+    font-weight: 600;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    box-shadow: 0 0 4px rgba(0,0,0,0.4);
+    z-index: 10;
+    pointer-events: none;
+    transition: 0.2s all;
+}
+.lb-bounding-box.active .lb-bb-badge {
+    background: rgba(10, 132, 255, 1);
+    transform: scale(1.2) !important;
+    box-shadow: 0 0 8px rgba(0,0,0,0.8);
+    z-index: 30;
+}
+
+/* Tarjetas de Personas Estilo Apple Photos */
+.person-card {
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-hover);
+    padding: 10px;
+    border-radius: 12px;
+    margin-bottom: 12px;
+    border: 1px solid rgba(255,255,255,0.08);
+    transition: all 0.2s ease;
+}
+.person-card:hover, .person-card.active {
+    background: rgba(10, 132, 255, 0.15);
+    border-color: rgba(10, 132, 255, 0.5);
+}
+.person-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    cursor: pointer;
+}
+.person-avatar {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    object-fit: cover;
+    border: 2px solid #0a84ff;
+    background: #000;
+    flex-shrink: 0;
+}
+.person-info {
+    flex: 1;
+    min-width: 0;
+}
+.person-name {
+    font-weight: 600;
+    font-size: 0.85rem;
+    color: #fff;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.person-confidence {
+    font-size: 0.72rem;
+    color: var(--text-dim);
+}
+.person-select {
+    width: 100%;
+    margin-top: 8px;
+    background: rgba(0,0,0,0.5);
+    color: var(--text-main);
+    border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 6px;
+    padding: 6px 8px;
+    font-size: 0.8rem;
+    outline: none;
+}
+
+/* Metadata Panel */
+.duplicate-banner {
+    background: linear-gradient(135deg, rgba(255, 159, 10, 0.2), rgba(255, 69, 58, 0.2));
+    border: 1px solid rgba(255, 159, 10, 0.5);
+    border-radius: 12px;
+    padding: 12px;
+    margin-bottom: 15px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    backdrop-filter: blur(10px);
+}
+.duplicate-banner-title {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #ff9f0a;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.duplicate-banner-desc {
+    font-size: 0.75rem;
+    color: var(--text-main);
+    line-height: 1.3;
+}
+.duplicate-btn-delete {
+    background: rgba(255, 59, 48, 0.85);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    cursor: pointer;
+    margin-top: 4px;
+    transition: background 0.2s ease;
+}
+.duplicate-btn-delete:hover {
+    background: #ff3b30;
+}
+
+.sharpness-badge {
+    background: rgba(48, 209, 88, 0.2);
+    color: #30d158;
+    border: 1px solid rgba(48, 209, 88, 0.4);
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+
+.metadata-panel {
+    width: 320px;
+    background: rgba(28, 28, 30, 0.7);
+    backdrop-filter: blur(25px);
+    -webkit-backdrop-filter: blur(25px);
+    border-left: 1px solid rgba(255,255,255,0.08);
+    padding: 20px;
+    overflow-y: auto;
+}
+.metadata-panel.hidden {
+    display: none;
+}
+.metadata-panel h3 {
+    font-size: 0.95rem;
+    margin-bottom: 12px;
+    margin-top: 15px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.meta-card, .audit-card {
+    background: var(--bg-hover);
+    border-radius: 12px;
+    padding: 12px 15px;
+    margin-bottom: 15px;
+}
+.meta-item {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 8px;
+    font-size: 0.85rem;
+}
+.meta-label {
+    color: var(--text-muted);
+}
+.meta-desc {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin-bottom: 10px;
+}
+
+.premium-select {
+    width: 100%;
+    background: var(--bg-dark);
+    color: white;
+    border: 1px solid rgba(255,255,255,0.2);
+    padding: 8px;
+    border-radius: 6px;
+    margin-bottom: 10px;
+}
+.premium-btn {
+    width: 100%;
+    padding: 10px;
+    border-radius: 8px;
+    border: none;
+    font-weight: 600;
+    cursor: pointer;
+    background: var(--accent);
+    color: white;
+}
+.premium-btn:hover {
+    background: var(--accent-hover);
+}
+
+/* Util */
+.loader-small {
+    display: inline-block;
+    width: 12px; height: 12px;
+    border: 2px solid var(--text-muted);
+    border-top: 2px solid var(--text-main);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin-right: 5px;
+}
+@keyframes spin { 100% { transform: rotate(360deg); } }
+
+
+/* LUXURY APPLE-LEVEL ENHANCEMENTS */
+
+/* Smoother Buttons */
+button {
+    transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275), background 0.2s, box-shadow 0.2s !important;
+}
+button:active {
+    transform: scale(0.95) !important;
+}
+
+/* Glassmorphism Panels */
+.sidebar, .lightbox, .floating-action-bar, #stats-modal {
+    background: rgba(20, 20, 22, 0.75) !important;
+    backdrop-filter: blur(25px) saturate(180%) !important;
+    -webkit-backdrop-filter: blur(25px) saturate(180%) !important;
+    border-right: 1px solid rgba(255,255,255,0.05);
+}
+
+/* Media Cards Hover */
+.media-card {
+    transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275), box-shadow 0.3s !important;
+    border-radius: 12px;
+    overflow: hidden;
+}
+.media-card:hover {
+    transform: scale(1.03) translateY(-4px) !important;
+    box-shadow: 0 12px 30px rgba(0,0,0,0.5) !important;
+    z-index: 5;
+}
+
+/* Custom Scrollbar for extreme elegance */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+::-webkit-scrollbar-thumb {
+    background: rgba(255,255,255,0.2);
+    border-radius: 10px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: rgba(255,255,255,0.4);
+}
+
+/* Better Badges */
+.status-badge {
+    box-shadow: 0 4px 15px rgba(0,0,0,0.4);
+    backdrop-filter: blur(10px);
+}
+
+
+/* CSS PARA APILAMIENTO DE FOTOS (MEDIA-STACK) */
+.media-stack {
+    position: relative;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.4);
+    transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+/* Efecto de baraja debajo de la foto */
+.media-stack::before, .media-stack::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #2c2c2e;
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 12px;
+    z-index: -1;
+    transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+.media-stack::before {
+    transform: rotate(3deg) translate(4px, 4px);
+    z-index: -2;
+    background-color: #1c1c1e;
+}
+
+.media-stack::after {
+    transform: rotate(-2deg) translate(-4px, 2px);
+    z-index: -1;
+}
+
+.media-stack:hover {
+    transform: scale(1.05) translateY(-5px);
+}
+
+.media-stack:hover::before {
+    transform: rotate(6deg) translate(8px, 8px);
+    box-shadow: 0 5px 15px rgba(0,0,0,0.5);
+}
+
+.media-stack:hover::after {
+    transform: rotate(-4deg) translate(-8px, 4px);
+    box-shadow: 0 5px 15px rgba(0,0,0,0.5);
+}
+
+/* Badge especial para indicar que es un grupo */
+.media-stack .badge {
+    box-shadow: 0 0 10px rgba(0,0,0,0.5);
+}
+
+/* Responsive UX Enhancements */
+@media (max-width: 1024px) {
+    .app-container { flex-direction: column; }
+    .sidebar { width: 100% !important; max-height: 350px; border-right: none; border-bottom: 1px solid rgba(255,255,255,0.1); }
+    .gallery-main { width: 100% !important; }
+    .gallery-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)) !important; }
+}
+
+@media (max-width: 600px) {
+    .gallery-grid { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)) !important; gap: 8px !important; }
+    .sidebar-button-stack { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .lb-content-container { max-width: 98vw !important; max-height: 90vh !important; }
+}
