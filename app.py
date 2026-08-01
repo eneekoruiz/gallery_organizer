@@ -179,9 +179,32 @@ def safe_remove_file(filepath):
     return False
 
 
+_CONFIG_CACHE = None
+STORAGE_MODE = 'local'
+
 @app.route('/api/gallery')
 def get_gallery():
     process_pending_deletions()
+    
+    global _GALLERY_CACHE, _CONFIG_CACHE, FOTOS_DIR, RESULTADOS_DIR, STORAGE_MODE
+    
+    if _CONFIG_CACHE is None:
+        try:
+            import json
+            with open('config.json', 'r', encoding='utf-8') as f:
+                _CONFIG_CACHE = json.load(f)
+        except Exception:
+            _CONFIG_CACHE = {}
+            
+    mode = _CONFIG_CACHE.get('mode', 'local')
+    if mode == 'local':
+        l_path = _CONFIG_CACHE.get('local_path', '')
+        if l_path:
+            import pathlib
+            FOTOS_DIR = pathlib.Path(l_path) / 'Fotos'
+            RESULTADOS_DIR = pathlib.Path(l_path) / 'Resultados'
+    elif mode == 'gdrive':
+        STORAGE_MODE = 'gdrive'
     
     global _GALLERY_CACHE
     if _GALLERY_CACHE is not None:
@@ -281,9 +304,10 @@ def get_gallery():
     ident_to_cat_map = {id_info["identidad"]: id_info["categoria"] for id_info in get_all_identities()}
 
     for (cat, ident, filename), item in seen_files.items():
+        clean_ident = sanitize_display_name(ident)
         if cat not in gallery: gallery[cat] = {}
-        if ident not in gallery[cat]: gallery[cat][ident] = []
-        gallery[cat][ident].append(item)
+        if clean_ident not in gallery[cat]: gallery[cat][clean_ident] = []
+        gallery[cat][clean_ident].append(item)
         
         # Inclusión Virtual Multi-Persona: La foto aparece en el álbum de cada persona presente
         faces_in_file = faces_cache.get(item['path'], [])
@@ -301,14 +325,23 @@ def get_gallery():
                     elif other_id == 'YO': other_cat = 'YO'
                     else: other_cat = 'Conocidos'
                     
+                clean_other_id = sanitize_display_name(other_id)
                 if other_cat not in gallery: gallery[other_cat] = {}
-                if other_id not in gallery[other_cat]: gallery[other_cat][other_id] = []
+                if clean_other_id not in gallery[other_cat]: gallery[other_cat][clean_other_id] = []
                 
-                if not any(x['path'] == item['path'] for x in gallery[other_cat][other_id]):
-                    gallery[other_cat][other_id].append(item)
+                if not any(x['path'] == item['path'] for x in gallery[other_cat][clean_other_id]):
+                    gallery[other_cat][clean_other_id].append(item)
         
     _GALLERY_CACHE = gallery
-    return jsonify(gallery)
+    
+    resp_dict = dict(gallery)
+    try:
+        from state_memory import state_memory
+        resp_dict["memory_stats"] = len(state_memory.get_processed_files())
+    except Exception:
+        pass
+        
+    return jsonify(resp_dict)
 
 
 
@@ -489,7 +522,7 @@ def calculate_sharpness(filepath):
         if path_obj.suffix.lower() in [".mp4", ".mov", ".avi"]:
             cap = cv2.VideoCapture(str(filepath))
             fc = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            if fc > 10: cap.set(cv2.CAP_PROP_POS_FRAMES, fc // 2)
+            if fc > 10: cap.set(cv2.CAP_PROP_POS_FRAMES, int(fc * 0.1))
             ret, frame = cap.read()
             cap.release()
             if not ret or frame is None: return 0.0
@@ -533,7 +566,7 @@ def calculate_dhash(filepath):
         if path_obj.suffix.lower() in [".mp4", ".mov", ".avi"]:
             cap = cv2.VideoCapture(str(filepath))
             fc = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            if fc > 10: cap.set(cv2.CAP_PROP_POS_FRAMES, fc // 2)
+            if fc > 10: cap.set(cv2.CAP_PROP_POS_FRAMES, int(fc * 0.1))
             ret, img = cap.read()
             cap.release()
             if not ret or img is None: return None
@@ -1216,6 +1249,12 @@ def apply_correction_to_file(filepath, new_categoria, new_identidad, face_data):
         except Exception as e:
             print("Failed to save faces cache:", e)
             
+    try:
+        from state_memory import state_memory
+        state_memory.mark_processed(filepath, {'action': 'corrected', 'new_identity': new_identidad})
+    except Exception as e:
+        print("Error en state_memory:", e)
+        
     return str(target_path)
 
 
@@ -1522,7 +1561,7 @@ def safe_remove_file(filepath):
 THUMBNAILS_DIR = APP_DIR / ".thumbnails"
 THUMBNAILS_DIR.mkdir(exist_ok=True)
 
-def generate_thumbnail(original_path, max_size=280):
+def generate_thumbnail(original_path, max_size=300):
     try:
         path_str = str(original_path)
         path_hash = hashlib.md5(path_str.encode('utf-8')).hexdigest()
@@ -1537,7 +1576,7 @@ def generate_thumbnail(original_path, max_size=280):
         if is_video:
             cap = cv2.VideoCapture(path_str)
             fc = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            if fc > 10: cap.set(cv2.CAP_PROP_POS_FRAMES, fc // 2)
+            if fc > 10: cap.set(cv2.CAP_PROP_POS_FRAMES, int(fc * 0.1))
             ret, frame = cap.read()
             if ret: img = frame
             cap.release()
@@ -1572,11 +1611,13 @@ def api_thumbnail():
     if thumb and os.path.exists(thumb):
         res = send_file(thumb, mimetype='image/webp')
         res.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
+        res.headers['Pragma'] = 'public'
         return res
     
     if os.path.exists(path_param):
         res = send_file(path_param)
         res.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
+        res.headers['Pragma'] = 'public'
         return res
     return "No encontrado", 404
 
@@ -2099,8 +2140,9 @@ def api_config():
             cfg['gdrive_folder_id'] = folder_id
             
         save_system_config(cfg)
-        global _GALLERY_CACHE
+        global _GALLERY_CACHE, _CONFIG_CACHE
         _GALLERY_CACHE = None
+        _CONFIG_CACHE = None
         return jsonify({"success": True, "config": cfg})
     else:
         return jsonify(load_system_config())
@@ -2258,6 +2300,30 @@ def api_share_download_zip(token):
         as_attachment=True,
         download_name=f"Album_{identity}.zip"
     )
+
+@app.route('/api/quick_clean')
+def api_quick_clean():
+    global _GALLERY_CACHE
+    if _GALLERY_CACHE is None:
+        get_gallery()
+        
+    items = []
+    if _GALLERY_CACHE:
+        for cat, idents in _GALLERY_CACHE.items():
+            if cat == 'Personas Sin Nombre':
+                for ident, f_list in idents.items():
+                    items.extend(f_list)
+            else:
+                for ident, f_list in idents.items():
+                    if '_Dudosos' in ident or ident == 'Desconocidos':
+                        items.extend(f_list)
+                        
+    for item in items:
+        file_key = get_file_key(item['path'])
+        item['confidence'] = _CONFIDENCE_CACHE.get(file_key, 0.0)
+        
+    items.sort(key=lambda x: x.get('confidence', 0.0))
+    return jsonify({"items": items})
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True, threaded=True)
