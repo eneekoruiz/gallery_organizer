@@ -265,9 +265,8 @@ body {
     display: grid;
     /* Perfect square grid setup */
     grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-    grid-auto-rows: 1fr;
-    gap: 12px;
-    align-content: flex-start;
+    gap: 16px;
+    align-content: start;
 }
 /* Force square aspect ratio using pseudo-element trick or aspect-ratio */
 .media-card, .thumbnail {
