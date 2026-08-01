@@ -240,6 +240,11 @@
     <div style="text-align: center; color: #8e8e93; font-size: 14px; margin-top: 5px;" id="timeline-display">2026</div>
 </div>
 <script>
+
+function cleanDisplayName(name) {
+    if (!name) return 'Desconocido';
+    return name.replace(/_rejected/g, '').replace(/_solitario/g, '').replace(/_compania/g, '').replace(/\/rejected/g, '').replace(/\/undefined/g, '').trim() || 'Desconocido';
+}
 async function filterTimeline(year) {
     document.getElementById('timeline-display').textContent = year;
     try {
@@ -311,6 +316,10 @@ async function filterTimeline(year) {
                 <button class="icon-btn" onclick="deleteCurrentFile()" title="Eliminar archivo" style="color: #ff453a;">🗑️ Eliminar</button>
                 <button class="icon-btn" onclick="enableManualSelection()" title="Marcar persona manualmente">➕ Marcar Persona</button>
                 <button class="icon-btn" id="btn-swipe-mode" onclick="toggleSwipeMode()" style="color:#ff9f0a; font-weight:600;">🔥 Modo Limpieza Rápida (Teclas/Swipe)</button>
+<button onclick="autoClassifyByFilename()" class="sidebar-btn" style="background: linear-gradient(135deg, #8b5cf6, #6366f1); color: white; margin-bottom: 8px;">
+    🏷️ Auto-clasificar por Nombre de Archivo
+</button>
+
             </div>
             <div class="toolbar-center">
                 <span id="lb-filename" class="lb-title">archivo.jpg</span>
@@ -3261,6 +3270,41 @@ async function semanticSearch(term) {
             document.body.appendChild(banner);
         }
     }
+
+function triggerRelearnCascade(identity) {
+    if (!identity || identity === 'Falso_Positivo' || identity === 'Ignorar_Irrelevante') return;
+    fetch('/api/relearn_cascade', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({identity: identity})
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.promoted > 0) {
+            showToast('🧠 Re-aprendizaje: ' + data.promoted + ' fotos promovidas de _Dudosos a ' + identity, 'success');
+            loadIdentities();
+        }
+    })
+    .catch(() => {});
+}
+
+
+function autoClassifyByFilename() {
+    showToast('🏷️ Clasificando fotos por nombre de archivo...', 'info');
+    fetch('/api/auto_classify_filename', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'})
+    .then(r => r.json())
+    .then(data => {
+        if (data.moved > 0) {
+            showToast('✅ ' + data.moved + ' archivos clasificados automáticamente', 'success');
+            loadIdentities();
+        } else {
+            showToast('No se encontraron archivos para clasificar', 'info');
+        }
+    })
+    .catch(e => showToast('Error: ' + e, 'error'));
+}
+window.autoClassifyByFilename = autoClassifyByFilename;
+
 </script>
 </body>
 </html>

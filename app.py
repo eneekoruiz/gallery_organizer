@@ -610,7 +610,7 @@ def api_duplicates():
         except: pass
         
         if current_hash is None:
-            return jsonify({"sharpness": current_sharpness, "duplicate": None})
+            return jsonify({"sharpness": round(float(current_sharpness), 1) if current_sharpness is not None else 0.0, "duplicate": None})
             
         valid_exts = {".jpg", ".jpeg", ".png", ".mp4", ".mov", ".avi"}
         duplicate_info = None
@@ -1047,6 +1047,11 @@ def api_mass_cleanup():
 
 
 def apply_correction_to_file(filepath, new_categoria, new_identidad, face_data):
+    # Auto-resolve relocated files
+    if filepath and not os.path.exists(filepath):
+        resolved = find_relocated_file(filepath)
+        if resolved and os.path.exists(resolved):
+            filepath = resolved
     if not filepath or not os.path.exists(filepath):
         return None
     orig_path = Path(filepath)
@@ -1603,24 +1608,27 @@ def generate_thumbnail(original_path, max_size=300):
 
 @app.route('/api/thumbnail')
 def api_thumbnail():
-    path_param = request.args.get('path')
-    if not path_param:
-        return "Falta path", 400
-    
-    thumb = generate_thumbnail(path_param)
-    if thumb and os.path.exists(thumb):
-        res = send_file(thumb, mimetype='image/webp')
-        res.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
-        res.headers['Pragma'] = 'public'
-        return res
-    
-    if os.path.exists(path_param):
-        res = send_file(path_param)
-        res.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
-        res.headers['Pragma'] = 'public'
-        return res
-    return "No encontrado", 404
-
+    try:
+        filepath = request.args.get('path')
+        if not filepath:
+            return jsonify({"error": "no path"}), 400
+            
+        real_path = find_relocated_file(filepath)
+        if not real_path:
+            return jsonify({"error": "not found"}), 404
+            
+        thumb = generate_thumbnail(real_path)
+        if thumb and os.path.exists(thumb):
+            resp = send_file(thumb, mimetype='image/webp')
+            resp.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
+            return resp
+        elif os.path.exists(real_path):
+            return send_file(real_path, conditional=True)
+        else:
+            return jsonify({"error": "file gone"}), 404
+    except Exception as e:
+        print("Thumbnail error:", e)
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route('/api/correct_bulk', methods=['POST'])
@@ -2324,6 +2332,130 @@ def api_quick_clean():
         
     items.sort(key=lambda x: x.get('confidence', 0.0))
     return jsonify({"items": items})
+
+
+@app.route('/api/relearn_cascade', methods=['POST'])
+def api_relearn_cascade():
+    """After confirming a face, re-scan _Dudosos to find more matches with the improved centroid."""
+    try:
+        data = request.json or {}
+        identity = data.get('identity', '')
+        if not identity or identity not in known_faces:
+            return jsonify({"promoted": 0, "message": "Identidad no encontrada en el modelo"})
+        
+        centroid = known_faces[identity].get('centroid')
+        if centroid is None:
+            return jsonify({"promoted": 0, "message": "Sin centroide disponible"})
+        
+        dudosos_dir = RESULTADOS_DIR / "Conocidos" / "_Dudosos"
+        promoted = 0
+        
+        if dudosos_dir.exists():
+            valid_exts = {'.jpg', '.jpeg', '.png'}
+            for folder in dudosos_dir.iterdir():
+                if not folder.is_dir(): continue
+                for img_file in folder.iterdir():
+                    if img_file.suffix.lower() not in valid_exts: continue
+                    try:
+                        file_bytes = np.fromfile(str(img_file), dtype=np.uint8)
+                        img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+                        if img is None: continue
+                        
+                        h, w, _ = img.shape
+                        faces_detected = detector.detect(img)
+                        if faces_detected[1] is None: continue
+                        
+                        for det in faces_detected[1]:
+                            x1 = max(0, int(det[0]))
+                            y1 = max(0, int(det[1]))
+                            bw = int(det[2])
+                            bh = int(det[3])
+                            x2 = min(w, x1 + bw)
+                            y2 = min(h, y1 + bh)
+                            
+                            if (x2 - x1) < 20 or (y2 - y1) < 20: continue
+                            
+                            crop = img[y1:y2, x1:x2]
+                            resized = cv2.resize(crop, (112, 112))
+                            feature = recognizer.feature(resized)
+                            
+                            score = get_cosine_similarity(centroid, feature[0])
+                            if score > 0.38:
+                                target_dir = RESULTADOS_DIR / "Conocidos" / identity
+                                target_dir.mkdir(parents=True, exist_ok=True)
+                                target = target_dir / img_file.name
+                                if not target.exists():
+                                    import shutil
+                                    shutil.move(str(img_file), str(target))
+                                    promoted += 1
+                                break
+                    except: pass
+        
+        global _GALLERY_CACHE
+        _GALLERY_CACHE = None
+        
+        return jsonify({"promoted": promoted, "identity": identity, "message": f"{promoted} fotos promovidas de _Dudosos a {identity}"})
+    except Exception as e:
+        return jsonify({"promoted": 0, "error": str(e)})
+
+
+
+@app.route('/api/auto_classify_filename', methods=['POST'])
+def api_auto_classify_filename():
+    """Auto-classify photos whose filenames contain known person names (e.g. 'Fotos Alba Rogado')."""
+    try:
+        moved = 0
+        known_names = list(known_faces.keys())
+        
+        scan_dirs = [
+            RESULTADOS_DIR / "Conocidos" / "_Dudosos",
+            RESULTADOS_DIR / "Conocidos" / "Desconocidos",
+            RESULTADOS_DIR / "Personas Sin Nombre",
+        ]
+        
+        import shutil
+        valid_exts = {'.jpg', '.jpeg', '.png', '.mp4', '.mov', '.avi'}
+        
+        for scan_dir in scan_dirs:
+            if not scan_dir.exists(): continue
+            for root, dirs, files in os.walk(str(scan_dir)):
+                for fname in files:
+                    fp = Path(root) / fname
+                    if fp.suffix.lower() not in valid_exts: continue
+                    
+                    fname_lower = fname.lower()
+                    parent_lower = fp.parent.name.lower()
+                    
+                    for kn in known_names:
+                        kn_parts = kn.replace("C. ", "").replace("F. ", "").replace("M. ", "").split()
+                        if len(kn_parts) < 1: continue
+                        
+                        search_term = " ".join(kn_parts).lower()
+                        if len(search_term) < 4: continue
+                        
+                        if search_term in fname_lower or search_term in parent_lower:
+                            # Determine category
+                            cat = "Conocidos"
+                            if kn.startswith("F."): cat = "Familiares"
+                            elif kn.startswith("M."): cat = "Mascotas"
+                            
+                            target_dir = RESULTADOS_DIR / cat / kn
+                            target_dir.mkdir(parents=True, exist_ok=True)
+                            target = target_dir / fp.name
+                            if not target.exists():
+                                try:
+                                    shutil.move(str(fp), str(target))
+                                    moved += 1
+                                except: pass
+                            break
+        
+        global _GALLERY_CACHE
+        _GALLERY_CACHE = None
+        
+        return jsonify({"moved": moved, "message": f"{moved} archivos clasificados por nombre de archivo"})
+    except Exception as e:
+        return jsonify({"moved": 0, "error": str(e)})
+
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True, threaded=True)
