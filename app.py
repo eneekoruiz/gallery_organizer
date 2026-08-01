@@ -1,3 +1,8 @@
+
+def sanitize_display_name(name):
+    if not name: return ""
+    clean = str(name).replace("_rejected", "").replace("_solitario", "").replace("_compania", "")
+    return clean.strip()
 import storage_adapters
 from state_memory import state_memory
 import time
@@ -1317,34 +1322,40 @@ def detect_deep():
 
 @app.route('/api/correct', methods=['POST'])
 def api_correct():
-    data = request.json
+    data = request.json or {}
     filepath = data.get('path')
     new_categoria = data.get('new_categoria')
     new_identidad = data.get('new_identidad')
     face_data = data.get('face')
     
-    if not filepath or not os.path.exists(filepath):
-        return jsonify({"error": "File not found"}), 404
+    if not filepath:
+        return jsonify({"error": "Falta parámetro path"}), 400
+        
+    # Auto-resolve path if it was previously moved or relocated
+    real_path = find_relocated_file(filepath)
+    if real_path and os.path.exists(real_path):
+        filepath = real_path
+        
+    if not os.path.exists(filepath):
+        return jsonify({"error": f"El archivo {filepath} no existe en disco"}), 404
         
     global _GALLERY_CACHE
     _GALLERY_CACHE = None
     
     try:
-        # Perform instant file move and memory update
         target_path = apply_correction_to_file(filepath, new_categoria, new_identidad, face_data)
         
-        # Non-blocking background thread for heavy disk persistence
         def bg_save():
-            try:
-                process_pending_deletions()
-            except Exception as e:
-                print("BG Save error:", e)
+            try: process_pending_deletions()
+            except: pass
                 
         import threading
         threading.Thread(target=bg_save, daemon=True).start()
         
-        return jsonify({"success": True, "new_path": str(target_path) if target_path else filepath})
+        res_path = str(target_path) if target_path else filepath
+        return jsonify({"success": True, "new_path": res_path})
     except Exception as e:
+        print("Error in api_correct:", e)
         return jsonify({"error": str(e)}), 500
 
 

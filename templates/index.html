@@ -2923,6 +2923,26 @@ function generateMagicShareLink(category, identity) {
 }
 window.generateMagicShareLink = generateMagicShareLink;
 
+
+function openQuickCleanMode() {
+    loadCategoryFilter('_Dudosos', 'Desconocido');
+    openQuickCleanOverlay();
+}
+window.openQuickCleanMode = openQuickCleanMode;
+
+
+const vElem = document.getElementById('lb-video');
+if (vElem) {
+    vElem.oncanplay = function() {
+        const btn = document.getElementById('btn-scan-video');
+        if (btn) {
+            btn.disabled = false;
+            btn.style.opacity = "1";
+            btn.innerText = "🔍 Analizar Caras en Fotograma Actual";
+        }
+    };
+}
+
 </script>
 
     <!-- Modal de Fusión / Renombrado de Grupo -->
