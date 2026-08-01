@@ -2004,24 +2004,52 @@ def api_batch_move():
 @app.route('/api/duplicates_scan')
 def api_duplicates_scan():
     try:
-        import hashlib
+        import hashlib, json
+        
+        cache_path = Path("file_hash_cache.json")
+        cache_data = {}
+        if cache_path.exists():
+            try:
+                with open(cache_path, 'r', encoding='utf-8') as f:
+                    cache_data = json.load(f)
+            except: pass
+            
         hashes = {}
         valid_exts = {'.jpg', '.jpeg', '.png', '.webp', '.mp4', '.mov'}
+        cache_updated = False
         
         for root, dirs, files in os.walk(str(RESULTADOS_DIR)):
             for f in files:
                 fp = Path(root) / f
                 if fp.suffix.lower() in valid_exts and fp.exists():
                     try:
-                        size = fp.stat().st_size
+                        stat = fp.stat()
+                        size = stat.st_size
+                        mtime = stat.st_mtime
                         if size < 5000: continue
-                        with open(fp, 'rb') as fh:
-                            chunk = fh.read(1024 * 1024)
-                        h_val = hashlib.md5(chunk + str(size).encode()).hexdigest()
-                        if h_val not in hashes: hashes[h_val] = []
-                        hashes[h_val].append({'path': str(fp), 'size': size, 'name': fp.name})
-                    except: pass
                         
+                        fpath_str = str(fp)
+                        h_val = None
+                        
+                        if fpath_str in cache_data and cache_data[fpath_str]['size'] == size and cache_data[fpath_str]['mtime'] == mtime:
+                            h_val = cache_data[fpath_str]['hash']
+                        else:
+                            with open(fp, 'rb') as fh:
+                                chunk = fh.read(1024 * 1024)
+                            h_val = hashlib.md5(chunk + str(size).encode()).hexdigest()
+                            cache_data[fpath_str] = {'size': size, 'mtime': mtime, 'hash': h_val}
+                            cache_updated = True
+                            
+                        if h_val not in hashes: hashes[h_val] = []
+                        hashes[h_val].append({'path': fpath_str, 'size': size, 'name': fp.name})
+                    except: pass
+                    
+        if cache_updated:
+            try:
+                with open(cache_path, 'w', encoding='utf-8') as f:
+                    json.dump(cache_data, f)
+            except: pass
+
         groups = []
         total_waste_bytes = 0
         for h_val, file_list in hashes.items():
@@ -2084,6 +2112,15 @@ def api_duplicates_clean():
 @app.route('/api/similar_scan')
 def api_similar_scan():
     try:
+        import json
+        cache_path = Path("file_sharpness_cache.json")
+        cache_data = {}
+        if cache_path.exists():
+            try:
+                with open(cache_path, 'r', encoding='utf-8') as f:
+                    cache_data = json.load(f)
+            except: pass
+            
         valid_exts = {'.jpg', '.jpeg', '.png', '.webp'}
         image_files = []
         for root, dirs, files in os.walk(str(RESULTADOS_DIR)):
@@ -2099,25 +2136,45 @@ def api_similar_scan():
             prefixes[prefix].append(fp)
             
         groups = []
+        cache_updated = False
+        
         for pref, f_list in prefixes.items():
             if len(f_list) > 1:
                 evaluated = []
                 for fp in f_list:
                     score = 0.0
                     try:
-                        img = cv2.imread(str(fp), cv2.IMREAD_GRAYSCALE)
-                        if img is not None:
-                            score = cv2.Laplacian(img, cv2.CV_64F).var()
+                        stat = fp.stat()
+                        size = stat.st_size
+                        mtime = stat.st_mtime
+                        fpath_str = str(fp)
+                        
+                        if fpath_str in cache_data and cache_data[fpath_str]['size'] == size and cache_data[fpath_str]['mtime'] == mtime:
+                            score = cache_data[fpath_str]['sharpness']
+                        else:
+                            img = cv2.imread(fpath_str, cv2.IMREAD_GRAYSCALE)
+                            if img is not None:
+                                score = cv2.Laplacian(img, cv2.CV_64F).var()
+                            cache_data[fpath_str] = {'size': size, 'mtime': mtime, 'sharpness': score}
+                            cache_updated = True
                     except: pass
+                    
                     evaluated.append({
                         'path': str(fp),
                         'name': fp.name,
                         'sharpness_score': round(score, 1)
                     })
+                
                 evaluated.sort(key=lambda x: x['sharpness_score'], reverse=True)
                 for idx, ev in enumerate(evaluated):
                     ev['is_sharpest'] = (idx == 0)
                 groups.append({'group_id': pref, 'files': evaluated})
+                
+        if cache_updated:
+            try:
+                with open(cache_path, 'w', encoding='utf-8') as f:
+                    json.dump(cache_data, f)
+            except: pass
                 
         groups = groups[:15]
         return jsonify({'groups': groups})
