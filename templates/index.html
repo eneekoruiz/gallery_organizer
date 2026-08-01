@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Apple Photos - AI Edition</title>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/static/style.css">
 <style>@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         .media-stack {
@@ -172,7 +172,7 @@
 <body>
     <!-- STATS MODAL -->
     <div id="stats-modal" class="lightbox hidden" style="z-index: 2000;">
-        <div style="background-color: #1e1e1e; padding: 30px; border-radius: 12px; width: 400px; max-width: 90%; color: white; border: 1px solid #333; position: relative;">
+        <div class="modal-content" style="width: 400px; max-width: 90%; margin: auto; margin-top: 10vh; position: relative;">
             <button onclick="document.getElementById('stats-modal').classList.add('hidden')" style="position: absolute; top: 10px; right: 10px; background: none; border: none; color: white; font-size: 20px; cursor: pointer;">✕</button>
             <h2 style="margin-top: 0; color: #ffcc00; text-align: center;">📊 Estadísticas globales</h2>
             
@@ -184,7 +184,7 @@
 
     <!-- STATS MODAL -->
     <div id="stats-modal" class="lightbox hidden" style="z-index: 2000;">
-        <div style="background-color: #1e1e1e; padding: 30px; border-radius: 12px; width: 400px; max-width: 90%; color: white; border: 1px solid #333; position: relative;">
+        <div class="modal-content" style="width: 400px; max-width: 90%; margin: auto; margin-top: 10vh; position: relative;">
             <button onclick="document.getElementById('stats-modal').classList.add('hidden')" style="position: absolute; top: 10px; right: 10px; background: none; border: none; color: white; font-size: 20px; cursor: pointer;">✕</button>
             <h2 style="margin-top: 0; color: #ffcc00; text-align: center;">📊 Estadísticas</h2>
             
@@ -197,19 +197,19 @@
 
     <!-- Sidebar: Jerarquía -->
     <aside class="sidebar">
-        <div style="margin-top: 20px; font-weight: bold; color: #ffcc00; text-align: center; border: 1px solid #ffcc00; border-radius: 8px; padding: 10px; cursor: pointer; background: rgba(255,204,0,0.1);" onclick="openStatsModal()">
+        <div  onclick="openStatsModal()">
             📊 Estadísticas
         </div>
-        <div style="margin-top: 10px; margin-bottom: 10px; font-weight: bold; color: #0a84ff; text-align: center; border: 1px solid #0a84ff; border-radius: 8px; padding: 10px; cursor: pointer; background: rgba(10,132,255,0.1);" onclick="openIntelligentCleanup()">
+        <div  onclick="openIntelligentCleanup()">
             🧠 Limpieza Inteligente
         </div>
-        <div style="margin-bottom: 10px; font-weight: bold; color: #30d158; text-align: center; border: 1px solid #30d158; border-radius: 8px; padding: 10px; cursor: pointer; background: rgba(48,209,88,0.1);" onclick="runMassCleanup()">
+        <div  onclick="runMassCleanup()">
             🧹 Limpieza Global
         </div>
-        <div style="margin-bottom: 10px; font-weight: bold; color: #ff9f0a; text-align: center; border: 1px solid #ff9f0a; border-radius: 8px; padding: 10px; cursor: pointer; background: rgba(255,159,10,0.1);" onclick="openExactDuplicatesModal()">
+        <div  onclick="openExactDuplicatesModal()">
             👯 Limpieza de Duplicados Exactos
         </div>
-        <div style="margin-bottom: 20px; font-weight: bold; color: #bf5af2; text-align: center; border: 1px solid #bf5af2; border-radius: 8px; padding: 10px; cursor: pointer; background: rgba(191,90,242,0.1);" onclick="openSimilarPhotosModal()">
+        <div  onclick="openSimilarPhotosModal()">
             📸 Fotos Parecidas y Ráfagas
         </div>
 
@@ -243,7 +243,7 @@
 
 function cleanDisplayName(name) {
     if (!name) return 'Desconocido';
-    return name.replace(/_rejected/g, '').replace(/_solitario/g, '').replace(/_compania/g, '').replace(/\/rejected/g, '').replace(/\/undefined/g, '').trim() || 'Desconocido';
+    return name.replace(/_rejected/g, '').replace(/Falso_Positivo/g, 'Descartado').replace(/Ignorar_Irrelevante/g, 'Descartado').replace(/_solitario/g, '').replace(/_compania/g, '').replace(/\/rejected/g, '').replace(/\/undefined/g, '').trim() || 'Desconocido';
 }
 async function filterTimeline(year) {
     document.getElementById('timeline-display').textContent = year;
@@ -316,7 +316,7 @@ async function filterTimeline(year) {
                 <button class="icon-btn" onclick="deleteCurrentFile()" title="Eliminar archivo" style="color: #ff453a;">🗑️ Eliminar</button>
                 <button class="icon-btn" onclick="enableManualSelection()" title="Marcar persona manualmente">➕ Marcar Persona</button>
                 <button class="icon-btn" id="btn-swipe-mode" onclick="toggleSwipeMode()" style="color:#ff9f0a; font-weight:600;">🔥 Modo Limpieza Rápida (Teclas/Swipe)</button>
-<button onclick="autoClassifyByFilename()" class="sidebar-btn" style="background: linear-gradient(135deg, #8b5cf6, #6366f1); color: white; margin-bottom: 8px;">
+<button onclick="autoClassifyByFilename()" class="sidebar-btn" class="icon-btn">
     🏷️ Auto-clasificar por Nombre de Archivo
 </button>
 
@@ -3304,6 +3304,33 @@ function autoClassifyByFilename() {
     .catch(e => showToast('Error: ' + e, 'error'));
 }
 window.autoClassifyByFilename = autoClassifyByFilename;
+
+
+function addEvolutionToHeader() {
+    const headerEl = document.querySelector('.gallery-header h2');
+    if (!headerEl) return;
+    const personName = headerEl.textContent.trim();
+    if (!personName || personName === 'Todas las Fotos') return;
+    
+    let existingBtn = document.getElementById('btn-evolution-header');
+    if (existingBtn) existingBtn.remove();
+    
+    const btn = document.createElement('button');
+    btn.id = 'btn-evolution-header';
+    btn.innerHTML = '📈 Ver Evolución Temporal';
+    btn.style.cssText = 'margin-left:12px;padding:6px 14px;border-radius:10px;border:1px solid rgba(168,85,247,0.4);background:rgba(168,85,247,0.15);color:#c084fc;font-size:0.8rem;font-weight:600;cursor:pointer;transition:all 0.2s;';
+    btn.onmouseenter = () => { btn.style.background = 'rgba(168,85,247,0.3)'; };
+    btn.onmouseleave = () => { btn.style.background = 'rgba(168,85,247,0.15)'; };
+    btn.onclick = () => openEvolutionModal(personName);
+    headerEl.appendChild(btn);
+}
+
+// Call addEvolutionToHeader whenever an identity is selected
+const origLoadFolder = window.loadFolderItems || function(){};
+window.loadFolderItems = function() {
+    origLoadFolder.apply(this, arguments);
+    setTimeout(addEvolutionToHeader, 200);
+};
 
 </script>
 </body>

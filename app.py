@@ -332,6 +332,43 @@ def get_gallery():
                 if not any(x['path'] == item['path'] for x in gallery[other_cat][clean_other_id]):
                     gallery[other_cat][clean_other_id].append(item)
         
+        # --- DYNAMIC GROUP FOLDERS: Conmigo / Sin Mi ---
+        known_ids_in_file = set()
+        for f_entry in faces_in_file:
+            other_id = f_entry.get('identity')
+            if other_id and not other_id.startswith('Desconocid') and not other_id.startswith('Falso_Positivo') and not other_id.startswith('Ignorar'):
+                known_ids_in_file.add(other_id)
+        
+        if len(known_ids_in_file) > 1:
+            has_yo = 'YO' in known_ids_in_file
+            has_fam = any(x.startswith('F. ') for x in known_ids_in_file)
+            has_con = any(x.startswith('C. ') for x in known_ids_in_file)
+            
+            grp_cat = None
+            grp_ident = None
+            
+            if has_yo:
+                if has_fam:
+                    grp_cat = 'Familia'
+                    grp_ident = 'Familiares conmigo'
+                elif has_con:
+                    grp_cat = 'Conocidos'
+                    grp_ident = 'Conocidos conmigo'
+            else:
+                if has_fam:
+                    grp_cat = 'Familia'
+                    grp_ident = 'Familiares sin mí'
+                elif has_con:
+                    grp_cat = 'Conocidos'
+                    grp_ident = 'Conocidos sin mí'
+                    
+            if grp_cat and grp_ident:
+                if grp_cat not in gallery: gallery[grp_cat] = {}
+                if grp_ident not in gallery[grp_cat]: gallery[grp_cat][grp_ident] = []
+                if not any(x['path'] == item['path'] for x in gallery[grp_cat][grp_ident]):
+                    gallery[grp_cat][grp_ident].append(item)
+
+        
     _GALLERY_CACHE = gallery
     
     resp_dict = dict(gallery)
@@ -1182,6 +1219,15 @@ def apply_correction_to_file(filepath, new_categoria, new_identidad, face_data):
                         shutil.copy2(str(orig_path), str(target_path))
                     except Exception:
                         pass
+                        
+            # DISSOLVE DUDOSOS: If the original file was in a dudosos folder, remove it
+            orig_str = str(orig_path)
+            if "_Dudosos" in orig_str or "Desconocidos" in orig_str or "Personas Sin Nombre" in orig_str:
+                try:
+                    if os.path.exists(orig_str):
+                        os.remove(orig_str)
+                except Exception as e:
+                    print("Could not dissolve dudosos file:", e)
             
     # Garbage Collector
     should_garbage_collect = False
@@ -2252,12 +2298,17 @@ def api_search_semantic():
 
 @app.route('/api/timeline')
 def api_timeline():
-    global _GALLERY_CACHE
-    if _GALLERY_CACHE is None:
-        get_gallery()
+    try:
+        year = request.args.get('year')
+        global _GALLERY_CACHE
+        if _GALLERY_CACHE is None:
+            get_gallery()
         
-    timeline = elite_features.build_timeline_groups(_GALLERY_CACHE)
-    return jsonify({"timeline": timeline})
+        timeline = elite_features.build_timeline_groups(_GALLERY_CACHE, target_year=year)
+        return jsonify({"timeline": timeline})
+    except Exception as e:
+        print("Timeline error:", e)
+        return jsonify({"timeline": {}, "error": str(e)})
 
 @app.route('/api/person/evolution')
 def api_person_evolution():
@@ -2271,18 +2322,22 @@ def api_person_evolution():
 
 @app.route('/api/map/locations')
 def api_map_locations():
-    global _GALLERY_CACHE
-    if _GALLERY_CACHE is None:
-        get_gallery()
+    try:
+        global _GALLERY_CACHE
+        if _GALLERY_CACHE is None:
+            get_gallery()
         
-    all_paths = []
-    for cat, idents in _GALLERY_CACHE.items():
-        for ident, items in idents.items():
-            for it in items:
-                all_paths.append(it['path'])
-                
-    locations = elite_features.get_exif_gps_locations(all_paths)
-    return jsonify({"locations": locations, "count": len(locations)})
+        all_paths = []
+        for cat, idents in _GALLERY_CACHE.items():
+            for ident, items in idents.items():
+                for it in items:
+                    all_paths.append(it['path'])
+                    
+        locations = elite_features.get_exif_gps_locations(all_paths)
+        return jsonify({"locations": locations, "count": len(locations)})
+    except Exception as e:
+        print("Map error:", e)
+        return jsonify({"locations": [], "count": 0, "error": str(e)})
 
 @app.route('/api/share/<token>/download_zip')
 def api_share_download_zip(token):
