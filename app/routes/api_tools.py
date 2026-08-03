@@ -64,4 +64,9 @@ def api_sharpness_route():
 def api_scan_video_route():
     return api_scan_video()
 
+@api_tools_bp.route('/clear_cache', methods=['POST'])
+def api_clear_cache_route():
+    return api_clear_cache()
+
+
 
