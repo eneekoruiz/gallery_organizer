@@ -14,11 +14,20 @@ CACHE_FILE = APP_DIR / "sface_cache_v7.pkl"
 STATUS_FILE = APP_DIR / "deep_classify_status.json"
 BASE_DIR = Path(r'C:\Users\User\Desktop\Galeria Eneko NO ABRIR')
 
+from app.services.events import sse_manager
+
 def update_status(text, progress=0, details=None):
-    data = {"status": text, "progress": progress}
+    data = {"status": text, "progress": progress, "type": "smart_clean_progress"}
     if details: data["details"] = details
-    with open(STATUS_FILE, 'w', encoding='utf-8') as f:
-        json.dump(data, f)
+    # Send to SSE
+    sse_manager.announce(data)
+    
+    # Also keep the JSON file for fallback or page reload
+    try:
+        with open(STATUS_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f)
+    except:
+        pass
 
 # 1. Load ONNX Models
 detector = cv2.FaceDetectorYN.create("models/face_detection_yunet.onnx", "", (320, 320))

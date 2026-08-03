@@ -1,0 +1,2851 @@
+
+
+function cleanDisplayName(name) {
+    if (!name) return 'Desconocido';
+    return name.replace(/_rejected/g, '').replace(/Falso_Positivo/g, 'Descartado').replace(/Ignorar_Irrelevante/g, 'Descartado').replace(/_solitario/g, '').replace(/_compania/g, '').replace(/\/rejected/g, '').replace(/\/undefined/g, '').trim() || 'Desconocido';
+}
+async function filterTimeline(year) {
+    document.getElementById('timeline-display').textContent = year;
+    try {
+        const res = await fetch(`/api/timeline?year=${year}`);
+        const data = await res.json();
+        
+        document.getElementById('gallery-title').textContent = `Fotos del Año ${year}`;
+        document.getElementById('gallery-subtitle').textContent = `${data.length} elementos`;
+        currentCat = `Año ${year}`;
+        
+        const grid = document.getElementById('grid-container');
+        grid.innerHTML = '';
+        currentPhotos = data;
+        
+        data.forEach((photo, idx) => {
+            const card = document.createElement('div');
+            card.className = 'media-card';
+            card.innerHTML = `<img src="/api/media/${photo.filename}" loading="lazy" onclick="openLightbox(${idx})">`;
+            grid.appendChild(card);
+        });
+    } catch(e) {
+        console.error(e);
+    }
+}
+
+
+
+
+        let isMultiSelectMode = false;
+        let selectedFiles = new Set();
+
+        function toggleMultiSelectMode() {
+            isMultiSelectMode = !isMultiSelectMode;
+            const btn = document.getElementById('btn-toggle-multiselect');
+            if (btn) {
+                btn.style.background = isMultiSelectMode ? "#30d158" : "#5e5ce6";
+                btn.textContent = isMultiSelectMode ? "✅ Selección Activa" : "☑️ Selección Múltiple";
+            }
+            if (!isMultiSelectMode) {
+                clearBatchSelection();
+            }
+            if (typeof currentCat !== 'undefined' && typeof currentIdent !== 'undefined') {
+                renderGrid(currentCat, currentIdent);
+            }
+            showToast(isMultiSelectMode ? "Modo Selección Múltiple ACTIVADO." : "Modo Selección Múltiple DESACTIVADO.");
+        }
+
+        function toggleFileSelection(filepath, cardEl, event) {
+            if (event) event.stopPropagation();
+            if (selectedFiles.has(filepath)) {
+                selectedFiles.delete(filepath);
+                cardEl.classList.remove('selected-card');
+                cardEl.style.border = 'none';
+                cardEl.style.boxShadow = 'none';
+                const chk = cardEl.querySelector('.card-checkbox');
+                if (chk) chk.checked = false;
+            } else {
+                selectedFiles.add(filepath);
+                cardEl.classList.add('selected-card');
+                cardEl.style.border = '3px solid #30d158';
+                cardEl.style.boxShadow = '0 0 15px rgba(48,209,88,0.5)';
+                const chk = cardEl.querySelector('.card-checkbox');
+                if (chk) chk.checked = true;
+            }
+            updateBatchBar();
+        }
+
+        function updateBatchBar() {
+            const bar = document.getElementById('batch-action-bar');
+            const countEl = document.getElementById('batch-count');
+            if (selectedFiles.size > 0) {
+                bar.style.display = 'flex';
+                countEl.textContent = `${selectedFiles.size} foto(s) seleccionada(s)`;
+                
+                const select = document.getElementById('batch-target-select');
+                if (select && select.options.length <= 1 && typeof identitiesList !== 'undefined' && identitiesList.length > 0) {
+                    select.innerHTML = '<option value="">Seleccionar carpeta destino...</option>';
+                    identitiesList.forEach(id => {
+                        const opt = document.createElement('option');
+                        opt.value = JSON.stringify(id);
+                        opt.textContent = `${id.categoria} > ${id.identidad}`;
+                        select.appendChild(opt);
+                    });
+                }
+            } else {
+                bar.style.display = 'none';
+            }
+        }
+
+        function clearBatchSelection() {
+            selectedFiles.clear();
+            document.querySelectorAll('.selected-card').forEach(el => {
+                el.classList.remove('selected-card');
+                el.style.border = 'none';
+                el.style.boxShadow = 'none';
+            });
+            document.querySelectorAll('.card-checkbox').forEach(el => el.checked = false);
+            updateBatchBar();
+        }
+
+        async function executeBatchMove() {
+            if (selectedFiles.size === 0) return;
+            const select = document.getElementById('batch-target-select');
+            if (!select.value) {
+                alert("Por favor, selecciona una carpeta destino.");
+                return;
+            }
+            
+            const target = JSON.parse(select.value);
+            const filesArray = Array.from(selectedFiles);
+            
+            showToast(`🚀 Moviendo ${filesArray.length} fotos y re-entrenando IA...`);
+            
+            try {
+                const res = await fetch('/api/batch_move', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        files: filesArray,
+                        target_cat: target.categoria,
+                        target_ident: target.identidad
+                    })
+                });
+                const data = await res.json();
+                
+                if (data.status === 'success') {
+                    showToast(`✅ ${data.moved} fotos movidas a ${target.identidad}. ¡Rostro re-entrenado automáticamente!`);
+                    clearBatchSelection();
+                    await loadGallery();
+                    renderGrid(currentCat, currentIdent);
+                } else {
+                    alert("Error: " + (data.error || "No se pudieron mover las fotos"));
+                }
+            } catch (err) {
+                alert("Error de conexión: " + err.message);
+            }
+        }
+
+        let fullGallery = {};
+        let identitiesList = [];
+        let currentFileObj = null;
+        let isCurrentVideo = false;
+        let currentFaces = [];
+        let currentCat = null;
+        let currentIdent = null;
+
+                function generateReassignHTML(face, faceNum, onchangeFuncName) {
+            let pathParts = currentFileObj.path.split(/[\\/]/);
+            let folderName = pathParts.slice(-2, -1)[0];
+            let categoryName = pathParts.slice(-3, -2)[0];
+            if (folderName === '_Dudosos') {
+                folderName = pathParts.slice(-3, -2)[0];
+                categoryName = pathParts.slice(-4, -3)[0];
+            }
+            
+            let aiPredictedIdObj = null;
+            if (face.identity && face.identity !== 'Desconocido' && face.identity !== folderName) {
+                aiPredictedIdObj = identitiesList.find(id => id.identidad === face.identity);
+            }
+            
+            let html = `<div class="custom-dropdown" style="position:relative; width:100%; text-align:left;">`;
+            html += `<button class="custom-dropdown-btn" onclick="let menu = document.getElementById('menu-${faceNum}-${onchangeFuncName}'); menu.style.display = menu.style.display==='block'?'none':'block'; event.stopPropagation();" style="width:100%; padding:8px; border-radius:6px; background:#333; color:white; border:1px solid #555; cursor:pointer; text-align:left; font-size:14px; display:flex; justify-content:space-between;"><span>Reasignar persona...</span><span>▾</span></button>`;
+            html += `<div class="custom-dropdown-menu" id="menu-${faceNum}-${onchangeFuncName}" style="display:none; position:absolute; top:100%; left:0; width:220px; max-height:280px; overflow-y:auto; background:#1c1c1e; border:1px solid #444; z-index:99999; border-radius:8px; padding:4px; margin-top:4px; box-shadow:0 10px 30px rgba(0,0,0,0.8);">`;
+            
+            const btnStyle = "display:block; width:100%; text-align:left; padding:8px 10px; background:transparent; border:none; color:white; cursor:pointer; border-radius:4px; font-size:13px; margin-bottom:2px; transition:background 0.2s;";
+            const hoverScript = "onmouseover=\"this.style.background='#3a3a3c'\" onmouseout=\"this.style.background='transparent'\"";
+            
+            const makeBtn = (valObj, text, color="white", fontWeight="normal") => {
+                let valStr = valObj === 'NEW' ? 'NEW' : JSON.stringify(valObj).replace(/"/g, '&quot;');
+                let call = `${onchangeFuncName}('${valStr}', ${faceNum})`;
+                return `<button style="${btnStyle} color:${color}; font-weight:${fontWeight};" ${hoverScript} onclick="document.getElementById('menu-${faceNum}-${onchangeFuncName}').style.display='none'; ${call}">${text}</button>`;
+            };
+            
+            if (aiPredictedIdObj) {
+                html += makeBtn(aiPredictedIdObj, `🤖 Confirmar IA: ${face.identity}`, '#0a84ff', 'bold');
+            }
+            
+            if (folderName && categoryName && folderName !== 'Resultados' && categoryName !== 'Galeria Eneko NO ABRIR') {
+                if (!aiPredictedIdObj) {
+                    html += makeBtn({categoria: categoryName, identidad: folderName}, `✨ Sí, es (Dueño): ${folderName}`, '#30d158', 'bold');
+                }
+                html += makeBtn({categoria: '_Dudosos', identidad: 'Desconocido'}, `🤔 Esto NO es ${folderName} (Dudoso)`, '#ff9f0a', 'bold');
+            }
+            
+            html += makeBtn({categoria: 'Ignorar', identidad: 'Ignorar_Irrelevante'}, `👤 Ignorar cara (Irrelevante)`, '#ccc');
+            html += makeBtn({categoria: 'Ignorar', identidad: 'Falso_Positivo'}, `🚫 Esto NO es una cara`, '#ff453a');
+            html += makeBtn('NEW', `➕ Crear nueva persona...`, 'white', 'bold');
+            
+            html += `<hr style="border:0; border-top:1px solid #333; margin:6px 0;">`;
+            
+            let categories = {};
+            identitiesList.forEach(id => {
+                if(!categories[id.categoria]) categories[id.categoria] = [];
+                categories[id.categoria].push(id);
+            });
+            
+            Object.keys(categories).sort().forEach(cat => {
+                html += `<details style="margin-bottom:4px;">`;
+                html += `<summary style="cursor:pointer; padding:6px 10px; font-weight:bold; color:#aaa; font-size:12px; background:#2c2c2e; border-radius:4px; margin-bottom:2px;">${cat}</summary>`;
+                html += `<div style="padding-left:8px; border-left:2px solid #333; margin-left:10px;">`;
+                categories[cat].sort((a,b) => a.identidad.localeCompare(b.identidad)).forEach(id => {
+                    html += makeBtn(id, id.identidad);
+                });
+                html += `</div></details>`;
+            });
+            
+            html += `</div></div>`;
+            return html;
+        }
+
+        function showToast(message, isError=false) {
+            let container = document.getElementById('toast-container');
+            if (!container) {
+                container = document.createElement('div');
+                container.id = 'toast-container';
+                container.style.cssText = 'position:fixed; bottom:20px; right:20px; z-index:9999; display:flex; flex-direction:column; gap:10px;';
+                document.body.appendChild(container);
+            }
+            const toast = document.createElement('div');
+            toast.style.cssText = `background: ${isError ? 'rgba(255, 59, 48, 0.9)' : 'rgba(10, 132, 255, 0.9)'}; color: white; padding: 12px 20px; border-radius: 8px; backdrop-filter: blur(10px); box-shadow: 0 4px 12px rgba(0,0,0,0.3); font-family: -apple-system, sans-serif; font-size: 13px; transform: translateX(120%); transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);`;
+            toast.innerHTML = `<strong>${isError ? 'Aviso' : 'Información'}</strong><br>${message}`;
+            container.appendChild(toast);
+            
+            requestAnimationFrame(() => toast.style.transform = 'translateX(0)');
+            setTimeout(() => {
+                toast.style.transform = 'translateX(120%)';
+                setTimeout(() => toast.remove(), 300);
+            }, 4000);
+        }
+
+        document.addEventListener("DOMContentLoaded", async () => {
+            await loadIdentities();
+                    
+                    if (currentCat && currentIdent && idObj.identidad !== currentIdent) {
+                        let stillHasFace = false;
+                        for (let i = 0; i < currentFaces.length; i++) {
+                            if (i !== faceNum - 1 && currentFaces[i].identity === currentIdent) {
+                                stillHasFace = true; break;
+                            }
+                        }
+                        if (!stillHasFace && fullGallery && fullGallery[currentCat] && fullGallery[currentCat][currentIdent]) {
+                            const pathStr = currentFileObj.path.replace(/\\/g, '/');
+                            fullGallery[currentCat][currentIdent] = fullGallery[currentCat][currentIdent].filter(item => item.path.replace(/\\/g, '/') !== pathStr);
+                            
+                            const gridItem = document.getElementById('grid-container').children[currentItemIndex];
+                            if (gridItem) {
+                                gridItem.style.transition = 'all 0.3s ease';
+                                gridItem.style.transform = 'scale(0)';
+                                gridItem.style.opacity = '0';
+                                setTimeout(() => gridItem.remove(), 300);
+                            }
+                            closeLightbox();
+                            return; 
+                        }
+                    }
+            await loadGallery();
+        });
+
+        async function loadIdentities() {
+            const res = await fetch('/api/identities');
+            identitiesList = await res.json();
+        }
+
+        
+                async function openStatsModal() {
+            document.getElementById('stats-modal').classList.remove('hidden');
+            document.getElementById('stats-content').innerHTML = '<div style="text-align: center; padding: 20px;"><div class="loader-small"></div><p style="margin-top:10px; color:#aaa;">Cargando estadísticas completas de la galería...</p></div>';
+            
+            try {
+                const res = await fetch('/api/stats');
+                const data = await res.json();
+                
+                if (data.error) {
+                    document.getElementById('stats-content').innerHTML = `<p style="color:red">${data.error}</p>`;
+                    return;
+                }
+                
+                const percentage = data.total > 0 ? Math.round((data.clasificadas / data.total) * 100) : 0;
+                
+                document.getElementById('stats-content').innerHTML = `
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+                        <span>Total de fotos en la galería:</span>
+                        <strong>${data.total}</strong>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 8px; color: #30d158;">
+                        <span>✏️ Ordenadas Oficialmente por Mí:</span>
+                        <strong>${data.manual_user || 0}</strong>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 8px; color: #0a84ff;">
+                        <span>✨ Ordenadas Oficialmente por IA:</span>
+                        <strong>${data.ia_verified || 0}</strong>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 8px; color: #ff9f0a;">
+                        <span>⚠️ Dudosas / Revisión:</span>
+                        <strong>${data.dudosos || 0}</strong>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 20px; color: #ff453a;">
+                        <span>❓ Sin Ordenar / Pendientes:</span>
+                        <strong>${data.pendientes || 0}</strong>
+                    </div>
+                    
+                    <div style="width: 100%; background-color: #333; border-radius: 10px; height: 20px; overflow: hidden;">
+                        <div style="width: ${percentage}%; background-color: #30d158; height: 100%; text-align: center; font-size: 12px; line-height: 20px; color: black; font-weight: bold;">
+                            ${percentage}%
+                        </div>
+                    </div>
+                    <div style="text-align: center; font-size: 12px; color: #aaa; margin-top: 5px; margin-bottom: 20px;">Progreso Global de Clasificación</div>
+                    
+                    <h3 style="color: #0a84ff; font-size: 16px; margin-bottom: 10px; border-bottom: 1px solid #333; padding-bottom: 5px;">Desglose Completo por Álbum / Persona</h3>
+                    <div style="max-height: 250px; overflow-y: auto; padding-right: 10px; font-size: 14px;" class="custom-scrollbar">
+                        ${Object.entries(data.breakdown || {}).map(([name, count]) => `
+                            <div style="display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid #222;">
+                                <span>${name}</span>
+                                <span style="color: #aaa;">${count}</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
+            } catch (err) {
+                document.getElementById('stats-content').innerHTML = `<p style="color:red">Error al cargar estadísticas: ${err.message}</p>`;
+            }
+        }
+        
+        
+        async function forceReanalyze() {
+            if (!confirm("¿Seguro que quieres forzar un re-análisis? Esto borrará la caché y tardará unos segundos, pero la IA usará su conocimiento actualizado para puntuar las caras.")) return;
+            
+            const btn = document.getElementById('btn-reanalyze');
+            btn.style.opacity = '0.5';
+            btn.textContent = 'Recalculando...';
+            btn.style.pointerEvents = 'none';
+            
+            try {
+                await fetch('/api/clear_confidence_cache', {method: 'POST'});
+                await openIntelligentCleanup();
+            } catch(e) {
+                console.error(e);
+                showToast("Error al re-analizar", true);
+            }
+        }
+
+        
+        async function forceReanalyze() {
+            if (!confirm("¿Seguro que quieres forzar un re-análisis? Esto borrará la caché y tardará unos segundos, pero la IA usará su conocimiento actualizado para puntuar las caras.")) return;
+            
+            const btn = document.getElementById('btn-reanalyze');
+            btn.style.opacity = '0.5';
+            btn.textContent = 'Recalculando...';
+            btn.style.pointerEvents = 'none';
+            
+            try {
+                await fetch('/api/clear_confidence_cache', {method: 'POST'});
+                await openIntelligentCleanup();
+            } catch(e) {
+                console.error(e);
+                showToast("Error al re-analizar", true);
+            }
+        }
+
+        let smartCleanInterval;
+        async function openIntelligentCleanup() {
+            document.getElementById('gallery-title').textContent = '🧠 Limpieza Inteligente (Fáciles a Difíciles)';
+            document.getElementById('gallery-subtitle').textContent = 'Analizando confianza de la IA en segundo plano... (Puedes minimizar si quieres)';
+            document.getElementById('grid-container').innerHTML = '<div style="padding:50px; text-align:center;"><div class="loader-small" style="width:50px; height:50px; margin:auto;"></div><p id="smartCleanStatusText" style="margin-top:20px; color:#aaa;">Iniciando proceso en segundo plano...</p><progress id="smartCleanProgress" value="0" max="100" style="width: 50%; margin-top: 10px;"></progress></div>';
+            
+            try {
+                await fetch('/api/start_smart_clean', {method: 'POST'});
+                if(smartCleanInterval) clearInterval(smartCleanInterval);
+                smartCleanInterval = setInterval(checkSmartCleanStatus, 2000);
+            } catch(e) {
+                showToast("Error iniciando la limpieza", true);
+            }
+        }
+        
+        async function checkSmartCleanStatus() {
+            try {
+                const res = await fetch('/api/smart_clean_status');
+                const data = await res.json();
+                const textEl = document.getElementById('smartCleanStatusText');
+                const progEl = document.getElementById('smartCleanProgress');
+                
+                if(textEl) {
+                    if (data.progress === 100) {
+                        textEl.innerHTML = `<span style="color:#0f0;">¡Cálculo finalizado! Cargando imágenes...</span>`;
+                        clearInterval(smartCleanInterval);
+                        loadSmartCleanImages();
+                    } else if (data.progress === -1) {
+                        textEl.innerHTML = `<span style="color:#f00;">Error: ${data.status}</span>`;
+                        clearInterval(smartCleanInterval);
+                    } else {
+                        textEl.innerHTML = `${data.status}<br>Progreso guardado automáticamente.`;
+                        if(progEl) progEl.value = data.progress;
+                    }
+                }
+            } catch(e) {}
+        }
+        
+        async function loadSmartCleanImages() {
+            try {
+                const res = await fetch('/api/pending_sorted');
+                const data = await res.json();
+                
+                if (data.error) {
+                    showToast(data.error, true);
+                    document.getElementById('grid-container').innerHTML = '';
+                    return;
+                }
+                
+                currentCat = "Limpieza Inteligente";
+                currentIdent = "Pendientes Ordenadas";
+                currentFolderItems = data.items;
+                
+                
+                
+                document.getElementById('gallery-subtitle').textContent = `${currentFolderItems.length} caras pendientes encontradas`;
+                document.getElementById('btn-reanalyze').style.display = 'block';
+                document.getElementById('btn-reanalyze').style.opacity = '1';
+                document.getElementById('btn-reanalyze').textContent = '🔄 Forzar Re-Análisis';
+                document.getElementById('btn-reanalyze').style.pointerEvents = 'auto';
+
+                document.getElementById('btn-reanalyze').style.display = 'block';
+                document.getElementById('btn-reanalyze').style.opacity = '1';
+                document.getElementById('btn-reanalyze').textContent = '🔄 Forzar Re-Análisis (IA Actualizada)';
+                document.getElementById('btn-reanalyze').style.pointerEvents = 'auto';
+
+                
+                const grid = document.getElementById('grid-container');
+                grid.innerHTML = '';
+                
+                currentFolderItems.forEach((item, idx) => {
+                    const card = document.createElement('div');
+                    card.className = 'media-card';
+                if (isMultiSelectMode) {
+                    const chkContainer = document.createElement('div');
+                    chkContainer.style.cssText = "position:absolute; top:10px; left:10px; z-index:10;";
+                    const chk = document.createElement('input');
+                    chk.type = 'checkbox';
+                    chk.className = 'card-checkbox';
+                    chk.checked = selectedFiles.has(item.path);
+                    chk.style.cssText = "width:22px; height:22px; accent-color:#30d158; cursor:pointer;";
+                    chkContainer.appendChild(chk);
+                    card.appendChild(chkContainer);
+                    
+                    if (selectedFiles.has(item.path)) {
+                        card.classList.add('selected-card');
+                        card.style.border = '3px solid #30d158';
+                        card.style.boxShadow = '0 0 15px rgba(48,209,88,0.5)';
+                    }
+                    
+                    card.onclick = (e) => toggleFileSelection(item.path, card, e);
+                } else {
+                    card.onclick = () => {
+                        currentItemIndex = idx;
+                        openLightbox(item);
+                    };
+                }
+                    
+                    const badge = document.createElement('span');
+                    if (item.confidence > 0) {
+                        const confPct = (item.confidence * 100).toFixed(1);
+                        badge.className = 'badge badge-ia';
+                        badge.textContent = `🤖 ${confPct}%`;
+                        if (item.confidence > 0.8) {
+                            badge.style.backgroundColor = '#30d158'; // Verde
+                            badge.style.color = '#000';
+                        } else if (item.confidence > 0.5) {
+                            badge.style.backgroundColor = '#ff9f0a'; // Naranja
+                            badge.style.color = '#000';
+                        } else {
+                            badge.style.backgroundColor = '#ff453a'; // Rojo
+                        }
+                    } else {
+                        badge.className = 'badge badge-manual';
+                        badge.textContent = '❌ Desconocido';
+                        badge.style.backgroundColor = '#555';
+                    }
+                    card.appendChild(badge);
+                    
+                    const thumb = document.createElement('img');
+                    thumb.src = `/api/thumbnail?path=${encodeURIComponent(item.path)}`;
+                    thumb.loading = 'lazy';
+                    thumb.style.opacity = '0';
+                    thumb.onload = () => thumb.style.opacity = '1';
+                    thumb.style.transition = 'opacity 0.3s ease';
+                    thumb.style.width = '100%';
+                    thumb.style.height = '100%';
+                    thumb.style.objectFit = 'cover';
+                    card.appendChild(thumb);
+                    
+                    if (item.type === 'video') {
+                        const playIcon = document.createElement('div');
+                        playIcon.className = 'video-icon';
+                        playIcon.innerHTML = '▶';
+                        card.appendChild(playIcon);
+                    }
+                    
+                    const title = document.createElement('div');
+                    title.className = 'media-title';
+                    title.textContent = item.name;
+                    card.appendChild(title);
+                    
+                    grid.appendChild(card);
+                });
+                
+            } catch(e) {
+                showToast("Error cargando limpieza inteligente", true);
+                document.getElementById('grid-container').innerHTML = '';
+            }
+        }
+
+        async function loadGallery() {
+            const res = await fetch('/api/gallery');
+            fullGallery = await res.json();
+            renderTree();
+            if (currentCat && currentIdent) {
+                if (fullGallery[currentCat] && fullGallery[currentCat][currentIdent]) {
+                    renderGrid(currentCat, currentIdent);
+                } else {
+                    document.getElementById('grid-container').innerHTML = '';
+                }
+            }
+        }
+
+        function renderTree() {
+            const treeEl = document.getElementById('tree-container');
+            treeEl.innerHTML = '';
+            
+            // Reordenar categorías para que Objetos quede abajo del todo
+            const categories = Object.keys(fullGallery).sort((a, b) => {
+                if (a.toLowerCase().includes('objeto')) return 1;
+                if (b.toLowerCase().includes('objeto')) return -1;
+                return a.localeCompare(b);
+            });
+
+            for (const cat of categories) {
+                const catEl = document.createElement('div');
+                catEl.className = 'tree-folder category';
+                catEl.textContent = `📁 ${cat}`;
+                treeEl.appendChild(catEl);
+                
+                const sortedIdents = Object.keys(fullGallery[cat]).sort((a, b) => a.localeCompare(b));
+                for (const ident of sortedIdents) {
+                    const identEl = document.createElement('div');
+                    identEl.className = 'tree-folder identity';
+                    const count = fullGallery[cat][ident].length;
+                    identEl.innerHTML = `👤 ${ident} <span class="badge-count">${count}</span>`;
+                    identEl.onclick = () => renderGrid(cat, ident);
+                    treeEl.appendChild(identEl);
+                }
+            }
+        }
+
+        function filterGallery(term) {
+            term = term.toLowerCase();
+            document.querySelectorAll('.tree-folder.identity').forEach(el => {
+                const text = el.textContent.toLowerCase();
+                el.style.display = text.includes(term) ? 'flex' : 'none';
+            });
+        }
+
+        
+        let currentFolderItems = [];
+        let currentItemIndex = -1;
+        let isSwipeModeActive = true; // Habilitado por defecto para facilitar la limpieza
+
+        function toggleSwipeMode() {
+            isSwipeModeActive = !isSwipeModeActive;
+            const btn = document.getElementById('btn-swipe-mode');
+            if (btn) {
+                btn.textContent = isSwipeModeActive ? "🔥 Modo Limpieza Rápida (ON)" : "🔥 Modo Limpieza Rápida (OFF)";
+                btn.style.color = isSwipeModeActive ? "#30d158" : "#ff9f0a";
+            }
+            showToast(isSwipeModeActive ? "Modo Limpieza Rápida ACTIVADO (Flecha ⬅️ Borra, Flecha ➡️ Conserva)" : "Modo Limpieza Rápida DESACTIVADO.");
+        }
+
+        
+        function renderGrid(cat, ident) {
+            if (!cat || !ident || !fullGallery || !fullGallery[cat] || !fullGallery[cat][ident]) {
+                return;
+            }
+            currentCat = cat;
+            currentIdent = ident;
+            currentFolderItems = fullGallery[cat][ident] || [];
+            
+            document.getElementById('gallery-title').innerHTML = `
+                <div style="display:flex; align-items:center; gap:15px; margin-bottom:5px; margin-top:-10px;">
+                    <img src="/api/person_avatar?cat=${encodeURIComponent(cat)}&ident=${encodeURIComponent(ident)}" 
+                         style="width:75px; height:75px; object-fit:cover; border-radius:50%; display:none;" 
+                         onerror="this.style.display='none';" onload="this.style.display='block'; this.style.border='3px solid #30d158'; this.style.boxShadow='0 0 12px rgba(48,209,88,0.4)';">
+                    <div>
+                        <div style="font-size: 1.4rem; margin:0;">${cat} <span style="color:#666;">&gt;</span> ${ident}</div>
+                        <div id="gallery-subtitle" style="font-size: 0.9rem; font-weight:normal; color:#aaa; margin-top:2px;">${currentFolderItems.length} elementos</div>
+                    </div>
+                </div>
+            `;
+            
+            const avatar = document.getElementById('gallery-avatar');
+            if (avatar) {
+                if (cat === 'Personas Sin Nombre') {
+                    avatar.src = `/api/person_avatar?cat=${encodeURIComponent(cat)}&ident=${encodeURIComponent(ident)}`;
+                    avatar.style.display = 'block';
+                    avatar.onerror = () => { avatar.style.display = 'none'; };
+                } else {
+                    avatar.style.display = 'none';
+                }
+            }
+            
+            const renameBtn = document.getElementById('btn-rename-group');
+            const ignoreBtn = document.getElementById('btn-ignore-group');
+            const deleteBtn = document.getElementById('btn-delete-group');
+            
+            if (renameBtn && ignoreBtn && deleteBtn) {
+                if (cat === 'Personas Sin Nombre') {
+                    renameBtn.style.display = 'block';
+                    ignoreBtn.style.display = 'block';
+                    deleteBtn.style.display = 'block';
+                } else {
+                    renameBtn.style.display = 'none';
+                    ignoreBtn.style.display = 'none';
+                    deleteBtn.style.display = 'none';
+                }
+            }
+            
+            const grid = document.getElementById('grid-container');
+            grid.innerHTML = '';
+            
+            currentFolderItems.forEach((item, idx) => {
+                const card = document.createElement('div');
+                card.className = 'media-card';
+                card.style.position = 'relative';
+                
+                if (isMultiSelectMode) {
+                    const chkContainer = document.createElement('div');
+                    chkContainer.style.cssText = "position:absolute; top:8px; left:8px; z-index:100;";
+                    const chk = document.createElement('input');
+                    chk.type = 'checkbox';
+                    chk.className = 'card-checkbox';
+                    chk.checked = selectedFiles.has(item.path);
+                    chk.style.cssText = "width:22px; height:22px; accent-color:#30d158; cursor:pointer;";
+                    chkContainer.appendChild(chk);
+                    card.appendChild(chkContainer);
+                    
+                    if (selectedFiles.has(item.path)) {
+                        card.classList.add('selected-card');
+                        card.style.border = '3px solid #30d158';
+                        card.style.boxShadow = '0 0 15px rgba(48,209,88,0.5)';
+                    }
+                    
+                    card.onclick = (e) => {
+                        e.stopPropagation();
+                        toggleFileSelection(item.path, card, e);
+                    };
+                } else {
+                    card.onclick = () => {
+                        currentItemIndex = idx;
+                        openLightbox(item);
+                    };
+                }
+                
+                const badge = document.createElement('span');
+                badge.id = `source-${idx}`;
+                if (item.source.includes('Dataset') && item.source.includes('Manual')) {
+                    badge.className = 'badge badge-dataset';
+                    badge.textContent = '🔒 Dataset + ✏️ Manual';
+                } else if (item.source.includes('IA') && item.source.includes('Manual')) {
+                    badge.className = 'badge badge-manual';
+                    badge.textContent = '✨ IA + ✏️ Manual';
+                } else if (item.source.includes('Dataset')) {
+                    badge.className = 'badge badge-dataset';
+                    badge.textContent = '🔒 Dataset';
+                } else if (item.source.includes('Manual')) {
+                    badge.className = 'badge badge-manual';
+                    badge.textContent = '✏️ Manual';
+                } else {
+                    badge.className = 'badge badge-ia';
+                    badge.textContent = '✨ IA';
+                }
+                card.appendChild(badge);
+                
+                const thumb = document.createElement('img');
+                thumb.src = `/api/thumbnail?path=${encodeURIComponent(item.path)}`;
+                thumb.loading = 'lazy';
+                thumb.decoding = 'async';
+                thumb.style.opacity = '0';
+                thumb.onload = () => thumb.style.opacity = '1';
+                thumb.style.transition = 'opacity 0.2s ease';
+                thumb.style.width = '100%';
+                thumb.style.height = '100%';
+                thumb.style.objectFit = 'cover';
+                card.appendChild(thumb);
+                
+                if (item.type === 'video') {
+                    const playIcon = document.createElement('div');
+                    playIcon.className = 'video-icon';
+                    playIcon.innerHTML = '▶';
+                    card.appendChild(playIcon);
+                }
+                
+                const title = document.createElement('div');
+                title.className = 'media-title';
+                title.textContent = item.name;
+                card.appendChild(title);
+                
+                grid.appendChild(card);
+            });
+        }
+
+
+        function closeLightbox() {
+            const lb = document.getElementById('lightbox');
+            if(lb) {
+                lb.classList.add('hidden');
+                lb.style.display = ''; // Limpiar el estilo inline
+            }
+            const container = document.getElementById('lb-media-container');
+            if (container) container.innerHTML = '';
+            currentFileObj = null;
+            isCurrentVideo = false;
+            if(typeof resetZoom === 'function') resetZoom();
+        }
+
+        function resetGalleryView() {
+            currentCat = null;
+            currentIdent = null;
+            currentFolderItems = [];
+            document.getElementById('gallery-title').textContent = 'Smart Gallery';
+            document.getElementById('gallery-subtitle').textContent = 'Selecciona una categoría en la barra lateral';
+            document.getElementById('grid-container').innerHTML = '';
+            
+            const renameBtn = document.getElementById('btn-rename-group');
+            const ignoreBtn = document.getElementById('btn-ignore-group');
+            const deleteBtn = document.getElementById('btn-delete-group');
+            if (renameBtn) renameBtn.style.display = 'none';
+            if (ignoreBtn) ignoreBtn.style.display = 'none';
+            if (deleteBtn) deleteBtn.style.display = 'none';
+        }
+
+        function renameCurrentGroup() {
+            if (!currentCat || !currentIdent) {
+                alert("Selecciona primero una persona en la barra lateral para poder fusionarla.");
+                return;
+            }
+            
+            const containerEl = document.getElementById('merge-existing-select');
+            containerEl.innerHTML = '';
+            document.getElementById('merge-selected-value').value = '';
+            
+            let groupedIds = {};
+            identitiesList.forEach(id => {
+                if (id.categoria !== 'Personas Sin Nombre' && id.categoria !== 'Ignorar' && id.categoria !== '_Dudosos') {
+                    if (!groupedIds[id.categoria]) groupedIds[id.categoria] = [];
+                    groupedIds[id.categoria].push(id);
+                }
+            });
+            
+            const btnStyle = "display:block; width:100%; text-align:left; padding:8px 10px; background:transparent; border:none; color:white; cursor:pointer; border-radius:4px; font-size:13px; margin-bottom:2px; transition:background 0.2s;";
+            const hoverScript = "onmouseover=\"if(this.dataset.selected!=='true') this.style.background='#3a3a3c'\" onmouseout=\"if(this.dataset.selected!=='true') this.style.background='transparent'\"";
+            
+            Object.keys(groupedIds).sort().forEach(cat => {
+                const details = document.createElement('details');
+                details.style.marginBottom = '4px';
+                
+                const summary = document.createElement('summary');
+                summary.style.cssText = 'cursor:pointer; padding:6px 10px; font-weight:bold; color:#aaa; font-size:12px; background:#1c1c1e; margin-bottom:2px; position:sticky; top:0; z-index:10; border-bottom:1px solid #333;';
+                summary.textContent = cat;
+                details.appendChild(summary);
+                
+                const contentDiv = document.createElement('div');
+                contentDiv.style.cssText = 'padding-left:8px; border-left:2px solid #333; margin-left:10px; margin-top:5px; margin-bottom:5px;';
+                
+                groupedIds[cat].sort((a,b) => a.identidad.localeCompare(b.identidad)).forEach(id => {
+                    const btn = document.createElement('button');
+                    btn.style.cssText = btnStyle;
+                    btn.innerHTML = id.identidad;
+                    btn.setAttribute('onmouseover', "if(this.dataset.selected!=='true') this.style.background='#3a3a3c'");
+                    btn.setAttribute('onmouseout', "if(this.dataset.selected!=='true') this.style.background='transparent'");
+                    
+                    btn.onclick = () => {
+                        // Reset all buttons
+                        const allBtns = containerEl.querySelectorAll('button');
+                        allBtns.forEach(b => {
+                            b.dataset.selected = 'false';
+                            b.style.background = 'transparent';
+                            b.style.fontWeight = 'normal';
+                        });
+                        
+                        // Select this button
+                        btn.dataset.selected = 'true';
+                        btn.style.background = '#30d158';
+                        btn.style.color = 'black';
+                        btn.style.fontWeight = 'bold';
+                        
+                        // Clear text input
+                        document.getElementById('merge-new-input').value = '';
+                        
+                        // Set hidden value
+                        document.getElementById('merge-selected-value').value = JSON.stringify({cat: id.categoria, ident: id.identidad});
+                    };
+                    
+                    contentDiv.appendChild(btn);
+                });
+                
+                details.appendChild(contentDiv);
+                containerEl.appendChild(details);
+            });
+            
+            // Text input should clear selection
+            document.getElementById('merge-new-input').oninput = () => {
+                const allBtns = containerEl.querySelectorAll('button');
+                allBtns.forEach(b => {
+                    b.dataset.selected = 'false';
+                    b.style.background = 'transparent';
+                    b.style.color = 'white';
+                    b.style.fontWeight = 'normal';
+                });
+                document.getElementById('merge-selected-value').value = '';
+            };
+            
+            document.getElementById('merge-count-span').textContent = currentFolderItems.length;
+            document.getElementById('merge-group-name').textContent = currentIdent;
+            document.getElementById('merge-new-input').value = '';
+            document.getElementById('modal-merge').style.display = 'flex';
+        }
+
+        function closeMergeModal() {
+            document.getElementById('modal-merge').style.display = 'none';
+        }
+
+        
+        async function deleteCurrentGroup() {
+            if (!currentCat || !currentIdent || currentCat !== 'Personas Sin Nombre') return;
+            if (!confirm(`¿Seguro que quieres disolver el grupo '${currentIdent}'? Las fotos no se borrarán de tus álbumes.`)) return;
+            
+            showToast(`⏳ Disolviendo grupo '${currentIdent}'...`);
+            const res = await fetch('/api/delete_group', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ cat: currentCat, ident: currentIdent })
+            });
+            const data = await res.json();
+            if (data.success) {
+                showToast(`🗑️ Grupo '${currentIdent}' disuelto con éxito.`);
+                await loadIdentities();
+                await loadGallery();
+                resetGalleryView();
+            } else {
+                showToast(data.error || "No se pudo disolver el grupo.", true);
+            }
+        }
+
+        async function ignoreCurrentGroup() {
+            if (!currentCat || !currentIdent || currentCat !== 'Personas Sin Nombre') return;
+            if (!confirm(`¿Seguro que quieres ignorar a la persona '${currentIdent}'? Se ocultará de la galería y la IA no la volverá a sugerir.`)) return;
+            
+            showToast(`⏳ Ignorando a '${currentIdent}'...`);
+            const targetName = 'Falso_Positivo_' + currentIdent;
+            
+            const res = await fetch('/api/rename_group', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    cat: currentCat,
+                    ident: currentIdent,
+                    new_name: targetName,
+                    new_cat: 'Ignorar'
+                })
+            });
+            const data = await res.json();
+            if (data.success) {
+                showToast(`🚫 '${currentIdent}' ha sido ignorado correctamente.`);
+                await loadIdentities();
+                await loadGallery();
+                resetGalleryView();
+            } else {
+                showToast(data.error || "No se pudo ignorar a la persona.", true);
+            }
+        }
+
+        async function submitMergeGroup() {
+            if (!currentCat || !currentIdent) {
+                alert("Por favor, selecciona una carpeta o persona antes de intentar fusionar.");
+                closeMergeModal();
+                return;
+            }
+            const existingNameJSON = document.getElementById('merge-selected-value').value;
+            const newName = document.getElementById('merge-new-input').value.trim();
+            
+            let targetName = "";
+            let targetCat = "Conocidos";
+            
+            if (existingNameJSON) {
+                const parsed = JSON.parse(existingNameJSON);
+                targetName = parsed.ident;
+                targetCat = parsed.cat;
+            } else if (newName) {
+                targetName = newName;
+            } else {
+                alert("Por favor, selecciona una persona existente o introduce un nombre nuevo.");
+                return;
+            }
+            
+            // LOCK UI
+            const btn = document.getElementById('modal-merge').querySelector('button[style*="background: #30d158"]');
+            if(btn) { btn.disabled = true; btn.textContent = "⏳ Fusionando..."; }
+            
+            showToast(`⏳ Fusionando ${currentFolderItems.length} fotos con '${targetName}' y reentrenando IA...`);
+            
+            try {
+            const res = await fetch('/api/rename_group', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    cat: currentCat,
+                    ident: currentIdent,
+                    new_name: targetName,
+                    new_cat: targetCat
+                })
+            });
+            const data = await res.json();
+            if (data.success) {
+                showToast(`🎉 ¡Fusionado con éxito! Se unieron ${data.count} fotos a '${targetCat} / ${targetName}'.`);
+                closeMergeModal();
+                await loadIdentities();
+                await loadGallery();
+                renderGrid(null, null);
+            } else {
+                showToast(data.error || "No se pudo fusionar el grupo.", true);
+            }
+            } catch (e) {
+                showToast("Error de conexión durante la fusión.", true);
+            } finally {
+                if(btn) { btn.disabled = false; btn.innerHTML = "🚀 Aplicar Fusión / Guardar"; }
+                closeMergeModal();
+            }
+        }
+
+
+
+        document.addEventListener('keydown', async (e) => {
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
+
+            const lightbox = document.getElementById('lightbox');
+            const isLightboxOpen = lightbox && !lightbox.classList.contains('hidden');
+
+            if (isLightboxOpen) {
+                if (e.key === 'Escape') {
+                    e.preventDefault();
+                    lightbox.classList.add('hidden');
+                    if (isCurrentVideo) {
+                        const mediaEl = document.querySelector('.lb-media-element');
+                        if (mediaEl) mediaEl.pause();
+                    }
+                }
+                else if (e.key === 'ArrowLeft') {
+                    e.preventDefault();
+                    if (currentFolderItems && currentItemIndex > 0) {
+                        currentItemIndex--;
+                        openLightbox(currentFolderItems[currentItemIndex]);
+                    }
+                }
+                else if (e.key === 'ArrowRight') {
+                    e.preventDefault();
+                    if (currentFolderItems && currentItemIndex < currentFolderItems.length - 1) {
+                        currentItemIndex++;
+                        openLightbox(currentFolderItems[currentItemIndex]);
+                    }
+                }
+                return; // Stop here if lightbox is open
+            }
+
+            // Global shortcuts (if lightbox is closed)
+            if (e.key === 'Delete' || e.key === 'Backspace') {
+                e.preventDefault();
+                // Handle global delete if needed, for now do nothing
+            }
+        });
+
+
+        async function swipeActionLeft() {
+            // BORRAR Y SIGUIENTE
+            const ind = document.getElementById('swipe-left-ind');
+            if (ind) {
+                ind.classList.add('swipe-active');
+                setTimeout(() => ind.classList.remove('swipe-active'), 300);
+            }
+            
+            if (currentFileObj) {
+                const res = await fetch('/api/delete', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ path: currentFileObj.path })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    showToast("Descartado y eliminado 🗑️");
+                    await loadGallery();
+                    loadNextItem();
+                } else {
+                    showToast(data.error || "No se pudo eliminar.", true);
+                }
+            }
+        }
+
+        async function swipeActionRight() {
+            // CONSERVAR / SIGUIENTE
+            const ind = document.getElementById('swipe-right-ind');
+            if (ind) {
+                ind.classList.add('swipe-active');
+                setTimeout(() => ind.classList.remove('swipe-active'), 300);
+            }
+            showToast("Conservado ✅");
+            loadNextItem();
+        }
+
+        function loadNextItem() {
+            if (currentFolderItems.length === 0) {
+                closeLightbox();
+                return;
+            }
+            currentItemIndex++;
+            if (currentItemIndex >= currentFolderItems.length) {
+                currentItemIndex = 0;
+            }
+            const nextItem = currentFolderItems[currentItemIndex];
+            if (nextItem) {
+                openLightbox(nextItem);
+            } else {
+                closeLightbox();
+            }
+        }
+
+
+
+        // Motor de Zoom Interactivo con Rueda del Ratón y Panoramización (Pan)
+        let zoomLevel = 1.0;
+        let panX = 0;
+        let panY = 0;
+        let isPanDragging = false;
+        let panStartX = 0;
+        let panStartY = 0;
+
+        function resetZoom() {
+            zoomLevel = 1.0;
+            panX = 0;
+            panY = 0;
+            applyZoomTransform();
+        }
+
+        function applyZoomTransform() {
+            const container = document.getElementById('lb-media-container');
+            if (container) {
+                container.style.transform = `translate(${panX}px, ${panY}px) scale(${zoomLevel})`;
+                
+                const invZoom = 1.0 / zoomLevel;
+                document.querySelectorAll('.resize-handle').forEach(h => {
+                    h.style.transform = `scale(${invZoom})`;
+                });
+                document.querySelectorAll('.lb-bb-badge').forEach(b => {
+                    b.style.transform = `scale(${invZoom})`;
+                });
+                document.querySelectorAll('.lb-bounding-box').forEach(b => {
+                    b.style.borderWidth = `${2 * invZoom}px`;
+                });
+                document.querySelectorAll('.lb-box-popup').forEach(p => {
+                    p.style.transform = `translateX(-50%) scale(${invZoom})`;
+                });
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            const wrapper = document.getElementById('viewer-wrapper');
+            if (!wrapper) return;
+
+            // Rueda del Ratón para Zoom
+            let zoomTicking = false;
+            wrapper.addEventListener('wheel', (e) => {
+                e.preventDefault();
+                const delta = e.deltaY < 0 ? 0.3 : -0.3;
+                zoomLevel = Math.min(Math.max(1.0, zoomLevel + delta), 16.0);
+
+                if (zoomLevel === 1.0) {
+                    panX = 0;
+                    panY = 0;
+                }
+                
+                if (!zoomTicking) {
+                    window.requestAnimationFrame(() => {
+                        applyZoomTransform();
+                        zoomTicking = false;
+                    });
+                    zoomTicking = true;
+                }
+            }, { passive: false });
+
+            // Panoramización con Arrastre cuando hay Zoom
+            wrapper.addEventListener('mousedown', (e) => {
+                if (window.isDrawingMode) return;
+                if (zoomLevel > 1.0 && !e.target.closest('.lb-bounding-box') && !e.target.closest('.resize-handle')) {
+                    isPanDragging = true;
+                    panStartX = e.clientX - panX;
+                    panStartY = e.clientY - panY;
+                    wrapper.style.cursor = 'grabbing';
+                }
+            });
+
+            let panTicking = false;
+            document.addEventListener('mousemove', (e) => {
+                if (isPanDragging && zoomLevel > 1.0) {
+                    panX = e.clientX - panStartX;
+                    panY = e.clientY - panStartY;
+                    if (!panTicking) {
+                        window.requestAnimationFrame(() => {
+                            applyZoomTransform();
+                            panTicking = false;
+                        });
+                        panTicking = true;
+                    }
+                }
+            });
+
+            document.addEventListener('mouseup', () => {
+                if (isPanDragging) {
+                    isPanDragging = false;
+                    const wrapper = document.getElementById('viewer-wrapper');
+                    if (wrapper) wrapper.style.cursor = 'default';
+                }
+            });
+        });
+
+
+async function deleteCurrentFile() {
+    releaseMediaElement();
+    if (!currentFileObj) return;
+    if (confirm("¿Estás seguro de que deseas eliminar este archivo de forma permanente?")) {
+        try {
+            const res = await fetch('/api/delete', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ path: currentFileObj.path })
+            });
+            const data = await res.json();
+            if (res.ok && !data.error) {
+                closeLightbox();
+                loadGallery();
+            } else {
+                alert("Error al eliminar: " + (data.error || "Desconocido"));
+            }
+        } catch (e) {
+            alert("Error al intentar eliminar.");
+        }
+    }
+}
+
+async function openLightbox(item) {
+            resetZoom();
+            currentFileObj = item;
+            isCurrentVideo = item.type === 'video';
+            
+            const container = document.getElementById('lb-media-container');
+            container.innerHTML = '';
+            document.getElementById('duplicate-banner-container').innerHTML = '';
+            document.getElementById('person-cards-container').innerHTML = '<div style="padding:20px; text-align:center;"><div class="loader-small"></div></div>';
+            
+            let mediaEl;
+            if (isCurrentVideo) {
+                mediaEl = document.createElement('video');
+                mediaEl.src = `/media?path=${encodeURIComponent(item.path)}`;
+                mediaEl.controls = true;
+                mediaEl.autoplay = false;
+                mediaEl.preload = 'auto';
+                mediaEl.playsInline = true;
+                mediaEl.className = 'lb-media-element';
+                mediaEl.style.width = '100%';
+                mediaEl.style.height = '100%';
+                mediaEl.style.maxHeight = 'calc(100vh - 120px)';
+                mediaEl.style.objectFit = 'contain';
+                
+                mediaEl.onloadedmetadata = () => {
+                    if (window.liveScanTimestamp) {
+                        try { mediaEl.currentTime = window.liveScanTimestamp; } catch(e){}
+                        window.liveScanTimestamp = null;
+                    }
+                };
+                document.getElementById('analyze-toolbar').style.display = 'block';
+            } else {
+                mediaEl = document.createElement('img');
+                mediaEl.src = `/media?path=${encodeURIComponent(item.path)}`;
+                mediaEl.className = 'lb-media-element';
+                document.getElementById('analyze-toolbar').style.display = 'none';
+            }
+            
+            container.appendChild(mediaEl);
+            document.getElementById('lightbox').classList.remove('hidden');
+            
+            // Metadatos
+            fetch(`/api/metadata?path=${encodeURIComponent(item.path)}`)
+                .then(r => r.json())
+                .then(data => {
+                    document.getElementById('meta-date').textContent = data.date || '-';
+                    document.getElementById('meta-size').textContent = data.size || '-';
+                    document.getElementById('meta-res').textContent = data.resolution || '-';
+                    document.getElementById('meta-cam').textContent = data.camera || '-';
+                });
+
+            // IA de Nitidez y Duplicados
+            fetch('/api/duplicates', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ path: item.path })
+            })
+            .then(r => r.json())
+            .then(data => {
+                const sharpEl = document.getElementById('meta-sharpness');
+                if (sharpEl) sharpEl.textContent = data.sharpness ? `${data.sharpness} Score` : '-';
+                
+                const dupContainer = document.getElementById('duplicate-banner-container');
+                if (data.duplicate && dupContainer) {
+                    const dup = data.duplicate;
+                    dupContainer.innerHTML = `
+                        <div class="duplicate-banner">
+                            <div class="duplicate-banner-title">⚠️ Foto Parecida (${dup.similarity}%)</div>
+                            <div class="duplicate-banner-desc">
+                                ${dup.is_current_better ? 
+                                    `⭐ <strong>Top Shot:</strong> Esta foto tiene mayor nitidez (${data.sharpness} vs ${dup.other_sharpness}). Recomendado conservar.` : 
+                                    `⚠️ Existe una versión más nítida de esta toma (<em>${dup.other_name}</em> - Nitidez: ${dup.other_sharpness} vs ${data.sharpness}).`}
+                            </div>
+                            ${!dup.is_current_better ? `<button class="duplicate-btn-delete" onclick="deleteCurrentFile()">🗑️ Borrar esta versión inferior</button>` : ''}
+                        </div>
+                    `;
+                }
+            });
+                
+            if (!isCurrentVideo) {
+                if (mediaEl.complete) runAnalysis();
+                else mediaEl.onload = () => runAnalysis();
+            } else {
+                document.getElementById('person-cards-container').innerHTML = `
+                    <button class="icon-btn" id="btn-scan-video" onclick="scanFullVideo()" style="width:100%; margin-bottom:15px; background:var(--glass-bg); color:var(--text); border:1px solid rgba(255,255,255,0.1); padding:10px; border-radius:12px; font-weight:bold; cursor:pointer;">🎬 Escanear Vídeo Completo (1 fps)</button>
+                    <div id="video-scan-results" style="margin-bottom:15px;"></div>
+                    <hr style="border:0; border-top:1px solid rgba(255,255,255,0.1); margin:15px 0;">
+                    <p style="font-size:0.8rem; color:var(--text-dim); text-align:center;">O haz clic en "Analizar Caras en Fotograma Actual" abajo para corregir manualmente el fotograma visible.</p>
+                `;
+            }
+        }
+
+
+async function runAnalysis() {
+            if (!currentFileObj) return;
+            const currentRunPath = currentFileObj.path;
+            const container = document.getElementById('lb-media-container');
+            const mediaEl = container.querySelector('.lb-media-element');
+            if (!mediaEl) return;
+            
+            if (isCurrentVideo && !mediaEl.paused) {
+                mediaEl.pause();
+            }
+            
+            document.querySelectorAll('.lb-bounding-box').forEach(b => b.remove());
+            const cardsContainer = document.getElementById('person-cards-container');
+            cardsContainer.innerHTML = '<div style="padding:20px; text-align:center;"><div class="loader-small"></div></div>';
+            
+            let timestamp = isCurrentVideo ? mediaEl.currentTime : null;
+            let data;
+            try {
+                const res = await fetch('/api/analyze', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ path: currentFileObj.path, timestamp: timestamp, force: true })
+                });
+                data = await res.json();
+            } catch (err) {
+                console.error(err);
+                cardsContainer.innerHTML = '<div style="padding:20px; text-align:center; color:#ff453a;">Error de conexión. Reintentando...</div>';
+                return;
+            }
+            
+            if (!currentFileObj || currentFileObj.path !== currentRunPath) return; cardsContainer.innerHTML = '';
+            
+            currentFaces = data.faces || [];
+            if (data.faces && data.faces.length > 0) {
+                let intrinsicWidth = isCurrentVideo ? mediaEl.videoWidth : mediaEl.naturalWidth;
+                let intrinsicHeight = isCurrentVideo ? mediaEl.videoHeight : mediaEl.naturalHeight;
+                if (!intrinsicWidth && data.faces.length > 0) {
+                    intrinsicWidth = data.faces[0].img_width;
+                    intrinsicHeight = data.faces[0].img_height;
+                }
+                
+                // Sincronizar tamaño del contenedor con el tamaño real de la imagen renderizada
+                if (mediaEl.clientWidth && mediaEl.clientHeight) {
+                    container.style.width = mediaEl.clientWidth + 'px';
+                    container.style.height = mediaEl.clientHeight + 'px';
+                }
+                
+                let hasUnconfirmed = false;
+                data.faces.forEach((face, idx) => {
+                    if (face.identity === 'Desconocido' || face.identity.startsWith('IA (Pendiente)')) hasUnconfirmed = true;
+                    createFaceElements(face, idx + 1, intrinsicWidth, intrinsicHeight, mediaEl, container, cardsContainer);
+                });
+                
+                const btnIgnore = document.getElementById('btn-ignore-unconfirmed');
+                if (btnIgnore) {
+                    if (hasUnconfirmed) {
+                        btnIgnore.style.display = 'block';
+                        btnIgnore.textContent = "🗑️ Ignorar caras no confirmadas";
+                        btnIgnore.style.opacity = '1';
+                        btnIgnore.style.pointerEvents = 'auto';
+                    } else {
+                        btnIgnore.style.display = 'none';
+                    }
+                }
+            } else {
+                cardsContainer.innerHTML = '<p style="font-size:0.8rem; color:var(--text-dim);">No se han detectado personas en este fotograma.</p>';
+            }
+        }
+        
+                function highlightFace(faceNum) {
+            document.querySelectorAll('.lb-bounding-box').forEach(b => {
+                b.style.borderColor = 'rgba(255, 255, 255, 0.4)';
+                b.style.zIndex = '1';
+                b.classList.remove('active');
+            });
+            document.querySelectorAll('.person-card').forEach(c => c.style.background = 'rgba(28, 28, 30, 0.5)');
+            
+            const box = document.getElementById(`bbox-${faceNum}`);
+            if (box) {
+                box.style.borderColor = '#0a84ff';
+                box.style.zIndex = '10';
+                box.classList.add('active');
+                
+                // Auto-Focus Zoom
+                const mediaEl = document.getElementById('lb-media');
+                if (mediaEl && box.dataset.faceX) {
+                    const intrinsicWidth = mediaEl.naturalWidth || mediaEl.videoWidth;
+                    const intrinsicHeight = mediaEl.naturalHeight || mediaEl.videoHeight;
+                    
+                    if (intrinsicWidth && intrinsicHeight) {
+                        const fx = parseFloat(box.dataset.faceX);
+                        const fy = parseFloat(box.dataset.faceY);
+                        const fw = parseFloat(box.dataset.faceW);
+                        const fh = parseFloat(box.dataset.faceH);
+                        
+                        const centerX = fx + (fw / 2);
+                        const centerY = fy + (fh / 2);
+                        
+                        const renderScale = mediaEl.clientWidth / intrinsicWidth;
+                        
+                        const offX = centerX - (intrinsicWidth / 2);
+                        const offY = centerY - (intrinsicHeight / 2);
+                        
+                        zoomLevel = 4.0; // Fixed zoom 400%
+                        panX = -(offX * renderScale) * zoomLevel;
+                        panY = -(offY * renderScale) * zoomLevel;
+                        
+                        applyZoomTransform();
+                    }
+                }
+            }
+            
+            const card = document.getElementById(`person-card-${faceNum}`);
+            if (card) {
+                card.style.background = 'rgba(10, 132, 255, 0.2)';
+                card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }
+        }
+        
+        document.addEventListener('keydown', (e) => {
+            // No actuar si estamos escribiendo en un input
+            if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
+            
+            if (e.key === 'Delete' || e.key === 'Backspace') {
+                const activeBox = document.querySelector('.lb-bounding-box.active');
+                if (activeBox && currentFileObj) {
+                    const faceNum = activeBox.id.replace('bbox-', '');
+                    const falsePosId = JSON.stringify({categoria: 'Ignorar', identidad: 'Falso_Positivo'});
+                    inlineCorrect(
+                        encodeURIComponent(currentFileObj.path), 
+                        falsePosId, 
+                        faceNum, 
+                        activeBox.dataset.faceX, 
+                        activeBox.dataset.faceY, 
+                        activeBox.dataset.faceW, 
+                        activeBox.dataset.faceH
+                    );
+                }
+            }
+        });
+
+        function createFaceElements(face, faceNum, intrinsicWidth, intrinsicHeight, mediaEl, container, cardsContainer) {
+            // 1. Bounding Box sobre la Foto (Movible y Redimensionable)
+            const box = document.createElement('div');
+            box.className = 'lb-bounding-box';
+            box.id = `bbox-${faceNum}`;
+            
+            // Atributos de datos para el atajo de teclado
+            box.dataset.faceX = face.x;
+            box.dataset.faceY = face.y;
+            box.dataset.faceW = face.width;
+            box.dataset.faceH = face.height;
+            
+            const percX = (face.x / intrinsicWidth) * 100;
+            const percY = (face.y / intrinsicHeight) * 100;
+            const percW = (face.width / intrinsicWidth) * 100;
+            const percH = (face.height / intrinsicHeight) * 100;
+            
+            box.style.left = `${percX}%`;
+            box.style.top = `${percY}%`;
+            box.style.width = `${percW}%`;
+            box.style.height = `${percH}%`;
+            
+            const badge = document.createElement('div');
+            badge.className = 'lb-bb-badge';
+            badge.textContent = `#${faceNum}`;
+            box.appendChild(badge);
+            
+            ['tl', 'tr', 'bl', 'br'].forEach(corner => {
+                const handle = document.createElement('div');
+                handle.className = `resize-handle handle-${corner}`;
+                handle.dataset.corner = corner;
+                box.appendChild(handle);
+            });
+            
+            box.onclick = (e) => {
+                if (box.dataset.wasDragged === 'true') {
+                    box.dataset.wasDragged = 'false';
+                    return;
+                }
+                if (e.target.tagName === 'SELECT' || e.target.tagName === 'OPTION' || e.target.tagName === 'BUTTON') return;
+                e.stopPropagation();
+                // Toggle selection visual
+                document.querySelectorAll('.lb-box.selected').forEach(b => b.classList.remove('selected'));
+                box.classList.add('selected');
+                // Store selected box ID globally
+                window.selectedBoxId = box.id;
+                highlightFace(faceNum);
+            };
+                
+                // Zoom dinámico al hacer clic en la caja si no está zoomeado
+                if (zoomLevel === 1.0) {
+                    zoomLevel = 2.5;
+                    const percCenterX = (face.x + face.width / 2) / intrinsicWidth;
+                    const percCenterY = (face.y + face.height / 2) / intrinsicHeight;
+                    const container = document.getElementById('lb-media-container');
+                    const cw = container.offsetWidth;
+                    const ch = container.offsetHeight;
+                    panX = (cw / 2 - cw * percCenterX) * zoomLevel;
+                    panY = (ch / 2 - ch * percCenterY) * zoomLevel;
+                    applyZoomTransform();
+                }
+                
+                // Mostrar desplegable rápido directamente sobre la foto
+                let existingMenu = box.querySelector('.lb-box-popup');
+                if (existingMenu) {
+                    existingMenu.remove();
+                    return;
+                }
+                
+                document.querySelectorAll('.lb-box-popup').forEach(m => m.remove());
+                
+                const popup = document.createElement('div');
+                popup.className = 'lb-box-popup';
+                popup.style.cssText = 'position:absolute; bottom:-65px; left:50%; transform:translateX(-50%); z-index:100; background:rgba(20,20,22,0.95); backdrop-filter:blur(20px); padding:8px; border-radius:12px; border:1px solid rgba(255,255,255,0.25); box-shadow:0 8px 30px rgba(0,0,0,0.6); display:flex; flex-direction:column; gap:6px; min-width:210px;';
+                
+                let pathParts1 = currentFileObj.path.split(/[\\/]/);
+                let folderName = pathParts1.slice(-2, -1)[0];
+                let categoryName = pathParts1.slice(-3, -2)[0];
+                if (folderName === '_Dudosos') {
+                    folderName = pathParts1.slice(-3, -2)[0];
+                    categoryName = pathParts1.slice(-4, -3)[0];
+                }
+                
+                let rejectedId = JSON.stringify({categoria: '_Dudosos', identidad: 'Desconocido'});
+                
+                let innerHtml = `
+                    <div style="color:white; font-size:0.75rem; text-align:center; opacity:0.7; padding-bottom:4px; border-bottom:1px solid rgba(255,255,255,0.1); margin-bottom:4px;">Face #${faceNum}</div>
+                `;
+                innerHtml += generateReassignHTML(face, faceNum, 'quickReassignFace');
+            popup.innerHTML = innerHtml;
+            box.appendChild(popup);
+        };
+            
+            // Hacer la caja arrastrable y redimensionable
+            makeBoxInteractive(box, face, faceNum, intrinsicWidth, intrinsicHeight, mediaEl);
+            
+            container.appendChild(box);
+            
+            // 2. Avatar Recortado en Canvas
+            let avatarUrl = updateAvatarCrop(mediaEl, face);
+            
+            // 3. Tarjeta en Sidebar
+            const card = document.createElement('div');
+            card.className = 'person-card';
+            card.id = `pcard-${faceNum}`;
+            
+            let folderName, categoryName;
+            if (currentCat && currentCat !== 'Resultados' && currentCat !== 'Personas Sin Nombre' && currentCat !== 'Limpieza Inteligente') {
+                categoryName = currentCat;
+                folderName = currentIdent;
+            } else {
+                let pathParts2 = currentFileObj.path.split(/[\\/]/);
+                folderName = pathParts2.slice(-2, -1)[0];
+                categoryName = pathParts2.slice(-3, -2)[0];
+                if (folderName === '_Dudosos') {
+                    folderName = pathParts2.slice(-3, -2)[0];
+                    categoryName = pathParts2.slice(-4, -3)[0];
+                }
+            }
+            
+            card.innerHTML = `
+                <div class="person-header" onclick="highlightFace(${faceNum})">
+                    <img src="${avatarUrl}" class="person-avatar" id="pavatar-${faceNum}" alt="Face">
+                    <div class="person-info">
+                        <div class="person-name" id="pname-${faceNum}" style="display:flex; justify-content:space-between; align-items:center;">
+                            <span>#${faceNum} ${face.identity}</span>
+                            <button onclick="openEvolutionModal('${face.identity}'); event.stopPropagation();" style="background:#0a84ff; border:none; color:white; border-radius:4px; padding:2px 6px; font-size:10px; cursor:pointer;">📈 Evolución</button>
+                        </div>
+                        <div class="person-confidence" id="pconf-${faceNum}">
+                            ${face.identity === folderName 
+                                ? (face.confidence ? '✨ ' + face.confidence + ' (Propietario del Álbum)' : '✨ (Propietario del Álbum)') 
+                                : (face.confidence ? (String(face.confidence).includes('Manual') ? '✏️ Editado a Mano' : face.confidence) : '🤖 IA (Pendiente)')}
+                        </div>
+                    </div>
+                </div>
+                ${generateReassignHTML(face, faceNum, 'quickReassignFace')}
+            `;
+            
+            cardsContainer.appendChild(card);
+        }
+
+        function updateAvatarCrop(mediaEl, face) {
+            try {
+                const canvas = document.createElement('canvas');
+                canvas.width = 100;
+                canvas.height = 100;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(mediaEl, Math.max(0, face.x), Math.max(0, face.y), face.width, face.height, 0, 0, 100, 100);
+                return canvas.toDataURL();
+            } catch(e) {
+                return '';
+            }
+        }
+
+        function makeBoxInteractive(box, face, faceNum, intrinsicWidth, intrinsicHeight, mediaEl) {
+            let isDragging = false;
+            let isResizing = false;
+            let currentHandle = null;
+            let startX, startY, startLeft, startTop, startW, startH;
+            const container = document.getElementById('lb-media-container');
+
+            // Arrastrar Posición
+            box.addEventListener('mousedown', (e) => {
+                if (e.target.classList.contains('resize-handle')) return;
+                if (e.target.tagName === 'SELECT' || e.target.tagName === 'OPTION' || e.target.tagName === 'BUTTON') return;
+                
+                e.stopPropagation();
+                isDragging = true;
+                startX = e.clientX;
+                startY = e.clientY;
+                const popup = box.querySelector('.lb-box-popup');
+                if (popup) popup.style.display = 'none';
+                const rect = box.getBoundingClientRect();
+                if (popup) popup.style.display = 'flex';
+                const containerRect = container.getBoundingClientRect();
+                startLeft = rect.left - containerRect.left;
+                startTop = rect.top - containerRect.top;
+
+                let isDragTicking = false;
+                const onMouseMove = (ev) => {
+                    if (!isDragging) return;
+                    const dx = ev.clientX - startX;
+                    const dy = ev.clientY - startY;
+                    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) box.dataset.wasDragged = 'true';
+                    const newLeft = startLeft + dx;
+                    const newTop = startTop + dy;
+                    if (!isDragTicking) {
+                        window.requestAnimationFrame(() => {
+                            box.style.left = `${(newLeft / containerRect.width) * 100}%`;
+                            box.style.top = `${(newTop / containerRect.height) * 100}%`;
+                            isDragTicking = false;
+                        });
+                        isDragTicking = true;
+                    }
+                };
+
+                const onMouseUp = () => {
+                    if (isDragging) {
+                        isDragging = false;
+                        document.removeEventListener('mousemove', onMouseMove);
+                        document.removeEventListener('mouseup', onMouseUp);
+                        saveBoxDimensions(box, face, faceNum, intrinsicWidth, intrinsicHeight, mediaEl);
+                    }
+                };
+
+                document.addEventListener('mousemove', onMouseMove);
+                document.addEventListener('mouseup', onMouseUp);
+            });
+
+            // Redimensionar Tamaño desde cualquier esquina
+            const handles = box.querySelectorAll('.resize-handle');
+            handles.forEach(handle => {
+                handle.addEventListener('mousedown', (e) => {
+                    e.stopPropagation();
+                    isResizing = true;
+                    currentHandle = handle.dataset.corner;
+                    startX = e.clientX;
+                    startY = e.clientY;
+                    const popup = box.querySelector('.lb-box-popup');
+                if (popup) popup.style.display = 'none';
+                const rect = box.getBoundingClientRect();
+                if (popup) popup.style.display = 'flex';
+                    const containerRect = container.getBoundingClientRect();
+                    startLeft = rect.left - containerRect.left;
+                    startTop = rect.top - containerRect.top;
+                    startW = rect.width;
+                    startH = rect.height;
+
+                    let isResizeTicking = false;
+                    const onMouseMove = (ev) => {
+                        if (!isResizing) return;
+                        box.dataset.wasDragged = 'true';
+                        const dx = ev.clientX - startX;
+                        const dy = ev.clientY - startY;
+                        let newW = startW;
+                        let newH = startH;
+                        let newLeft = startLeft;
+                        let newTop = startTop;
+
+                        if (currentHandle.includes('r')) {
+                            newW = Math.max(20, startW + dx);
+                        } else if (currentHandle.includes('l')) {
+                            newW = Math.max(20, startW - dx);
+                            if (newW > 20) newLeft = startLeft + dx;
+                        }
+
+                        if (currentHandle.includes('b')) {
+                            newH = Math.max(20, startH + dy);
+                        } else if (currentHandle.includes('t')) {
+                            newH = Math.max(20, startH - dy);
+                            if (newH > 20) newTop = startTop + dy;
+                        }
+
+                        if (!isResizeTicking) {
+                            window.requestAnimationFrame(() => {
+                                box.style.width = `${(newW / containerRect.width) * 100}%`;
+                                box.style.height = `${(newH / containerRect.height) * 100}%`;
+                                box.style.left = `${(newLeft / containerRect.width) * 100}%`;
+                                box.style.top = `${(newTop / containerRect.height) * 100}%`;
+                                isResizeTicking = false;
+                            });
+                            isResizeTicking = true;
+                        }
+                    };
+
+                    const onMouseUp = () => {
+                        if (isResizing) {
+                            isResizing = false;
+                            document.removeEventListener('mousemove', onMouseMove);
+                            document.removeEventListener('mouseup', onMouseUp);
+                            saveBoxDimensions(box, face, faceNum, intrinsicWidth, intrinsicHeight, mediaEl);
+                        }
+                    };
+
+                    document.addEventListener('mousemove', onMouseMove);
+                    document.addEventListener('mouseup', onMouseUp);
+                });
+            });
+        }
+
+        function saveBoxDimensions(box, face, faceNum, intrinsicWidth, intrinsicHeight, mediaEl) {
+            const container = document.getElementById('lb-media-container');
+            
+            // Ocultar temporalmente el popup para que getBoundingClientRect no lo incluya y no estropee las coordenadas
+            const popup = box.querySelector('.lb-box-popup');
+            if (popup) popup.style.display = 'none';
+            
+            const rect = box.getBoundingClientRect();
+            const mediaRect = mediaEl.getBoundingClientRect();
+            
+            if (popup) popup.style.display = 'flex';
+
+            const scaleX = intrinsicWidth / mediaRect.width;
+            const scaleY = intrinsicHeight / mediaRect.height;
+
+            face.x = Math.round((rect.left - mediaRect.left) * scaleX);
+            face.y = Math.round((rect.top - mediaRect.top) * scaleY);
+            face.width = Math.round(rect.width * scaleX);
+            face.height = Math.round(rect.height * scaleY);
+
+            // Actualizar avatar en sidebar
+            const avatarImg = document.getElementById(`pavatar-${faceNum}`);
+            if (avatarImg) {
+                avatarImg.src = updateAvatarCrop(mediaEl, face);
+            }
+
+            // Guardar permanentemente en backend y activar Reaprendizaje Activo
+            if (face.identity && face.identity !== "Desconocido") {
+                let pathParts3 = currentFileObj.path.split(/[\\/]/);
+                let folderName = pathParts3.slice(-2, -1)[0];
+                let categoryName = pathParts3.slice(-3, -2)[0];
+                if (folderName === '_Dudosos') {
+                    folderName = pathParts3.slice(-3, -2)[0];
+                    categoryName = pathParts3.slice(-4, -3)[0];
+                }
+                
+                fetch('/api/correct', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        path: currentFileObj.path,
+                        new_categoria: categoryName,
+                        new_identidad: face.identity,
+                        face: {x: face.x, y: face.y, width: face.width, height: face.height},
+                        apply_to_duplicates: true
+                    })
+                }).then(r => r.json()).then(data => {
+                    if (data.success) {
+                        showToast('Recuadro guardado. Actualizando galería...');
+                        if (data.new_path) {
+                            if (currentFileObj) currentFileObj.path = data.new_path.replace(/\\/g, '/');
+                        }
+                        loadGallery();
+                        if (isCurrentVideo) {
+                            setTimeout(() => closeLightbox(), 500);
+                        }
+                    } else if (data.error) {
+                        alert("Error: " + data.error);
+                    }
+                });
+            }
+        }
+
+
+        async function ignoreUnconfirmedFaces() {
+            if (!currentFaces || currentFaces.length === 0) return;
+            
+            // Collect unconfirmed faces
+            const unconfirmed = [];
+            currentFaces.forEach((face, idx) => {
+                if (face.identity === 'Desconocido' || face.identity.startsWith('IA (Pendiente)')) {
+                    unconfirmed.push({ face: face, faceNum: idx + 1 });
+                }
+            });
+            
+            if (unconfirmed.length === 0) {
+                showToast("No hay caras sin confirmar.");
+                return;
+            }
+            
+            if (!confirm(`¿Ignorar ${unconfirmed.length} caras no confirmadas?`)) return;
+            
+            document.getElementById('btn-ignore-unconfirmed').textContent = "Ignorando...";
+            document.getElementById('btn-ignore-unconfirmed').style.opacity = '0.5';
+            document.getElementById('btn-ignore-unconfirmed').style.pointerEvents = 'none';
+            
+            for (let i = 0; i < unconfirmed.length; i++) {
+                const item = unconfirmed[i];
+                const face = item.face;
+                let idObj = {categoria: "Ignorar", identidad: "Ignorar_Irrelevante"};
+                
+                try {
+                    const res = await fetch('/api/correct', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({ 
+                            path: currentFileObj.path, 
+                            new_categoria: idObj.categoria, 
+                            new_identidad: idObj.identidad,
+                            face: {
+                            x: face.box ? face.box[0] : (face.x || 0),
+                            y: face.box ? face.box[1] : (face.y || 0),
+                            width: face.box ? face.box[2] : (face.width || 0),
+                            height: face.box ? face.box[3] : (face.height || 0)
+                        },
+                            apply_to_duplicates: false
+                        })
+                    });
+                    const data = await res.json();
+                    if(data.success && data.new_path && currentFileObj) {
+                        currentFileObj.path = data.new_path;
+                    }
+                } catch(e) {
+                    console.error("Error ignoring face", e);
+                }
+            }
+            
+            showToast(`${unconfirmed.length} caras ignoradas.`);
+            
+            // Refresh
+            if (currentCat === 'Limpieza Inteligente') {
+                const gridItem = document.getElementById('grid-container').children[currentItemIndex];
+                if (gridItem) {
+                    gridItem.style.opacity = '0.3';
+                    gridItem.style.pointerEvents = 'none';
+                }
+            } else if (currentCat && currentIdent) {
+                renderGrid(currentCat, currentIdent);
+            }
+            
+            // Re-open lightbox to refresh faces list
+            openLightbox(currentFileObj);
+        }
+
+        async function quickReassignFace(valStr, faceNum) {
+            const face = currentFaces[faceNum - 1];
+            if (!face) return;
+            await inlineCorrect(encodeURIComponent(currentFileObj.path), valStr, faceNum, face.x, face.y, face.width, face.height);
+        }
+
+        async function inlineCorrect(pathEncoded, valStr, faceNum, faceX, faceY, faceW, faceH) {
+            releaseMediaElement();
+            if(!valStr) return;
+            const targetPath = (currentFileObj && currentFileObj.path) ? currentFileObj.path : decodeURIComponent(pathEncoded);
+            if(!targetPath) return;
+
+            let idObj;
+            if(valStr === 'NEW') {
+                const newCat = prompt("Introduce la categoría:", "Conocidos");
+                if(!newCat) return;
+                const newIdent = prompt("Introduce el nombre completo:");
+                if(!newIdent) return;
+                idObj = {categoria: newCat, identidad: newIdent};
+            } else {
+                idObj = JSON.parse(valStr);
+            }
+            
+            let applyToDuplicates = false;
+            try {
+                const dupRes = await fetch('/api/duplicates', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ path: targetPath })
+                });
+                const dupData = await dupRes.json();
+                if (dupData.duplicate) {
+                    applyToDuplicates = true;
+                }
+            } catch (e) {
+                console.error("Error checking duplicates", e);
+            }
+
+            const res = await fetch('/api/correct', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ 
+                    path: targetPath, 
+                    new_categoria: idObj.categoria, 
+                    new_identidad: idObj.identidad,
+                    face: {x: faceX, y: faceY, width: faceW, height: faceH},
+                    apply_to_duplicates: applyToDuplicates
+                })
+            });
+            
+            const data = await res.json();
+            if(data.success) {
+                if (data.new_path && currentFileObj) {
+                    currentFileObj.path = data.new_path;
+                }
+                showToast(`Asignado a '${idObj.identidad}'. Memoria guardada.`);
+                
+                if (typeof applyToDuplicates !== 'undefined' && applyToDuplicates) {
+                    closeLightbox();
+                    loadGallery();
+                } else {
+                    // Actualizar localmente SIN PARPADEO
+                    if (idObj.identidad === 'Ignorar_Irrelevante' || idObj.identidad === 'Falso_Positivo') {
+                        const bbox = document.getElementById(`bbox-${faceNum}`);
+                        const pcard = document.getElementById(`pcard-${faceNum}`);
+                        if (bbox) bbox.remove();
+                        if (pcard) pcard.remove();
+                    } else {
+                                                const pname = document.getElementById(`pname-${faceNum}`);
+                        const pconf = document.getElementById(`pconf-${faceNum}`);
+                        if (pname) pname.textContent = `#${faceNum} ${idObj.identidad}`;
+                        if (pconf) pconf.textContent = '100.0% (Manual)';
+                    }
+                    
+                    if (currentFileObj) {
+                        if (!currentFileObj.source.includes("Manual")) {
+                            currentFileObj.source = currentFileObj.source + " + Manual";
+                        }
+                        const gridBadge = document.getElementById(`source-${currentItemIndex}`);
+                        if (gridBadge) {
+                            if (currentFileObj.source.includes('Dataset')) {
+                                gridBadge.className = 'badge badge-dataset';
+                                gridBadge.textContent = '🔒 Dataset + ✏️ Manual';
+                            } else {
+                                gridBadge.className = 'badge badge-manual';
+                                gridBadge.textContent = '✏️ Manual';
+                            }
+                        }
+                    }
+
+                    await loadIdentities();
+                    if (currentCat === 'Limpieza Inteligente') {
+                        // Don't re-render grid because it's a dynamic list
+                        // But we should remove the current item from the list visually
+                        const gridItem = document.getElementById('grid-container').children[currentItemIndex];
+                        if (gridItem) {
+                            gridItem.style.opacity = '0.3';
+                            gridItem.style.pointerEvents = 'none';
+                        }
+                    } else if (currentCat && currentIdent) {
+                        renderGrid(currentCat, currentIdent);
+                    }
+                }
+            } else {
+                showToast(data.error || "Error al asignar.", true);
+            }
+        }
+
+        function enableManualSelection() {
+            if (!currentFileObj) return;
+            resetZoom(); // Prevenir panning y offsets erróneos
+            window.isDrawingMode = true;
+            const container = document.getElementById('lb-media-container');
+            const mediaEl = container.querySelector('.lb-media-element');
+            if (!mediaEl) return;
+            
+            mediaEl.draggable = false;
+            
+            showToast("Arrastra sobre la foto para crear un recuadro de persona.");
+            container.style.cursor = 'crosshair';
+            
+            let startX, startY, selectBox, isDrawing = false;
+            
+            const onMouseDown = (e) => {
+                e.preventDefault();
+                isDrawing = true;
+                const rect = container.getBoundingClientRect();
+                startX = e.clientX - rect.left;
+                startY = e.clientY - rect.top;
+                
+                selectBox = document.createElement('div');
+                selectBox.style.cssText = `position:absolute; left:${startX}px; top:${startY}px; border:2px dashed #30d158; background:rgba(48,209,88,0.25); pointer-events:none; z-index:9999; box-sizing:border-box;`;
+                container.appendChild(selectBox);
+                
+                const onMouseMove = (ev) => {
+                    if (!isDrawing) return;
+                    const currentX = ev.clientX - rect.left;
+                    const currentY = ev.clientY - rect.top;
+                    const width = Math.abs(currentX - startX);
+                    const height = Math.abs(currentY - startY);
+                    selectBox.style.left = `${Math.min(startX, currentX)}px`;
+                    selectBox.style.top = `${Math.min(startY, currentY)}px`;
+                    selectBox.style.width = `${width}px`;
+                    selectBox.style.height = `${height}px`;
+                };
+                
+                const onMouseUp = async (ev) => {
+                    if (!isDrawing) return;
+                    isDrawing = false;
+                    
+                    document.removeEventListener('mousemove', onMouseMove);
+                    document.removeEventListener('mouseup', onMouseUp);
+                    container.removeEventListener('mousedown', onMouseDown);
+                    container.style.cursor = 'default';
+                    window.isDrawingMode = false;
+                    
+                    const rect = container.getBoundingClientRect();
+                    const endX = ev.clientX - rect.left;
+                    const endY = ev.clientY - rect.top;
+                    
+                    const boxW = Math.abs(endX - startX);
+                    const boxH = Math.abs(endY - startY);
+                    
+                    if (selectBox) selectBox.remove();
+                    if (boxW < 10 || boxH < 10) return;
+                    
+                    let isCurrentVideo = mediaEl.tagName === 'VIDEO';
+                    let intrinsicWidth = isCurrentVideo ? mediaEl.videoWidth : mediaEl.naturalWidth;
+                    let intrinsicHeight = isCurrentVideo ? mediaEl.videoHeight : mediaEl.naturalHeight;
+                    
+                    const mediaRect = mediaEl.getBoundingClientRect();
+                    const containerRect = container.getBoundingClientRect();
+                    
+                    const offsetX = mediaRect.left - containerRect.left;
+                    const offsetY = mediaRect.top - containerRect.top;
+                    
+                    const mediaStartX = startX - offsetX;
+                    const mediaStartY = startY - offsetY;
+                    const mediaEndX = endX - offsetX;
+                    const mediaEndY = endY - offsetY;
+                    
+                    const scaleX = intrinsicWidth / mediaRect.width;
+                    const scaleY = intrinsicHeight / mediaRect.height;
+                    
+                    let realX = Math.round(Math.min(mediaStartX, mediaEndX) * scaleX);
+                    let realY = Math.round(Math.min(mediaStartY, mediaEndY) * scaleY);
+                    let realW = Math.round(boxW * scaleX);
+                    let realH = Math.round(boxH * scaleY);
+                    
+                    realX = Math.max(0, realX);
+                    realY = Math.max(0, realY);
+                    if (realX + realW > intrinsicWidth) realW = intrinsicWidth - realX;
+                    if (realY + realH > intrinsicHeight) realH = intrinsicHeight - realY;
+                    
+                    const newFace = { x: realX, y: realY, width: realW, height: realH, identity: "Desconocido", confidence: "Selección manual" };
+                    const nextNum = document.querySelectorAll('.lb-bounding-box').length + 1;
+                    const cardsContainer = document.getElementById('person-cards-container');
+                    
+                    createFaceElements(newFace, nextNum, intrinsicWidth, intrinsicHeight, mediaEl, container, cardsContainer);
+                    highlightFace(nextNum);
+                    
+                    const select = document.getElementById(`pselect-${nextNum}`);
+                    if (select) {
+                        select.focus();
+                        select.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    }
+                    showToast(`Recuadro #${nextNum} listo. Selecciona la persona en el panel lateral.`);
+                };
+                
+                document.addEventListener('mousemove', onMouseMove);
+                document.addEventListener('mouseup', onMouseUp);
+            };
+            
+            container.addEventListener('mousedown', onMouseDown);
+        }
+
+        async function runMassCleanup() {
+            if (!confirm('¿Deseas analizar todas las carpetas "Persona Nueva" y reasignar automáticamente a las caras conocidas (seguridad > 60%)? Esto puede tardar unos minutos.')) return;
+            
+            showToast('Iniciando limpieza masiva... Por favor, no cierres esta página.', false);
+            
+            try {
+                const res = await fetch('/api/mass_cleanup', { method: 'POST' });
+                const data = await res.json();
+                if (data.success) {
+                    showToast(`✅ Limpieza masiva completada. Se reasignaron ${data.moved_count} imágenes.`);
+                    await loadGallery();
+                } else {
+                    showToast('Error en la limpieza masiva: ' + data.error, true);
+                }
+            } catch (err) {
+                showToast('Error de conexión en limpieza masiva', true);
+            }
+        }
+
+        let selectedPaths = new Set();
+        
+        function toggleSelection(e, path) {
+            e.stopPropagation(); // Evitar abrir el lightbox
+            if (selectedPaths.has(path)) {
+                selectedPaths.delete(path);
+                e.target.classList.remove('selected');
+            } else {
+                selectedPaths.add(path);
+                e.target.classList.add('selected');
+            }
+            updateFloatingBar();
+        }
+        
+        function updateFloatingBar() {
+            const bar = document.getElementById('floating-action-bar');
+            const count = document.getElementById('fab-count');
+            
+            if (selectedPaths.size > 0) {
+                count.innerText = `${selectedPaths.size} seleccionadas`;
+                bar.classList.add('visible');
+                
+                // Poblar selectores si está vacío
+                const select = document.getElementById('fab-reassign-select');
+                if (select.options.length <= 1) {
+                    populateFabSelect(select);
+                }
+            } else {
+                bar.classList.remove('visible');
+            }
+        }
+        
+        function populateFabSelect(select) {
+            select.innerHTML = '<option value="">-- Reasignar a... --</option>';
+            const personas = new Set();
+            if (identitiesList) {
+                identitiesList.forEach(id => {
+                    if (id.categoria === 'Conocidos' || id.categoria === 'Familiares') {
+                        personas.add(id.identidad);
+                    }
+                });
+            }
+            const sorted = Array.from(personas).sort();
+            sorted.forEach(p => {
+                const opt = document.createElement('option');
+                opt.value = p;
+                opt.innerText = p;
+                select.appendChild(opt);
+            });
+        }
+        
+        function clearSelection() {
+            selectedPaths.clear();
+            document.querySelectorAll('.select-checkbox.selected').forEach(el => el.classList.remove('selected'));
+            updateFloatingBar();
+        }
+        
+        async function applyBulkReassign() {
+            const select = document.getElementById('fab-reassign-select');
+            const val = select.value;
+            if (!val) {
+                showToast('Selecciona una persona primero', true);
+                return;
+            }
+            await performBulkAction(val);
+        }
+        
+        async function applyBulkIgnore() {
+            if(confirm(`¿Ignorar las ${selectedPaths.size} fotos seleccionadas?`)) {
+                await performBulkAction('Ignorar');
+            }
+        }
+        
+        async function performBulkAction(identity) {
+            const paths = Array.from(selectedPaths);
+            const res = await fetch('/api/correct_bulk', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ paths, new_identity: identity })
+            });
+            const data = await res.json();
+            if (data.success) {
+                showToast(`Se han actualizado ${data.count} caras masivamente 🎉`);
+                clearSelection();
+                loadGallery(); // Recargar cuadrícula
+            } else {
+                showToast(`Error: ${data.error}`, true);
+            }
+        }
+
+
+        let boxesVisible = true;
+        function toggleBoxes() {
+            boxesVisible = !boxesVisible;
+            document.querySelectorAll('.lb-bounding-box').forEach(b => {
+                b.style.opacity = boxesVisible ? '1' : '0';
+                b.style.pointerEvents = boxesVisible ? 'auto' : 'none';
+            });
+            const btn = document.getElementById('btn-toggle-boxes');
+            if (btn) btn.innerHTML = boxesVisible ? '👁️ Ocultar Recuadros' : '👁️ Mostrar Recuadros';
+        }
+
+        async function scanFullVideo() {
+            if (!currentFileObj || !isCurrentVideo) return;
+            const btn = document.getElementById('btn-scan-video');
+            const resDiv = document.getElementById('video-scan-results');
+            if(!btn || !resDiv) return;
+            
+            btn.textContent = "⏳ Escaneando (puede tardar unos segundos)...";
+            btn.style.pointerEvents = 'none';
+            btn.style.opacity = '0.5';
+            resDiv.innerHTML = '<div style="text-align:center;"><div class="loader-small"></div></div>';
+            
+            try {
+                const res = await fetch('/api/scan_video', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ path: currentFileObj.path })
+                });
+                const data = await res.json();
+                
+                if (data.error) {
+                    resDiv.innerHTML = `<p style="color:#ff453a;">Error: ${data.error}</p>`;
+                } else if (data.detections && data.detections.length > 0) {
+                    let html = '<h4 style="margin:0 0 10px 0; color:var(--text); font-size:0.9rem;">Personas Detectadas:</h4>';
+                    data.detections.forEach(d => {
+                        html += `<div style="background:rgba(0,0,0,0.3); padding:8px; border-radius:8px; margin-bottom:8px;">`;
+                        html += `<div style="font-weight:bold; color:#0a84ff; margin-bottom:4px;">👤 ${d.identity}</div>`;
+                        html += `<div style="font-size:0.8rem; color:var(--text-dim);">Segundos: `;
+                        d.seconds.forEach(sec => {
+                            html += `<span onclick="document.getElementById('lb-media-container').querySelector('video').currentTime = ${sec}" style="cursor:pointer; display:inline-block; padding:2px 6px; background:rgba(255,255,255,0.1); border-radius:4px; margin:2px; transition:0.2s;">${sec}s</span>`;
+                        });
+                        html += `</div></div>`;
+                    });
+                    resDiv.innerHTML = html;
+                } else {
+                    resDiv.innerHTML = '<p style="color:var(--text-dim); font-size:0.8rem;">No se encontraron caras conocidas en todo el vídeo.</p>';
+                }
+            } catch (err) {
+                resDiv.innerHTML = '<p style="color:#ff453a;">Error de conexión al escanear vídeo.</p>';
+            }
+            
+            btn.textContent = "🎬 Volver a Escanear Vídeo";
+            btn.style.pointerEvents = 'auto';
+            btn.style.opacity = '1';
+        }
+
+
+// --- INJECTED FUNCTIONS ---
+async function removeFromFolder() {
+    releaseMediaElement();
+    if (!currentFileObj || !currentFileObj.path || !currentCat || !currentIdent) return;
+    const currentAnalysisPath = currentFileObj.path;
+    if (!confirm(`¿Estás seguro de que quieres quitar esta foto de la carpeta de ${currentIdent}?`)) return;
+    
+    try {
+        const res = await fetch('/api/remove_from_folder', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                path: currentAnalysisPath,
+                cat: currentCat,
+                ident: currentIdent
+            })
+        });
+        const data = await res.json();
+        
+        if (data.success) {
+            showToast("✅ Foto quitada de la carpeta correctamente.");
+            closeLightbox();
+            
+            // Remove item from currentFolderItems and DOM
+            if (typeof currentFolderItems !== 'undefined' && currentFolderItems) {
+                currentFolderItems = currentFolderItems.filter(it => it.path !== currentAnalysisPath);
+                if (fullGallery && fullGallery[currentCat] && fullGallery[currentCat][currentIdent]) {
+                    fullGallery[currentCat][currentIdent] = fullGallery[currentCat][currentIdent].filter(it => it.path !== currentAnalysisPath);
+                }
+                const gridContainer = document.getElementById('grid-container');
+                if (gridContainer && gridContainer.children[currentItemIndex]) {
+                    gridContainer.children[currentItemIndex].remove();
+                }
+                const subEl = document.getElementById('gallery-subtitle');
+                if (subEl) subEl.textContent = `${currentFolderItems.length} elementos`;
+            }
+            await loadGallery();
+        } else {
+            alert(data.error || "Error al quitar la foto");
+        }
+    } catch(e) {
+        alert("Error de conexión");
+    }
+}
+
+function triggerDeepScanLightbox() {
+    if (!currentFileObj || !currentFileObj.path) return;
+    const currentAnalysisPath = currentFileObj.path;
+    if (!confirm("Esto forzará una búsqueda exhaustiva de caras ignorando límites de confianza. ¿Continuar?")) return;
+    
+    fetch('/api/detect_deep', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({path: currentAnalysisPath})
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.error) {
+            alert(data.error);
+        } else if (!data.faces || data.faces.length === 0) {
+            alert("No se ha encontrado ninguna persona, ni siquiera con la detección profunda.");
+        } else {
+            alert("¡Detección profunda exitosa! Recargando caras...");
+            openLightbox(currentFileObj);
+        }
+    })
+    .catch(err => {
+        console.error(err);
+    });
+}
+
+function toggleMetadata() {
+    const sidebar = document.getElementById('metadata-panel');
+    if (sidebar.style.display === 'none' || sidebar.style.display === '') {
+        sidebar.style.display = 'block';
+    } else {
+        sidebar.style.display = 'none';
+    }
+}
+// --- END INJECTED FUNCTIONS ---
+
+
+let currentPhotoFilterMode = 'all';
+
+function setPhotoFilter(mode, btnEl) {
+    currentPhotoFilterMode = mode;
+    document.querySelectorAll('.filter-toggle-btn').forEach(b => {
+        b.style.background = 'transparent';
+        b.style.color = '#aaa';
+        b.style.fontWeight = 'normal';
+    });
+    if (btnEl) {
+        btnEl.style.background = '#0a84ff';
+        btnEl.style.color = 'white';
+        btnEl.style.fontWeight = 'bold';
+    }
+    applyPhotoFilter();
+}
+
+function applyPhotoFilter() {
+    const grid = document.getElementById('grid-container');
+    if (!grid || !currentFolderItems) return;
+    const cards = grid.children;
+    
+    currentFolderItems.forEach((item, idx) => {
+        const card = cards[idx];
+        if (!card) return;
+        
+        const numFaces = item.num_faces || 0;
+        let show = true;
+        
+        if (currentPhotoFilterMode === 'solo') {
+            show = (numFaces <= 1);
+        } else if (currentPhotoFilterMode === 'group') {
+            show = (numFaces > 1);
+        }
+        
+        if (show) {
+            card.style.display = 'flex';
+        } else {
+            card.style.display = 'none';
+        }
+    });
+}
+
+
+function releaseMediaElement() {
+    try {
+        const mediaEl = document.querySelector('.lb-media-element');
+        if (mediaEl) {
+            mediaEl.pause();
+            mediaEl.removeAttribute('src');
+            mediaEl.load();
+        }
+    } catch(e){}
+}
+
+
+async function applyBulkRemoveFromFolder() {
+    if (selectedPaths.size === 0) return;
+    if (!currentCat || !currentIdent) {
+        showToast("Abre un álbum específico primero.", true);
+        return;
+    }
+    if (!confirm(`¿Seguro que quieres quitar las ${selectedPaths.size} fotos seleccionadas de '${currentIdent}' y enviarlas a re-análisis?`)) return;
+    
+    showToast(`⏳ Quitando ${selectedPaths.size} fotos de '${currentIdent}'...`);
+    let count = 0;
+    
+    for (const path of Array.from(selectedPaths)) {
+        try {
+            const res = await fetch('/api/remove_from_folder', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    path: path,
+                    cat: currentCat,
+                    ident: currentIdent
+                })
+            });
+            const data = await res.json();
+            if (data.success) count++;
+        } catch(e){}
+    }
+    
+    showToast(`✅ ${count} fotos quitadas correctamente.`);
+    clearSelection();
+    await loadIdentities();
+    await loadGallery();
+}
+
+
+async function purgeExactDuplicates() {
+    if (!confirm("¿Deseas escanear y eliminar automáticamente todos los duplicados exactos (archivos idénticos en disco)? Conservaremos siempre la mejor copia.")) return;
+    
+    showToast("⏳ Escaneando y eliminando duplicados idénticos...", false);
+    
+    try {
+        const res = await fetch('/api/purge_exact_duplicates', { method: 'POST' });
+        const data = await res.json();
+        if (data.success) {
+            showToast(`✅ Limpieza completada: Se eliminaron ${data.purged_count} copias duplicadas idénticas.`);
+            await loadIdentities();
+            await loadGallery();
+        } else {
+            showToast("Error limpiando duplicados: " + (data.error || "Desconocido"), true);
+        }
+    } catch(err) {
+        showToast("Error de conexión al purgar duplicados", true);
+    }
+}
+
+
+// ==========================================
+// FUNCIONES DE LIMPIEZA DE DUPLICADOS EXACTOS
+// ==========================================
+window.openExactDuplicatesModal = async function() {
+    const m = document.getElementById('modal-duplicates');
+    if (!m) return;
+    m.style.display = 'flex';
+    document.getElementById('duplicates-loading').style.display = 'block';
+    document.getElementById('duplicates-content').style.display = 'none';
+    
+    try {
+        const res = await fetch('/api/duplicates_scan');
+        const data = await res.json();
+        
+        document.getElementById('duplicates-loading').style.display = 'none';
+        const container = document.getElementById('duplicates-content');
+        container.style.display = 'block';
+        
+        if (!data.groups || data.groups.length === 0) {
+            container.innerHTML = `<div style="text-align:center; padding:30px; color:#30d158;">
+                <h3>🎉 ¡No se han encontrado duplicados exactos!</h3>
+                <p style="color:#aaa;">Tu galería está 100% libre de imágenes idénticas repetidas.</p>
+            </div>`;
+            return;
+        }
+        
+        let htmlStr = `<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; background:rgba(255,159,10,0.1); padding:15px; border-radius:10px; border:1px solid #ff9f0a;">
+            <div>
+                <strong style="color:#ff9f0a;">Se han detectado ${data.groups.length} grupos de duplicados exactos.</strong>
+                <div style="font-size:0.9rem; color:#aaa;">Espacio recuperable: ${data.total_waste_mb} MB</div>
+            </div>
+            <button onclick="cleanAllExactDuplicates()" style="background:#ff9f0a; color:#000; font-weight:bold; border:none; padding:10px 18px; border-radius:8px; cursor:pointer;">
+                ⚡ Limpiar Todos (${data.total_waste_mb} MB)
+            </button>
+        </div>`;
+        
+        data.groups.forEach((g, idx) => {
+            htmlStr += `<div style="background:#2c2c2e; border-radius:12px; padding:15px; margin-bottom:15px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                    <span style="font-weight:bold; color:#ffcc00;">Grupo ${idx+1} (${g.files.length} copias idénticas - ${g.waste_mb} MB descartables)</span>
+                    <button onclick="cleanExactDuplicatesGroup('${g.hash}')" style="background:rgba(255,159,10,0.2); color:#ff9f0a; border:1px solid #ff9f0a; padding:6px 12px; border-radius:6px; cursor:pointer; font-weight:bold;">
+                        Conservar 1 y Borrar ${g.files.length-1}
+                    </button>
+                </div>
+                <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap:10px;">`;
+            
+            g.files.forEach((f, fIdx) => {
+                htmlStr += `<div style="position:relative; background:#1c1c1e; border-radius:8px; overflow:hidden; border:2px solid ${fIdx===0?'#30d158':'#555'};">
+                    <img src="/api/thumbnail?path=${encodeURIComponent(f.path)}" style="width:100%; height:110px; object-fit:cover;">
+                    <div style="padding:5px; font-size:0.75rem; word-break:break-all; color:${fIdx===0?'#30d158':'#aaa'};">
+                        ${fIdx===0?'⭐ CONSERVAR':`Copia ${fIdx}`} (${(f.size/1024/1024).toFixed(1)}MB)
+                    </div>
+                </div>`;
+            });
+            htmlStr += `</div></div>`;
+        });
+        
+        container.innerHTML = htmlStr;
+    } catch(e) {
+        document.getElementById('duplicates-loading').style.display = 'none';
+        alert("Error al escanear duplicados: " + e);
+    }
+};
+
+window.closeExactDuplicatesModal = function() {
+    const m = document.getElementById('modal-duplicates');
+    if (m) m.style.display = 'none';
+};
+
+window.cleanExactDuplicatesGroup = async function(hash) {
+    if (!confirm("¿Deseas eliminar las copias duplicadas de este grupo y conservar solo 1?")) return;
+    try {
+        const res = await fetch('/api/duplicates_clean', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ hash: hash })
+        });
+        const data = await res.json();
+        if (data.success) {
+            showToast("✅ Duplicados eliminados correctamente.");
+            openExactDuplicatesModal();
+            loadGallery();
+        }
+    } catch(e) { alert("Error de conexión"); }
+};
+
+window.cleanAllExactDuplicates = async function() {
+    if (!confirm("¿Seguro que deseas eliminar automáticamente TODOS los duplicados exactos detectados y liberar espacio?")) return;
+    try {
+        const res = await fetch('/api/duplicates_clean', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ clean_all: true })
+        });
+        const data = await res.json();
+        if (data.success) {
+            showToast(`🎉 ¡Limpieza masiva completada! Liberados ${data.freed_mb} MB.`);
+            openExactDuplicatesModal();
+            loadGallery();
+        }
+    } catch(e) { alert("Error de conexión"); }
+};
+
+
+// ==========================================
+// FUNCIONES DE FOTOS PARECIDAS Y RÁFAGAS
+// ==========================================
+window.openSimilarPhotosModal = async function() {
+    const m = document.getElementById('modal-similar');
+    if (!m) return;
+    m.style.display = 'flex';
+    document.getElementById('similar-loading').style.display = 'block';
+    document.getElementById('similar-content').style.display = 'none';
+    
+    try {
+        const res = await fetch('/api/similar_scan');
+        const data = await res.json();
+        
+        document.getElementById('similar-loading').style.display = 'none';
+        const container = document.getElementById('similar-content');
+        container.style.display = 'block';
+        
+        if (!data.groups || data.groups.length === 0) {
+            container.innerHTML = `<div style="text-align:center; padding:30px; color:#30d158;">
+                <h3>📸 ¡No hay ráfagas ni fotos muy parecidas acumuladas!</h3>
+                <p style="color:#aaa;">Todas tus secuencias de fotos son únicas y nítidas.</p>
+            </div>`;
+            return;
+        }
+        
+        let htmlStr = `<div style="margin-bottom:20px; background:rgba(191,90,242,0.1); padding:15px; border-radius:10px; border:1px solid #bf5af2;">
+            <strong style="color:#bf5af2;">Se han detectado ${data.groups.length} ráfagas o secuencias de fotos parecidas.</strong>
+            <div style="font-size:0.9rem; color:#aaa;">La IA ha evaluado la nitidez mediante la varianza de Laplaciano para destacar la foto de mejor calidad.</div>
+        </div>`;
+        
+        data.groups.forEach((g, idx) => {
+            htmlStr += `<div style="background:#2c2c2e; border-radius:12px; padding:15px; margin-bottom:15px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                    <span style="font-weight:bold; color:#d0fd38;">Secuencia ${idx+1} (${g.files.length} fotos del mismo momento)</span>
+                    <button onclick="cleanSimilarGroup('${g.group_id}')" style="background:rgba(191,90,242,0.2); color:#bf5af2; border:1px solid #bf5af2; padding:6px 12px; border-radius:6px; cursor:pointer; font-weight:bold;">
+                        Conservar la MÁS NÍTIDA y Borrar el Resto
+                    </button>
+                </div>
+                <div style="display:grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap:10px;">`;
+            
+            g.files.forEach((f) => {
+                const isBest = f.is_sharpest;
+                htmlStr += `<div style="position:relative; background:#1c1c1e; border-radius:8px; overflow:hidden; border:2px solid ${isBest?'#30d158':'#444'};">
+                    <img src="/api/thumbnail?path=${encodeURIComponent(f.path)}" style="width:100%; height:110px; object-fit:cover;">
+                    <div style="padding:5px; font-size:0.75rem; color:${isBest?'#30d158':'#aaa'}; font-weight:${isBest?'bold':'normal'};">
+                        ${isBest?'⭐ MÁS NÍTIDA':`Simil (${f.sharpness_score}pt)`}
+                    </div>
+                </div>`;
+            });
+            htmlStr += `</div></div>`;
+        });
+        
+        container.innerHTML = htmlStr;
+    } catch(e) {
+        document.getElementById('similar-loading').style.display = 'none';
+        alert("Error al escanear fotos parecidas: " + e);
+    }
+};
+
+window.closeSimilarPhotosModal = function() {
+    const m = document.getElementById('modal-similar');
+    if (m) m.style.display = 'none';
+};
+
+window.cleanSimilarGroup = async function(groupId) {
+    if (!confirm("¿Deseas conservar únicamente la foto más nítida de esta secuencia y descartar las demás?")) return;
+    try {
+        const res = await fetch('/api/similar_clean', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ group_id: groupId })
+        });
+        const data = await res.json();
+        if (data.success) {
+            showToast("✅ Ráfaga optimizada conservando la foto más nítida.");
+            openSimilarPhotosModal();
+            loadGallery();
+        }
+    } catch(e) { alert("Error de conexión"); }
+};
+
+
+let selectedMode = 'local';
+
+function selectStorageMode(mode) {
+    selectedMode = mode;
+    document.getElementById('opt-local').style.border = mode === 'local' ? '2px solid #a855f7' : '2px solid transparent';
+    document.getElementById('opt-gdrive').style.border = mode === 'gdrive' ? '2px solid #a855f7' : '2px solid transparent';
+    document.getElementById('opt-local').style.background = mode === 'local' ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.02)';
+    document.getElementById('opt-gdrive').style.background = mode === 'gdrive' ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.02)';
+    
+    document.getElementById('field-local').style.display = mode === 'local' ? 'block' : 'none';
+    document.getElementById('field-gdrive').style.display = mode === 'gdrive' ? 'block' : 'none';
+}
+
+function checkSetupConfig() {
+    fetch('/api/config')
+        .then(r => r.json())
+        .then(cfg => {
+            if (cfg.mode) selectStorageMode(cfg.mode);
+            if (cfg.local_path) document.getElementById('input-local-path').value = cfg.local_path;
+            if (cfg.gdrive_folder_id) document.getElementById('input-gdrive-url').value = 'https://drive.google.com/drive/folders/' + cfg.gdrive_folder_id;
+        })
+        .catch(() => {});
+}
+
+function openSetupModal() {
+    document.getElementById('setup-modal').style.display = 'flex';
+    checkSetupConfig();
+}
+
+function saveStorageConfig() {
+    const payload = {
+        mode: selectedMode,
+        local_path: document.getElementById('input-local-path').value,
+        gdrive_url_or_id: document.getElementById('input-gdrive-url').value
+    };
+    fetch('/api/config', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload)
+    })
+    .then(r => r.json())
+    .then(res => {
+        document.getElementById('setup-modal').style.display = 'none';
+        location.reload();
+    });
+}
+
+window.openSetupModal = openSetupModal;
+window.selectStorageMode = selectStorageMode;
+window.saveStorageConfig = saveStorageConfig;
+
+
+function generateMagicShareLink(category, identity) {
+    fetch('/api/magic_links/create', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({category: category, identity: identity, days: 30})
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.share_url) {
+            navigator.clipboard.writeText(data.share_url);
+            alert("🔗 ¡Enlace Mágico Copiado al Portapapeles!\n\nEnvíaselo a tu amigo para que vea sus fotos:\n" + data.share_url);
+        }
+    });
+}
+window.generateMagicShareLink = generateMagicShareLink;
+
+
+function openQuickCleanMode() {
+    loadCategoryFilter('_Dudosos', 'Desconocido');
+    openQuickCleanOverlay();
+}
+window.openQuickCleanMode = openQuickCleanMode;
+
+
+const vElem = document.getElementById('lb-video');
+if (vElem) {
+    vElem.oncanplay = function() {
+        const btn = document.getElementById('btn-scan-video');
+        if (btn) {
+            btn.disabled = false;
+            btn.style.opacity = "1";
+            btn.innerText = "🔍 Analizar Caras en Fotograma Actual";
+        }
+    };
+}
+
+
+
+if('serviceWorker' in navigator){navigator.serviceWorker.register('/static/sw.js')}
+
+
+async function semanticSearch(term) {
+    if (term.length < 2) {
+        if(typeof filterGallery === 'function') filterGallery(term);
+        return;
+    }
+    try {
+        const res = await fetch('/api/search/semantic?q=' + encodeURIComponent(term));
+        const data = await res.json();
+        
+        document.getElementById('gallery-title').textContent = 'Resultados Búsqueda Semántica';
+        document.getElementById('gallery-subtitle').textContent = `"${term}"`;
+        currentCat = 'Búsqueda Semántica';
+        
+        const grid = document.getElementById('grid-container');
+        grid.innerHTML = '';
+        currentPhotos = data;
+        
+        data.forEach((photo, idx) => {
+            const card = document.createElement('div');
+            card.className = 'media-card';
+            card.innerHTML = `<img src="/api/media/${photo.filename}" loading="lazy" onclick="openLightbox(${idx})">`;
+            grid.appendChild(card);
+        });
+    } catch(e) {
+        console.error(e);
+    }
+}
+
+
+
+    let mapInstance = null;
+    async function openMapModal() {
+        document.getElementById('modal-map').classList.remove('hidden');
+        if (!mapInstance) {
+            mapInstance = L.map('map-container').setView([40.4168, -3.7038], 5);
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+                attribution: '&copy; OpenStreetMap contributors &copy; CARTO'
+            }).addTo(mapInstance);
+        }
+        
+        try {
+            const res = await fetch('/api/map/locations');
+            const locations = await res.json();
+            locations.forEach(loc => {
+                L.marker([loc.lat, loc.lon]).addTo(mapInstance).bindPopup(`<img src="/api/media/${loc.filename}" style="width:100px;">`);
+            });
+        } catch(e) {
+            console.error(e);
+        }
+    }
+    
+
+
+    async function openEvolutionModal(identity) {
+        if (!identity || identity === 'Desconocido' || identity === 'Ignorado') return;
+        document.getElementById('evolution-title').textContent = `📈 Evolución de ${identity}`;
+        document.getElementById('modal-evolution').classList.remove('hidden');
+        document.getElementById('evolution-container').innerHTML = '<div class="loader-small" style="margin: auto;"></div>';
+        
+        try {
+            const res = await fetch(`/api/person/evolution?identity=${encodeURIComponent(identity)}`);
+            const data = await res.json();
+            
+            const container = document.getElementById('evolution-container');
+            container.innerHTML = '';
+            if (data.length === 0) {
+                container.innerHTML = '<p style="margin:auto;">No hay suficientes datos</p>';
+                return;
+            }
+            
+            data.forEach(item => {
+                const div = document.createElement('div');
+                div.style.cssText = 'flex: 0 0 auto; text-align: center;';
+                div.innerHTML = `
+                    <img src="/api/media/${item.filename}" style="height: 150px; border-radius: 8px; object-fit: cover;">
+                    <div style="font-size: 12px; margin-top: 5px; color: #aaa;">${item.year}</div>
+                `;
+                container.appendChild(div);
+            });
+        } catch(e) {
+            console.error(e);
+            document.getElementById('evolution-container').innerHTML = '<p style="color:red; margin:auto;">Error cargando evolución</p>';
+        }
+    }
+    
+
+
+    async function loadCategoryFilter(category, identity) {
+        try {
+            const res = await fetch(`/api/gallery?category=${encodeURIComponent(category)}&identity=${encodeURIComponent(identity)}`);
+            const data = await res.json();
+            
+            document.getElementById('gallery-title').textContent = identity;
+            document.getElementById('gallery-subtitle').textContent = category;
+            currentCat = category;
+            currentIdent = identity;
+            
+            const grid = document.getElementById('grid-container');
+            grid.innerHTML = '';
+            currentPhotos = data;
+            
+            data.forEach((photo, idx) => {
+                const card = document.createElement('div');
+                card.className = 'media-card';
+                card.innerHTML = `<img src="/api/media/${photo.filename}" loading="lazy" onclick="openLightbox(${idx})">`;
+                grid.appendChild(card);
+            });
+        } catch(e) {
+            console.error(e);
+        }
+    }
+
+    function openQuickCleanOverlay() {
+        if (typeof isSwipeModeActive !== 'undefined' && !isSwipeModeActive) {
+            if(typeof toggleSwipeMode === 'function') toggleSwipeMode();
+        }
+        
+        let banner = document.getElementById('quick-clean-banner');
+        if (!banner) {
+            banner = document.createElement('div');
+            banner.id = 'quick-clean-banner';
+            banner.style.cssText = 'position: fixed; top: 0; left: 0; width: 100%; background: #ff9f0a; color: white; text-align: center; font-weight: bold; padding: 10px; z-index: 9999; box-shadow: 0 4px 10px rgba(0,0,0,0.5);';
+            banner.innerHTML = '🔥 Modo Limpieza Rápida - Desliza para limpiar <button onclick="this.parentElement.remove()" style="margin-left:20px; background:black; color:white; border:none; padding:4px 8px; border-radius:4px; cursor:pointer;">Cerrar</button>';
+            document.body.appendChild(banner);
+        }
+    }
+
+function triggerRelearnCascade(identity) {
+    if (!identity || identity === 'Falso_Positivo' || identity === 'Ignorar_Irrelevante') return;
+    fetch('/api/relearn_cascade', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({identity: identity})
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.promoted > 0) {
+            showToast('🧠 Re-aprendizaje: ' + data.promoted + ' fotos promovidas de _Dudosos a ' + identity, 'success');
+            loadIdentities();
+        }
+    })
+    .catch(() => {});
+}
+
+
+function autoClassifyByFilename() {
+    showToast('🏷️ Clasificando fotos por nombre de archivo...', 'info');
+    fetch('/api/auto_classify_filename', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'})
+    .then(r => r.json())
+    .then(data => {
+        if (data.moved > 0) {
+            showToast('✅ ' + data.moved + ' archivos clasificados automáticamente', 'success');
+            loadIdentities();
+        } else {
+            showToast('No se encontraron archivos para clasificar', 'info');
+        }
+    })
+    .catch(e => showToast('Error: ' + e, 'error'));
+}
+window.autoClassifyByFilename = autoClassifyByFilename;
+
+
+function addEvolutionToHeader() {
+    const headerEl = document.querySelector('.gallery-header h2');
+    if (!headerEl) return;
+    const personName = headerEl.textContent.trim();
+    if (!personName || personName === 'Todas las Fotos') return;
+    
+    let existingBtn = document.getElementById('btn-evolution-header');
+    if (existingBtn) existingBtn.remove();
+    
+    const btn = document.createElement('button');
+    btn.id = 'btn-evolution-header';
+    btn.innerHTML = '📈 Ver Evolución Temporal';
+    btn.style.cssText = 'margin-left:12px;padding:6px 14px;border-radius:10px;border:1px solid rgba(168,85,247,0.4);background:rgba(168,85,247,0.15);color:#c084fc;font-size:0.8rem;font-weight:600;cursor:pointer;transition:all 0.2s;';
+    btn.onmouseenter = () => { btn.style.background = 'rgba(168,85,247,0.3)'; };
+    btn.onmouseleave = () => { btn.style.background = 'rgba(168,85,247,0.15)'; };
+    btn.onclick = () => openEvolutionModal(personName);
+    headerEl.appendChild(btn);
+}
+
+// Call addEvolutionToHeader whenever an identity is selected
+const origLoadFolder = window.loadFolderItems || function(){};
+window.loadFolderItems = function() {
+    origLoadFolder.apply(this, arguments);
+    setTimeout(addEvolutionToHeader, 200);
+};
+

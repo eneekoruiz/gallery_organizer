@@ -6,11 +6,72 @@ try:
 except ImportError:
     Image = None
 
+import math
+
 def get_exif_gps_locations(file_paths):
-    """Extract GPS coordinates from EXIF data of JPEG photos."""
+    """Extract GPS coordinates from EXIF data with disk cache for instant responses."""
     locations = []
     if not Image: return locations
-    for fp in file_paths[:500]:  # Limit to 500 files for performance
+    
+    cache_path = Path("file_gps_cache.json")
+    cache_data = {}
+    if cache_path.exists():
+        try:
+            with open(cache_path, 'r', encoding='utf-8') as f:
+                cache_data = json.load(f)
+        except Exception: pass
+        
+    cache_updated = False
+    
+    for fp in file_paths[:500]:
+        p = Path(fp)
+        if not p.exists() or p.suffix.lower() not in ['.jpg', '.jpeg']: continue
+        fpath_str = str(p)
+        
+        try:
+            stat = p.stat()
+            size = stat.st_size
+            mtime = stat.st_mtime
+            
+            if fpath_str in cache_data and cache_data[fpath_str].get('size') == size and cache_data[fpath_str].get('mtime') == mtime:
+                cached_loc = cache_data[fpath_str].get('loc')
+                if cached_loc:
+                    locations.append(cached_loc)
+                continue
+                
+            loc_res = None
+            with Image.open(p) as img:
+                exif_data = img._getexif()
+                if exif_data:
+                    gps_info = {}
+                    for tag, value in exif_data.items():
+                        tag_name = ExifTags.TAGS.get(tag, tag)
+                        if tag_name == 'GPSInfo':
+                            for key in value:
+                                sub_tag = ExifTags.GPSTAGS.get(key, key)
+                                gps_info[sub_tag] = value[key]
+                    if 'GPSLatitude' in gps_info and 'GPSLongitude' in gps_info:
+                        lat = _convert_to_degrees(gps_info['GPSLatitude'])
+                        lon = _convert_to_degrees(gps_info['GPSLongitude'])
+                        if lat is not None and lon is not None:
+                            if gps_info.get('GPSLatitudeRef') == 'S': lat = -lat
+                            if gps_info.get('GPSLongitudeRef') == 'W': lon = -lon
+                            if not (math.isnan(lat) or math.isnan(lon) or math.isinf(lat) or math.isinf(lon)):
+                                loc_res = {"path": fpath_str, "name": p.name, "lat": round(lat, 6), "lng": round(lon, 6)}
+                                locations.append(loc_res)
+                                
+            cache_data[fpath_str] = {'size': size, 'mtime': mtime, 'loc': loc_res}
+            cache_updated = True
+        except Exception: pass
+        
+    if cache_updated:
+        try:
+            with open(cache_path, 'w', encoding='utf-8') as f:
+                json.dump(cache_data, f)
+        except Exception: pass
+        
+    return locations
+    for fp in file_paths[:500]:
         p = Path(fp)
         if not p.exists() or p.suffix.lower() not in ['.jpg', '.jpeg']: continue
         try:
@@ -26,16 +87,25 @@ def get_exif_gps_locations(file_paths):
                             gps_info[sub_tag] = value[key]
                 if 'GPSLatitude' in gps_info and 'GPSLongitude' in gps_info:
                     lat = _convert_to_degrees(gps_info['GPSLatitude'])
-                    if gps_info.get('GPSLatitudeRef') == 'S': lat = -lat
                     lon = _convert_to_degrees(gps_info['GPSLongitude'])
+                    if lat is None or lon is None: continue
+                    if gps_info.get('GPSLatitudeRef') == 'S': lat = -lat
                     if gps_info.get('GPSLongitudeRef') == 'W': lon = -lon
+                    if math.isnan(lat) or math.isnan(lon) or math.isinf(lat) or math.isinf(lon): continue
                     locations.append({"path": str(p), "name": p.name, "lat": round(lat, 6), "lng": round(lon, 6)})
         except: pass
     return locations
 
 def _convert_to_degrees(value):
-    d, m, s = float(value[0]), float(value[1]), float(value[2])
-    return d + (m / 60.0) + (s / 3600.0)
+    try:
+        d = float(value[0])
+        m = float(value[1])
+        s = float(value[2])
+        deg = d + (m / 60.0) + (s / 3600.0)
+        if math.isnan(deg) or math.isinf(deg): return None
+        return deg
+    except Exception:
+        return None
 
 def get_exif_date(filepath):
     """Extract original capture date from EXIF. Returns ISO string or None."""
