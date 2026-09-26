@@ -4,10 +4,11 @@ updates:
     directory: /
     schedule:
       interval: monthly
-      day: monday
-      time: '06:00'
+      day: thursday
+      time: '04:00'
       timezone: Europe/Madrid
     open-pull-requests-limit: 1
+    rebase-strategy: auto
     groups:
       all-dependencies:
         patterns:
@@ -21,10 +22,11 @@ updates:
     directory: /
     schedule:
       interval: monthly
-      day: monday
-      time: '06:00'
+      day: thursday
+      time: '04:00'
       timezone: Europe/Madrid
     open-pull-requests-limit: 1
+    rebase-strategy: auto
     groups:
       all-dependencies:
         patterns:
