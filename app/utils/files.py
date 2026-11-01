@@ -158,58 +158,89 @@ def save_overrides(data):
                 pass
 
 def library_roots():
-    from app.globals import CONFIG_FILE
+    from app.globals import CONFIG_FILE, FOTOS_DIR, RESULTADOS_DIR
+    roots = []
+    base = None
     if CONFIG_FILE.exists():
         try:
             config = json.loads(CONFIG_FILE.read_text(encoding='utf-8'))
             if config.get('local_path'):
-                base = Path(config['local_path'])
-                return ((base / 'Fotos').resolve(), (base / 'Resultados').resolve())
+                base = Path(config['local_path']).resolve()
         except (OSError, ValueError, TypeError):
-            return ()
-    return (Path(FOTOS_DIR).resolve(), Path(RESULTADOS_DIR).resolve())
+            pass
+    if base is None and FOTOS_DIR.parent.exists():
+        base = FOTOS_DIR.parent.resolve()
+
+    if base and base.exists():
+        roots.append(base)
+    else:
+        if FOTOS_DIR.exists(): roots.append(Path(FOTOS_DIR).resolve())
+        if RESULTADOS_DIR.exists(): roots.append(Path(RESULTADOS_DIR).resolve())
+
+    icloud = Path(r"C:\Users\User\Pictures\iCloud Photos\Photos")
+    if icloud.exists():
+        roots.append(icloud.resolve())
+
+    return tuple(roots)
 
 
 def is_library_path(filepath):
     try:
         path = Path(filepath).resolve()
-        return any(path != root and path.is_relative_to(root) for root in library_roots())
+        return any(path == root or path.is_relative_to(root) for root in library_roots())
     except (OSError, ValueError, TypeError):
         return False
 
+
+_RELOCATED_CACHE = {}
 
 def find_relocated_file(filepath):
     if not isinstance(filepath, (str, os.PathLike)) or not filepath:
         return None
     p = Path(filepath)
-    # 1. Direct absolute path check
-    if p.is_absolute():
-        try:
-            resolved = p.resolve()
-            if resolved.is_file() and is_library_path(resolved):
-                return str(resolved)
-        except Exception:
-            pass
-    # 2. Relative path checked against library roots and parent
-    for root in library_roots():
-        for candidate in [root / p, root.parent / p]:
-            try:
-                resolved = candidate.resolve()
-                if resolved.is_file() and is_library_path(resolved):
-                    return str(resolved)
-            except Exception:
-                pass
-    # 3. Fallback search strictly within authorized library roots
+
+    # 1. Direct path check (O(1) filesystem stat)
+    try:
+        if p.is_file() and is_library_path(p):
+            return str(p.resolve())
+    except Exception:
+        pass
+
     fname = p.name
     if not fname:
         return None
-    for base in library_roots():
-        if os.path.exists(base):
-            for root, dirs, files in os.walk(base):
-                if fname in files:
-                    candidate = Path(root, fname).resolve()
-                    if is_library_path(candidate) and candidate.is_file():
-                        return str(candidate)
+
+    # 2. Check fast memory cache
+    cached = _RELOCATED_CACHE.get(fname)
+    if cached and os.path.isfile(cached):
+        return cached
+
+    # 3. Relative path checked against library roots
+    for root in library_roots():
+        for candidate in [root / p, root / fname]:
+            try:
+                resolved = candidate.resolve()
+                if resolved.is_file() and is_library_path(resolved):
+                    _RELOCATED_CACHE[fname] = str(resolved)
+                    return str(resolved)
+            except Exception:
+                pass
+
+    # 4. Check gallery cache in-memory structure (no disk walk!)
+    from app.globals import get_gallery_cache
+    g_cache = get_gallery_cache()
+    if g_cache and isinstance(g_cache, dict):
+        for cat, idents in g_cache.items():
+            if isinstance(idents, dict):
+                for ident, items in idents.items():
+                    if isinstance(items, list):
+                        for it in items:
+                            if it.get('name') == fname and it.get('path'):
+                                p_cand = Path(it['path'])
+                                if p_cand.is_file():
+                                    _RELOCATED_CACHE[fname] = str(p_cand.resolve())
+                                    return str(p_cand.resolve())
+
     return None
 
 

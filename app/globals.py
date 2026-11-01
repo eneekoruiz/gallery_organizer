@@ -12,8 +12,8 @@ cache_lock = threading.Lock()
 
 # Rutas Principales
 APP_DIR = Path(__file__).resolve().parent.parent
-RESULTADOS_DIR = Path(r"C:\Users\User\Desktop\Galeria Eneko NO ABRIR\Resultados")
-FOTOS_DIR = Path(r"C:\Users\User\Desktop\Galeria Eneko NO ABRIR\Fotos")
+RESULTADOS_DIR = Path(os.getenv('GALLERY_RESULTADOS_DIR', r"C:\Users\User\Desktop\Galeria Eneko NO ABRIR\Resultados"))
+FOTOS_DIR = Path(os.getenv('GALLERY_FOTOS_DIR', r"C:\Users\User\Desktop\Galeria Eneko NO ABRIR\Fotos"))
 CACHE_FILE = APP_DIR / "sface_cache_v7.pkl"
 FACES_CACHE_FILE = APP_DIR / "faces_cache_v2.pkl"
 PENDING_DELETIONS_FILE = APP_DIR / "pending_deletions.txt"
@@ -174,25 +174,27 @@ def wait_for_boot(timeout=30):
 
 def set_gallery_cache(val):
     global _GALLERY_CACHE
-    _GALLERY_CACHE = val
-    try:
-        with cache_lock:
+    with cache_lock:
+        _GALLERY_CACHE = val
+        try:
             with open(GALLERY_CACHE_FILE, 'w', encoding='utf-8') as f:
                 json.dump(val, f)
-    except Exception:
-        pass
+        except Exception as e:
+            print(f'[CACHE] Error persisting gallery cache: {e}')
 
 def get_gallery_cache():
-    return _GALLERY_CACHE
+    with cache_lock:
+        return _GALLERY_CACHE
 
 def clear_gallery_cache():
     global _GALLERY_CACHE
-    _GALLERY_CACHE = None
-    try:
-        if GALLERY_CACHE_FILE.exists():
-            GALLERY_CACHE_FILE.unlink()
-    except Exception:
-        pass
+    with cache_lock:
+        _GALLERY_CACHE = None
+        try:
+            if GALLERY_CACHE_FILE.exists():
+                GALLERY_CACHE_FILE.unlink()
+        except Exception as e:
+            print(f'[CACHE] Error clearing gallery cache file: {e}')
 
 _GALLERY_SCAN_PROGRESS = 0.0
 

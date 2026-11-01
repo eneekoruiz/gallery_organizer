@@ -565,28 +565,56 @@ def apply_correction_to_file(filepath, new_categoria, new_identidad, face_data, 
         fx, fy, fw, fh = (face_data[k] for k in ('x', 'y', 'width', 'height'))
 
     if new_identidad not in ["Falso_Positivo", "Ignorar_Irrelevante"] and face_data:
-        image = cv2.imdecode(np.fromfile(str(orig_path), dtype=np.uint8), cv2.IMREAD_COLOR)
-        if image is None or detector is None or recognizer is None:
-            raise ValueError('No se puede aprender: imagen o modelos no disponibles')
-        with cache_lock:
-            feature = aligned_feature(image, face_data, detector, recognizer, iou)
-            sample_key = file_key + ':' + ','.join(str(v) for v in (fx, fy, fw, fh))
-            from app.services.face_learning import update_confirmed_sample
-            updated_faces = update_confirmed_sample(known_faces, new_identidad, sample_key, feature)
-            import tempfile
-            temp_name = None
-            try:
-                with tempfile.NamedTemporaryFile(dir=CACHE_FILE.parent, delete=False) as cf:
-                    temp_name = cf.name
-                    pickle.dump(updated_faces, cf)
-                    cf.flush()
-                    os.fsync(cf.fileno())
-                os.replace(temp_name, CACHE_FILE)
-            finally:
-                if temp_name and os.path.exists(temp_name):
-                    os.remove(temp_name)
-            known_faces.clear()
-            known_faces.update(updated_faces)
+        try:
+            image = cv2.imdecode(np.fromfile(str(orig_path), dtype=np.uint8), cv2.IMREAD_COLOR)
+            if image is not None and detector is not None and recognizer is not None:
+                with cache_lock:
+                    feature = None
+                    if 'feature' in face_data and face_data.get('feature'):
+                        try:
+                            from app.services.face_learning import normalized_feature
+                            feature = normalized_feature(face_data['feature'])
+                        except Exception:
+                            pass
+                    if feature is None:
+                        try:
+                            feature = aligned_feature(image, face_data, detector, recognizer, iou)
+                        except Exception as e_align:
+                            max_dim = 1024
+                            h, w = image.shape[:2]
+                            if max(h, w) > max_dim:
+                                scale = max_dim / max(h, w)
+                                img_small = cv2.resize(image, (int(w * scale), int(h * scale)))
+                                scaled_rect = {
+                                    'x': safe_float(face_data.get('x', 0)) * scale,
+                                    'y': safe_float(face_data.get('y', 0)) * scale,
+                                    'width': safe_float(face_data.get('width', 0)) * scale,
+                                    'height': safe_float(face_data.get('height', 0)) * scale
+                                }
+                                try:
+                                    feature = aligned_feature(img_small, scaled_rect, detector, recognizer, iou)
+                                except Exception:
+                                    pass
+                    if feature is not None:
+                        sample_key = file_key + ':' + ','.join(str(v) for v in (fx, fy, fw, fh))
+                        from app.services.face_learning import update_confirmed_sample
+                        updated_faces = update_confirmed_sample(known_faces, new_identidad, sample_key, feature)
+                        import tempfile
+                        temp_name = None
+                        try:
+                            with tempfile.NamedTemporaryFile(dir=CACHE_FILE.parent, delete=False) as cf:
+                                temp_name = cf.name
+                                pickle.dump(updated_faces, cf)
+                                cf.flush()
+                                os.fsync(cf.fileno())
+                            os.replace(temp_name, CACHE_FILE)
+                        finally:
+                            if temp_name and os.path.exists(temp_name):
+                                os.remove(temp_name)
+                        known_faces.clear()
+                        known_faces.update(updated_faces)
+        except Exception as e_learn:
+            print(f"[CORRECT] Notice: Face model refinement skipped for {new_identidad} ({e_learn}); continuing clean move.")
 
     overrides = load_overrides()
     file_key = get_file_key(filepath)

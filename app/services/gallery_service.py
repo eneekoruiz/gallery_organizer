@@ -11,6 +11,8 @@ import shutil
 from pathlib import Path
 import re
 from app.globals import APP_DIR, FOTOS_DIR, RESULTADOS_DIR, THUMBNAILS_DIR, get_gallery_cache, set_gallery_cache, faces_cache, CONFIG_FILE
+import threading as _threading
+_GALLERY_SCAN_LOCK = _threading.Lock()
 import app.globals as g
 from app.utils.storage_adapters import get_adapter
 from app.utils.faces import get_all_identities, sanitize_display_name
@@ -75,7 +77,16 @@ def get_gallery():
     gallery_cache = get_gallery_cache()
     if gallery_cache is not None and request.args.get('force') != 'true':
         return jsonify(gallery_cache)
-        
+
+    # Prevent duplicate concurrent full-disk scans
+    if not _GALLERY_SCAN_LOCK.acquire(blocking=False):
+        # Another thread is already scanning; wait for it and return its result
+        with _GALLERY_SCAN_LOCK:
+            pass  # wait for the scanning thread to release
+        cached = get_gallery_cache()
+        if cached is not None:
+            return jsonify(cached)
+
     gallery = {}
     valid_exts = {".jpg", ".jpeg", ".png", ".mp4", ".mov", ".avi"}
     seen_files = {}
@@ -89,8 +100,8 @@ def get_gallery():
         try:
             with open(dim_file, 'rb') as f:
                 dim_cache = pickle.load(f)
-        except:
-            pass
+        except Exception as e:
+            print(f'[WARN] dim_cache load failed: {e}')
             
     qual_cache = {}
     qual_file = os.path.join(str(FOTOS_DIR.parent), 'quality_cache_v2.pkl')
@@ -98,15 +109,15 @@ def get_gallery():
         try:
             with open(qual_file, 'rb') as f:
                 qual_cache = pickle.load(f)
-        except:
-            pass
+        except Exception as e:
+            print(f'[WARN] qual_cache load failed: {e}')
     
     dup_data = {}
     try:
         with open('duplicate_groups.json', 'r') as df:
             dup_data = json.load(df)
-    except:
-        pass
+    except Exception as e:
+        print(f'[WARN] duplicate_groups.json load failed: {e}')
     
     from app.globals import set_gallery_scan_progress
     set_gallery_scan_progress(0.0)
@@ -512,7 +523,13 @@ def get_gallery():
             add_to_gallery('Mascotas', 'Mascotas sin mí', item)
 
     set_gallery_cache(gallery)
-    return jsonify(dict(gallery))
+    result = dict(gallery)
+    set_gallery_cache(result)
+    try:
+        _GALLERY_SCAN_LOCK.release()
+    except RuntimeError:
+        pass  # lock was never acquired (cache hit path)
+    return jsonify(result)
 
 
 def api_metadata():
