@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 *.pkl
 *.pkl*
+*.npy
 *.db
 *.sqlite
 *.sqlite3
@@ -71,3 +72,5 @@ test_gdrive_*.py
 *.key
 *.pem
 *.secret
+
+scripts/triage_status.json

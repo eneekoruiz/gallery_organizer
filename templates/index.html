@@ -11,7 +11,7 @@
         @keyframes shimmer-bar { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
         @keyframes fade-in-up { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
     </style>
-    <div id="library-loading-overlay" style="display:none; position:fixed; inset:0; background:radial-gradient(ellipse at center, #12131a 0%, #0c0d12 70%); z-index:99999; flex-direction:column; align-items:center; justify-content:center; color:white; transition:opacity 0.2s ease, visibility 0.2s ease;">
+    <div id="library-loading-overlay" style="display:flex; opacity:1; visibility:visible; position:fixed; inset:0; background:radial-gradient(ellipse at center, #12131a 0%, #0c0d12 70%); z-index:99999; flex-direction:column; align-items:center; justify-content:center; color:white; transition:opacity 0.35s ease, visibility 0.35s ease;">
         <div style="text-align:center; max-width:420px; padding:20px; animation: fade-in-up 0.6s ease;">
             <div style="font-size:3.5rem; margin-bottom:22px; animation: pulse-avatar 2s infinite ease-in-out; filter:drop-shadow(0 0 20px rgba(168,85,247,0.4));">🔮</div>
             <h2 style="font-size:1.4rem; font-weight:800; margin-bottom:6px; background:linear-gradient(135deg, #a855f7, #3b82f6, #06b6d4); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-size:200% auto;">Cargando Galería Inteligente</h2>
@@ -180,6 +180,13 @@
                         <button class="filter-toggle-btn" id="filter-dudoso-btn" onclick="setPhotoFilter('dudoso', this)" style="color: #ff9f0a; display: none;">
                             <span>⚠️ Dudosas (<span id="dudoso-count">0</span>)</span>
                         </button>
+                    </div>
+
+                    <!-- Device Origin Filter Control -->
+                    <div id="device-filter-container" style="display:inline-flex; background:rgba(255,255,255,0.04); padding:2px; border-radius:8px; border:1px solid rgba(255,255,255,0.06); gap:1px; margin-left:4px;">
+                        <button class="filter-toggle-btn active" id="filter-origin-all" onclick="setDeviceOriginFilter('all', this)" title="Mostrar todos los dispositivos">📱 Todos</button>
+                        <button class="filter-toggle-btn" id="filter-origin-apple" onclick="setDeviceOriginFilter('apple', this)" title="Solo fotos de Apple iPhone / iCloud">🍎 Apple</button>
+                        <button class="filter-toggle-btn" id="filter-origin-android" onclick="setDeviceOriginFilter('android', this)" title="Solo fotos de Android">🤖 Android</button>
                     </div>
 
                     <!-- Album Stats Badges Container -->

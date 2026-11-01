@@ -69,6 +69,15 @@ def api_scan_video_route():
 @api_tools_bp.route('/clear_cache', methods=['POST'])
 def api_clear_cache_route():
     return api_clear_cache()
-
-
-
+@api_tools_bp.route('/triage/status')
+def api_triage_status_route():
+    import json
+    from app.globals import APP_DIR
+    status_file = APP_DIR / "scripts" / "triage_status.json"
+    if status_file.exists():
+        try:
+            with open(status_file, 'r', encoding='utf-8') as sf:
+                return jsonify(json.load(sf))
+        except Exception as e:
+            return jsonify({'status': 'reading', 'error': str(e)})
+    return jsonify({'status': 'idle'})

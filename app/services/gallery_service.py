@@ -1,4 +1,5 @@
 from app.utils.files import get_file_key
+from app.services.apple_service import detect_device_origin
 from flask import Blueprint, jsonify, request, Response, send_file
 import os
 import json
@@ -136,6 +137,10 @@ def get_gallery():
         if RESULTADOS_DIR.exists():
             gather_files(RESULTADOS_DIR, False)
 
+    icloud_dir = Path(r"C:\Users\User\Pictures\iCloud Photos\Photos")
+    if icloud_dir.exists():
+        gather_files(icloud_dir, False)
+
     total_files = len(all_file_targets)
     processed = 0
 
@@ -147,6 +152,7 @@ def get_gallery():
     }
     KNOWN_CATEGORIES = {"Conocidos", "Familia", "YO", "Profesores", "Lugares", "Eventos", "Mascotas", "Objetos", "Recuerdos", "Publicaciones_Instagram"}
     ident_to_cat_map = {id_info["identidad"]: id_info["categoria"] for id_info in get_all_identities()}
+    classified_filenames = set()
 
     for filepath, is_orig_dataset, base_dir in all_file_targets:
         try:
@@ -187,6 +193,8 @@ def get_gallery():
                 if folder == "YO" or subfolder == "YO":
                     cat, ident = "YO", "YO"
             elif "icloud photos" in abs_p_l or base_dir.name == "Photos":
+                if path_obj.name.lower() in classified_filenames:
+                    continue
                 cat = "📋 Revisión / Por Organizar"
                 ident = "🍎 Nuevas desde iCloud"
             elif "para revisar" in abs_p_l or "para organizar" in folder_l or "pendiente" in folder_l or "para organizar" in subfolder_l:
@@ -210,6 +218,9 @@ def get_gallery():
                 cat = ident_to_cat_map.get(ident, folder)
 
             file_name = path_obj.name
+            is_icloud_file = ("icloud photos" in abs_p_l or base_dir.name == "Photos")
+            if not is_icloud_file and not is_dudoso and cat != "📋 Revisión / Por Organizar":
+                classified_filenames.add(file_name.lower())
             key = (cat, ident, file_name)
             is_dudoso = is_dudoso or folder_dudoso
             
@@ -245,6 +256,8 @@ def get_gallery():
                     "has_yo": has_yo_flag,
                     "identities": list(set(ids_in_file)),
                     "mtime": st.st_mtime,
+                    "is_apple": (detect_device_origin(abs_p) == "apple"),
+                    "device_origin": detect_device_origin(abs_p),
                     "from_smart_folder": True,
                 }
                 sa_key = ('__smart_album__', ident, file_name)
@@ -283,7 +296,8 @@ def get_gallery():
                          if str(f_e.get("identity", "")).strip() == str(ident).strip()),
                         default=0.0
                     ),
-                    "is_apple": False,
+                    "is_apple": (detect_device_origin(abs_p) == "apple"),
+                    "device_origin": detect_device_origin(abs_p),
                     "orig_width": dim_cache.get(get_file_key(abs_p), [0, 0])[0],
                     "orig_height": dim_cache.get(get_file_key(abs_p), [0, 0])[1],
                     "quality_score": qual_cache.get(get_file_key(abs_p), 100.0),
@@ -366,15 +380,36 @@ def get_gallery():
             continue
 
         clean_ident = sanitize_display_name(ident)
-        add_to_gallery(cat, clean_ident, item)
+        file_k = get_file_key(item['path'])
+        faces_in_file = overrides.get(file_k) or faces_cache.get(file_k) or faces_cache.get(item['path'], [])
+
+        # Gallery Integrity Shield: Never render an image in person folder if AI/Manual confirmed
+        # other identities and folder owner does NOT appear in the image.
+        should_add_to_owner = True
+        is_person_folder = (cat in KNOWN_CATEGORIES and not any(w in ident.lower() for w in ['conmigo', 'sin m\xc3\xad', 'sin mi', 'grupal', 'grupo']))
+        
+        if is_person_folder and not item.get('is_dataset'):
+            confirmed_ids = [
+                f_e.get('identity') for f_e in faces_in_file 
+                if f_e.get('identity') and not f_e.get('identity').startswith('Desconocid') 
+                and not f_e.get('identity').startswith('Falso_Positivo') 
+                and not f_e.get('identity').startswith('Ignorar')
+            ]
+            if confirmed_ids:
+                norm_ident = clean_ident.lower().replace('c. ', '').replace('f. ', '').strip()
+                owner_found = any(
+                    norm_ident in cid.lower().replace('c. ', '').replace('f. ', '').strip() or
+                    cid.lower().replace('c. ', '').replace('f. ', '').strip() in norm_ident
+                    for cid in confirmed_ids
+                )
+                if not owner_found:
+                    should_add_to_owner = False
+
+        if should_add_to_owner:
+            add_to_gallery(cat, clean_ident, item)
         
         if filename.lower().startswith('100_'):
             add_to_gallery('Eventos', 'Evento Lousada', item)
-        
-        faces_in_file = faces_cache.get(item['path'], [])
-        file_k = get_file_key(item['path'])
-        if file_k in overrides:
-            faces_in_file = overrides[file_k]
             
         for f_entry in faces_in_file:
             other_id = f_entry.get('identity')
@@ -609,6 +644,12 @@ def api_metadata():
             except ValueError:
                 pass
     
+    file_origin = detect_device_origin(filepath)
+    if not camera or camera == "Desconocida":
+        if file_origin == "apple":
+            camera = "Apple iPhone"
+        elif file_origin == "android":
+            camera = "Dispositivo Android"
     return jsonify({
         "size": size,
         "date": real_date,
@@ -621,7 +662,9 @@ def api_metadata():
         "megapixels": megapixels,
         "resolution": res,
         "gps": gps_info,
-        "is_live_photo": is_live_photo
+        "is_live_photo": is_live_photo,
+        "device_origin": file_origin,
+        "is_apple": (file_origin == "apple")
     })
 
 def api_stats():
@@ -738,7 +781,6 @@ def api_person_avatar():
 
     default_svg = '''<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 24 24" fill="#666"><circle cx="12" cy="8" r="4"/><path d="M12 14c-6.1 0-8 4-8 4v2h16v-2s-1.9-4-8-4z"/></svg>'''
 
-    overrides = load_overrides()
     valid_exts = {".jpg", ".jpeg", ".png", ".webp"}
     
     items = []
@@ -756,25 +798,101 @@ def api_person_avatar():
                         candidate_paths.append(str(p))
 
     if not candidate_paths:
+        video_exts = {".mp4", ".mov", ".avi"}
+        video_paths = [it.get('path') for it in items if it.get('path') and Path(it.get('path')).suffix.lower() in video_exts and os.path.exists(it.get('path'))]
+        if not video_paths:
+            for base_dir in [RESULTADOS_DIR / cat / ident, FOTOS_DIR / cat / ident]:
+                if base_dir.exists():
+                    for p in base_dir.iterdir():
+                        if p.suffix.lower() in video_exts and p.is_file():
+                            video_paths.append(str(p))
+                            
+        for v_path in video_paths:
+            cap = cv2.VideoCapture(str(v_path))
+            if cap.isOpened():
+                total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                if total_frames > 15:
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, min(30, total_frames // 2))
+                ret, frame = cap.read()
+                cap.release()
+                if ret and frame is not None:
+                    h_img, w_img = frame.shape[:2]
+                    crop_sz = min(h_img, w_img)
+                    cx, cy = w_img // 2, h_img // 2
+                    x1 = max(0, cx - crop_sz // 2)
+                    y1 = max(0, cy - crop_sz // 2)
+                    crop = frame[y1:y1+crop_sz, x1:x1+crop_sz]
+                    if crop.size > 0:
+                        target_save_file = THUMBNAILS_DIR / f"av_{cat_clean}_{ident_clean}.webp"
+                        avatar_img = cv2.resize(crop, (160, 160), interpolation=cv2.INTER_LANCZOS4)
+                        try:
+                            cv2.imwrite(str(target_save_file), avatar_img, [cv2.IMWRITE_WEBP_QUALITY, 92])
+                        except Exception: pass
+                        _, buf = cv2.imencode('.webp', avatar_img, [cv2.IMWRITE_WEBP_QUALITY, 92])
+                        res = Response(buf.tobytes(), mimetype='image/webp')
+                        res.headers['Cache-Control'] = 'public, max-age=604800, immutable'
+                        return res
+
+    if not candidate_paths:
         return Response(default_svg, mimetype='image/svg+xml')
 
     try:
-        from app.globals import detector, recognizer, known_faces
+        from app.globals import detector, recognizer
         target_save_file = THUMBNAILS_DIR / f"av_{cat_clean}_{ident_clean}.webp"
         
         # Sort candidate paths so ground-truth/dataset photos come first
         candidate_paths.sort(key=lambda x: (0 if re.match(r'^(Foto|Video|Vídeo)\b', Path(x).name, re.I) else 1, -os.path.getsize(x)))
         
-        # Ident centroid if known
-        target_centroid = None
-        for k in [(cat, ident), ident, (cat.lower(), ident)]:
-            if k in known_faces:
-                c_val = known_faces[k]
-                target_centroid = c_val.get('centroid') if isinstance(c_val, dict) else c_val
-                break
+        # Special Case 1: Pets (Mascotas) and Group Albums (Familia conmigo, etc.)
+        # These should NEVER use a single human face detector! Use a smart center crop of the best photo!
+        is_pet = (cat == 'Mascotas' or ident.startswith('M.') or 'mascota' in cat.lower())
+        is_group = any(w in ident.lower() for w in ['conmigo', 'sin mí', 'sin mi', 'grupal', 'grupo', 'eventos', 'recuerdos']) or cat in ['Lugares', 'Eventos', 'Recuerdos', 'Objetos', 'Frases']
+        
+        if is_pet or is_group:
+            for c_path in candidate_paths:
+                file_bytes = np.fromfile(c_path, dtype=np.uint8)
+                img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+                if img is None: continue
+                h_img, w_img = img.shape[:2]
+                crop_sz = min(h_img, w_img)
+                cx, cy = w_img // 2, h_img // 2
+                x1 = max(0, cx - crop_sz // 2)
+                y1 = max(0, cy - crop_sz // 2)
+                crop = img[y1:y1+crop_sz, x1:x1+crop_sz]
+                if crop.size > 0:
+                    avatar_img = cv2.resize(crop, (160, 160), interpolation=cv2.INTER_LANCZOS4)
+                    try:
+                        cv2.imwrite(str(target_save_file), avatar_img, [cv2.IMWRITE_WEBP_QUALITY, 92])
+                    except Exception: pass
+                    _, buf = cv2.imencode('.webp', avatar_img, [cv2.IMWRITE_WEBP_QUALITY, 92])
+                    res = Response(buf.tobytes(), mimetype='image/webp')
+                    res.headers['Cache-Control'] = 'public, max-age=604800, immutable'
+                    return res
+
+        # Load centroids from centroids.pkl
+        centroids_map = {}
+        c_pkl = APP_DIR / "centroids.pkl"
+        if c_pkl.exists():
+            try:
+                with open(c_pkl, 'rb') as f:
+                    centroids_map = pickle.load(f)
+            except Exception:
+                pass
+
+        target_centroid = centroids_map.get((cat, ident))
+        if target_centroid is None:
+            for k, v in centroids_map.items():
+                if k[1].lower() == ident.lower():
+                    target_centroid = v
+                    break
+
+        yo_centroid = centroids_map.get(('YO', 'YO'))
+        yo_norm = yo_centroid / (np.linalg.norm(yo_centroid) + 1e-10) if yo_centroid is not None else None
+        target_norm = target_centroid / (np.linalg.norm(target_centroid) + 1e-10) if target_centroid is not None else None
 
         best_crop = None
         best_quality = -1.0
+        fallback_crop = None
         
         for c_path in candidate_paths[:15]:
             if not c_path or not os.path.exists(c_path): continue
@@ -783,6 +901,12 @@ def api_person_avatar():
             if img is None: continue
             
             h_img, w_img = img.shape[:2]
+            if fallback_crop is None:
+                crop_sz = min(h_img, w_img)
+                cx, cy = w_img // 2, h_img // 2
+                x1 = max(0, cx - crop_sz // 2)
+                y1 = max(0, cy - crop_sz // 2)
+                fallback_crop = img[y1:y1+crop_sz, x1:x1+crop_sz]
             
             # Scaled detection for YuNet (1024px)
             max_dim = 1024
@@ -825,19 +949,28 @@ def api_person_avatar():
                     if w < 24 or h < 24: continue
                     
                     # Extract embedding to verify identity
-                    sim = 1.0
-                    if target_centroid is not None and recognizer is not None:
+                    sim = 0.5
+                    if recognizer is not None:
                         try:
                             aligned = recognizer.alignCrop(img, face_raw)
                             feat = recognizer.feature(aligned)[0]
                             feat_norm = feat / (np.linalg.norm(feat) + 1e-10)
-                            c_norm = target_centroid / (np.linalg.norm(target_centroid) + 1e-10)
-                            sim = float(np.dot(feat_norm, c_norm))
+                            
+                            # Differentiate between Target and Eneko (YO)
+                            sim_yo = float(np.dot(feat_norm, yo_norm)) if yo_norm is not None else 0.0
+                            sim_target = float(np.dot(feat_norm, target_norm)) if target_norm is not None else 0.5
+                            
+                            # CRITICAL: NEVER pick Eneko's face for family members / acquaintances!
+                            if cat != 'YO' and yo_norm is not None:
+                                if sim_yo >= sim_target or (sim_yo > 0.45 and sim_target < sim_yo + 0.08):
+                                    continue
+                                    
+                            if target_norm is not None and sim_target < 0.45:
+                                continue
+                                
+                            sim = sim_target
                         except Exception:
                             sim = 0.5
-                    
-                    if sim < 0.40: # Not the target person
-                        continue
                         
                     x1, y1 = max(0, x), max(0, y)
                     x2, y2 = min(w_img, x + w), min(h_img, y + h)
@@ -846,17 +979,14 @@ def api_person_avatar():
                     face_box = img[y1:y2, x1:x2]
                     gray = cv2.cvtColor(face_box, cv2.COLOR_BGR2GRAY)
                     
-                    # Laplacian sharpness variance
                     lap_var = float(cv2.Laplacian(gray, cv2.CV_64F).var())
                     sharpness_score = min(lap_var / 350.0, 1.0)
                     size_score = min(np.sqrt(w * h) / 160.0, 1.0)
                     
-                    # Combined quality score
-                    quality = 0.50 * sim + 0.30 * sharpness_score + 0.20 * size_score
+                    quality = 0.60 * sim + 0.25 * sharpness_score + 0.15 * size_score
                     
                     if quality > best_quality:
                         best_quality = quality
-                        # Strict <= 15% padding
                         pad_x = int(min(w * 0.15, x, w_img - (x + w)))
                         pad_y = int(min(h * 0.15, y, h_img - (y + h)))
                         px1, py1 = max(0, x - pad_x), max(0, y - pad_y)
@@ -865,8 +995,12 @@ def api_person_avatar():
                 except Exception:
                     pass
                     
+        # If no face passed but we have a photo, use fallback center crop instead of blank SVG
         if best_crop is None or best_crop.size == 0:
-            return Response(default_svg, mimetype='image/svg+xml')
+            if fallback_crop is not None and fallback_crop.size > 0:
+                best_crop = fallback_crop
+            else:
+                return Response(default_svg, mimetype='image/svg+xml')
 
         # Resize avatar to crisp 160x160 webp with Lanczos interpolation
         avatar_img = cv2.resize(best_crop, (160, 160), interpolation=cv2.INTER_LANCZOS4)
@@ -881,7 +1015,7 @@ def api_person_avatar():
         res = Response(buf.tobytes(), mimetype='image/webp')
         res.headers['Cache-Control'] = 'public, max-age=604800, immutable'
         return res
-    except Exception as e:
+    except Exception:
         return Response(default_svg, mimetype='image/svg+xml')
 
 def api_thumbnail():

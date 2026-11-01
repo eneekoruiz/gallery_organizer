@@ -1300,36 +1300,31 @@ async function filterTimeline(year) {
             let overlayTimer = null;
             
             if (isFirstLoad && overlay) {
-                // Do NOT flash the overlay if the cached gallery loads in < 700ms
-                overlayTimer = setTimeout(() => {
-                    overlay.style.opacity = '1';
-                    overlay.style.visibility = 'visible';
-                    overlay.style.display = 'flex';
-                    
-                    progressInterval = setInterval(async () => {
-                        try {
-                            const r = await fetch('/api/gallery/progress');
-                            const d = await r.json();
-                            const progressVal = Math.round(d.progress || 0);
-                            
-                            if (progressBar) progressBar.style.width = `${progressVal}%`;
-                            if (progressPct) progressPct.textContent = `${progressVal}%`;
-                            if (statusText) {
-                                if (progressVal < 20) {
-                                    statusText.textContent = "Escaneando archivos de la biblioteca...";
-                                } else if (progressVal < 50) {
-                                    statusText.textContent = "Sincronizando fotos e identidades...";
-                                } else if (progressVal < 75) {
-                                    statusText.textContent = "Analizando agrupaciones de caras...";
-                                } else if (progressVal < 95) {
-                                    statusText.textContent = "Construyendo índices de álbumes...";
-                                } else {
-                                    statusText.textContent = "¡Casi listo! Cargando interfaz...";
-                                }
+                progressInterval = setInterval(async () => {
+                    try {
+                        const r = await fetch('/api/gallery/progress');
+                        const d = await r.json();
+                        const progressVal = Math.round(d.progress || 0);
+                        
+                        if (progressBar) progressBar.style.width = `${progressVal}%`;
+                        if (progressPct) progressPct.textContent = `${progressVal}%`;
+                        if (statusText) {
+                            if (progressVal < 20) {
+                                statusText.textContent = "Escaneando archivos de la biblioteca...";
+                            } else if (progressVal < 50) {
+                                statusText.textContent = "Sincronizando fotos e identidades...";
+                            } else if (progressVal < 75) {
+                                statusText.textContent = "Analizando agrupaciones de caras...";
+                            } else if (progressVal < 95) {
+                                statusText.textContent = "Construyendo índices de álbumes...";
+                            } else {
+                                statusText.textContent = "¡Casi listo! Cargando interfaz...";
                             }
-                        } catch(e){}
-                    }, 300);
-                }, 700);
+                        }
+                    } catch(e){}
+                }, 300);
+            } else if (overlay) {
+                overlay.style.display = 'none';
             }
 
             try {
@@ -1405,10 +1400,11 @@ async function filterTimeline(year) {
                 }
                 
                 if (isFirstLoad && overlay) {
-                    if (overlayTimer) clearTimeout(overlayTimer);
                     overlay.style.opacity = '0';
-                    overlay.style.visibility = 'hidden';
-                    overlay.style.display = 'none';
+                    setTimeout(() => {
+                        overlay.style.visibility = 'hidden';
+                        overlay.style.display = 'none';
+                    }, 350);
                 }
             } catch (err) {
                 if (progressInterval) clearInterval(progressInterval);
@@ -1829,17 +1825,24 @@ async function filterTimeline(year) {
                 }
                 card.appendChild(badge);
 
-                // OS Badge
+                // OS Device Origin Badge
                 const osBadge = document.createElement('span');
+                osBadge.className = 'os-device-badge';
+                const isApple = Boolean(item.is_apple || item.device_origin === 'apple');
+                
                 osBadge.style.cssText = `
                     position: absolute; top: 10px; right: 10px;
-                    font-size: 14px; background: rgba(0,0,0,0.6);
-                    backdrop-filter: blur(4px); padding: 4px; border-radius: 6px;
-                    z-index: 10; display: flex; align-items: center; justify-content: center;
-                    box-shadow: 0 2px 8px rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.1);
+                    font-size: 12px; font-weight: 700;
+                    background: ${isApple ? 'rgba(255, 45, 85, 0.25)' : (item.device_origin === 'android' ? 'rgba(52, 199, 89, 0.25)' : 'rgba(0, 0, 0, 0.65)')};
+                    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+                    padding: 3px 8px; border-radius: 8px;
+                    z-index: 10; display: flex; align-items: center; gap: 4px;
+                    box-shadow: 0 3px 10px rgba(0,0,0,0.4);
+                    border: 1px solid ${isApple ? 'rgba(255, 45, 85, 0.5)' : (item.device_origin === 'android' ? 'rgba(52, 199, 89, 0.5)' : 'rgba(255,255,255,0.15)')};
+                    color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,0.8);
                 `;
-                osBadge.innerHTML = item.is_apple ? '🍎' : '🤖';
-                osBadge.title = item.is_apple ? 'Foto de iCloud (Apple)' : 'Foto de Galería (Android)';
+                osBadge.innerHTML = isApple ? '🍎 <span style="font-size:11px;opacity:0.95;">Apple</span>' : (item.device_origin === 'android' ? '🤖 <span style="font-size:11px;opacity:0.95;">Android</span>' : '📷 <span style="font-size:11px;opacity:0.95;">Foto</span>');
+                osBadge.title = isApple ? 'Foto de Apple iPhone / iCloud' : (item.device_origin === 'android' ? 'Foto de Dispositivo Android' : 'Foto de Cámara / Otro origen');
                 card.appendChild(osBadge);
 
                 // Confidence badge
@@ -2735,7 +2738,11 @@ async function openLightbox(item) {
             const metaRes = document.getElementById('meta-res');
             if (metaRes) metaRes.textContent = data.resolution || '-';
             const metaCam = document.getElementById('meta-cam');
-            if (metaCam) metaCam.textContent = data.camera || '-';
+            if (metaCam) {
+                const devIcon = (data.device_origin === 'apple' || data.is_apple) ? '🍎 ' : (data.device_origin === 'android' ? '🤖 ' : '📷 ');
+                const camName = (data.camera && data.camera !== 'Desconocida') ? data.camera : (data.is_apple ? 'Apple iPhone' : (data.device_origin === 'android' ? 'Dispositivo Android' : 'Cámara'));
+                metaCam.textContent = devIcon + camName;
+            }
         }).catch(() => {});
 
     // IA de Nitidez y Duplicados
@@ -3955,16 +3962,32 @@ function toggleMetadata() {
 
 
 let currentPhotoFilterMode = 'all';
+let currentDeviceOriginFilter = 'all';
 
 function setPhotoFilter(mode, btnEl) {
     currentPhotoFilterMode = mode;
-    document.querySelectorAll('.filter-toggle-btn').forEach(b => {
+    document.querySelectorAll('#filter-toggle-container .filter-toggle-btn').forEach(b => {
         b.style.background = 'transparent';
         b.style.color = '#aaa';
         b.style.fontWeight = 'normal';
     });
     if (btnEl) {
         btnEl.style.background = '#0a84ff';
+        btnEl.style.color = 'white';
+        btnEl.style.fontWeight = 'bold';
+    }
+    applyPhotoFilter();
+}
+
+function setDeviceOriginFilter(mode, btnEl) {
+    currentDeviceOriginFilter = mode;
+    document.querySelectorAll('#device-filter-container .filter-toggle-btn').forEach(b => {
+        b.style.background = 'transparent';
+        b.style.color = '#aaa';
+        b.style.fontWeight = 'normal';
+    });
+    if (btnEl) {
+        btnEl.style.background = (mode === 'apple') ? '#ff2d55' : (mode === 'android' ? '#30d158' : '#0a84ff');
         btnEl.style.color = 'white';
         btnEl.style.fontWeight = 'bold';
     }
@@ -4011,6 +4034,16 @@ function applyPhotoFilter() {
             show = item.has_yo === false;
         } else if (currentPhotoFilterMode === 'dudoso') {
             show = Boolean(item.is_dudoso || item.status === 'Dudoso' || (item.source && item.source.includes('Por Confirmar')));
+        }
+
+        // Filter by Device Origin (Apple vs Android)
+        if (show && currentDeviceOriginFilter !== 'all') {
+            const isAppleItem = Boolean(item.is_apple || item.device_origin === 'apple');
+            if (currentDeviceOriginFilter === 'apple' && !isAppleItem) {
+                show = false;
+            } else if (currentDeviceOriginFilter === 'android' && (isAppleItem || item.device_origin !== 'android')) {
+                show = false;
+            }
         }
 
         if (hideBlurryImages && item.quality_score !== undefined && parseFloat(item.quality_score) < 100) {
