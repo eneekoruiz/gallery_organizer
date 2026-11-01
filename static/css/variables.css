@@ -1,0 +1,44 @@
+﻿:root {
+    /* Color Palette */
+    --bg-dark: #090a0d;
+    --bg-surface: #121318;
+    --bg-panel: rgba(24, 24, 28, 0.75);
+    --bg-hover: rgba(255, 255, 255, 0.08);
+    --bg-card: rgba(255, 255, 255, 0.04);
+    
+    /* Accent & Brand Colors */
+    --accent: #0a84ff;
+    --accent-hover: #0070e0;
+    --accent-glow: rgba(10, 132, 255, 0.35);
+    
+    /* Semantic Colors */
+    --success: #30d158;
+    --warning: #ffd60a;
+    --danger: #ff453a;
+    --purple: #bf5af2;
+    --cyan: #64d2ff;
+    
+    /* Text Colors */
+    --text-primary: #ffffff;
+    --text-secondary: #e5e5ea;
+    --text-muted: #8e8e93;
+    --text-dim: #636366;
+    
+    /* Borders & Outlines */
+    --border-subtle: rgba(255, 255, 255, 0.08);
+    --border-medium: rgba(255, 255, 255, 0.15);
+    --border-highlight: rgba(255, 255, 255, 0.25);
+    
+    /* Radius & Spacing */
+    --radius-sm: 8px;
+    --radius-md: 12px;
+    --radius-lg: 18px;
+    --radius-full: 9999px;
+    --sidebar-width: 290px;
+    
+    /* Transitions & Curves */
+    --ease-spring: cubic-bezier(0.16, 1, 0.3, 1);
+    --transition-fast: 0.15s ease;
+    --transition-normal: 0.25s var(--ease-spring);
+    --transition-slow: 0.4s var(--ease-spring);
+}

@@ -1,0 +1,188 @@
+﻿.modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.85);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+}
+
+.modal-card {
+    background: rgba(24, 24, 28, 0.98);
+    border: 1px solid var(--border-medium);
+    border-radius: var(--radius-lg);
+    padding: 26px;
+    color: var(--text-primary);
+    box-shadow: 0 25px 70px rgba(0,0,0,0.9);
+    position: relative;
+    max-height: 90vh;
+    overflow-y: auto;
+}
+
+.nav-tab-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 14px;
+    border-radius: var(--radius-sm);
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.nav-tab-item:hover {
+    color: var(--text-primary);
+    background: var(--bg-hover);
+}
+
+.nav-tab-item.active {
+    background: rgba(255, 255, 255, 0.12);
+    color: var(--text-primary);
+}
+
+/* ==========================================================================
+   SETTINGS & TOOLS RIGHT DRAWER (Strictly Hidden by default)
+   ========================================================================== */
+.drawer-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    z-index: 9000;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: opacity 0.3s ease, visibility 0.3s ease;
+}
+
+.drawer-overlay.active {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+}
+
+.settings-drawer {
+    position: fixed;
+    top: 0;
+    right: 0;
+    width: 440px;
+    max-width: 95vw;
+    height: 100vh;
+    background: #14151a;
+    border-left: 1px solid rgba(255, 255, 255, 0.12);
+    box-shadow: -15px 0 50px rgba(0, 0, 0, 0.85);
+    z-index: 9999;
+    transform: translateX(100%);
+    transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.settings-drawer.open {
+    transform: translateX(0) !important;
+}
+
+.drawer-header {
+    padding: 18px 22px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+.drawer-close-btn {
+    background: transparent;
+    border: none;
+    color: #8e8e93;
+    font-size: 24px;
+    cursor: pointer;
+    line-height: 1;
+    padding: 4px;
+    transition: color 0.2s;
+}
+
+.drawer-close-btn:hover {
+    color: #fff;
+}
+
+.drawer-body {
+    padding: 20px 22px;
+    overflow-y: auto;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+}
+
+.drawer-section {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: var(--radius-md);
+    padding: 16px;
+}
+
+.drawer-section-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: #fff;
+    margin-bottom: 6px;
+}
+
+.drawer-section-desc {
+    font-size: 11px;
+    color: #8e8e93;
+    line-height: 1.4;
+    margin-bottom: 12px;
+}
+
+.drawer-btn {
+    width: 100%;
+    padding: 10px 14px;
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    border: none;
+    transition: all 0.2s ease;
+}
+
+.action-btn-blue {
+    background: rgba(10, 132, 255, 0.2);
+    border: 1px solid rgba(10, 132, 255, 0.4);
+    color: #64d2ff;
+}
+
+.action-btn-blue:hover {
+    background: rgba(10, 132, 255, 0.35);
+}
+
+.action-btn-purple {
+    background: rgba(191, 90, 242, 0.2);
+    border: 1px solid rgba(191, 90, 242, 0.4);
+    color: #da8fff;
+}
+
+.action-btn-purple:hover {
+    background: rgba(191, 90, 242, 0.35);
+}
+
+.action-btn-green {
+    background: rgba(48, 209, 88, 0.2);
+    border: 1px solid rgba(48, 209, 88, 0.4);
+    color: #30d158;
+}
+
+.action-btn-green:hover {
+    background: rgba(48, 209, 88, 0.35);
+}

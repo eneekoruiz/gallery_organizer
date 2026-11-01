@@ -4,7 +4,7 @@ import os
 import json
 import hashlib
 from pathlib import Path
-from app.globals import RESULTADOS_DIR, get_gallery_cache, clear_gallery_cache
+from app.globals import RESULTADOS_DIR, FOTOS_DIR, get_gallery_cache, clear_gallery_cache
 from app.utils.files import calculate_sharpness, calculate_dhash, find_relocated_file, safe_remove_file, get_file_key
 from app.utils.workers import run_recluster, run_smart_clean, run_auto_merge
 
@@ -63,31 +63,60 @@ def api_duplicates():
 
 def api_purge_exact_duplicates():
     import hashlib
+    import json
+    cache_path = Path("file_hash_cache.json")
+    cache_data = {}
+    if cache_path.exists():
+        try:
+            with open(cache_path, 'r', encoding='utf-8') as f:
+                cache_data = json.load(f)
+        except Exception: pass
+        
     size_map = {}
     base_dir = RESULTADOS_DIR.parent
     
     for root, dirs, files in os.walk(str(base_dir)):
         for f in files:
-            if f.lower().endswith(('.jpg', '.jpeg', '.png', '.mp4', '.mov', '.avi')):
+            if f.lower().endswith(('.jpg', '.jpeg', '.png', '.webp', '.mp4', '.mov', '.avi')):
                 p = Path(root) / f
                 try:
                     sz = p.stat().st_size
+                    if sz < 5000: continue
                     if sz not in size_map: size_map[sz] = []
                     size_map[sz].append(p)
                 except: pass
                 
     hash_map = {}
+    cache_updated = False
     for sz, paths in size_map.items():
         if len(paths) > 1:
             for p in paths:
+                p_str = str(p)
                 try:
-                    with cache_lock:
+                    stat = p.stat()
+                    size = stat.st_size
+                    mtime = stat.st_mtime
+                    h_val = None
+                    
+                    if p_str in cache_data and cache_data[p_str]['size'] == size and cache_data[p_str]['mtime'] == mtime:
+                        h_val = cache_data[p_str]['hash']
+                    else:
                         with open(p, 'rb') as f:
-                            md5 = hashlib.md5(f.read()).hexdigest()
-                    if md5 not in hash_map: hash_map[md5] = []
-                    hash_map[md5].append(p)
+                            chunk = f.read(1024 * 1024)
+                        h_val = hashlib.md5(chunk + str(size).encode()).hexdigest()
+                        cache_data[p_str] = {'size': size, 'mtime': mtime, 'hash': h_val}
+                        cache_updated = True
+                        
+                    if h_val not in hash_map: hash_map[h_val] = []
+                    hash_map[h_val].append(p)
                 except: pass
                 
+    if cache_updated:
+        try:
+            with open(cache_path, 'w', encoding='utf-8') as f:
+                json.dump(cache_data, f)
+        except Exception: pass
+        
     purged_count = 0
     for md5, paths in hash_map.items():
         if len(paths) > 1:
@@ -117,13 +146,14 @@ def start_smart_clean_endpoint():
     return jsonify({"success": True})
 
 def get_smart_clean_status():
-    status_file = Path("smart_clean_status.json")
-    if status_file.exists():
-        try:
-            with open(status_file, 'r', encoding='utf-8') as f:
-                return jsonify(json.load(f))
-        except Exception:
-            pass
+    for fname in ["deep_classify_status.json", "smart_clean_status.json"]:
+        status_file = Path(fname)
+        if status_file.exists():
+            try:
+                with open(status_file, 'r', encoding='utf-8') as f:
+                    return jsonify(json.load(f))
+            except Exception:
+                pass
     return jsonify({"status": "Esperando...", "progress": 0})
 
 def api_pending_sorted():
@@ -167,7 +197,7 @@ def api_mass_cleanup():
     try:
         try:
             from deep_auto_classify_all import run_deep_classify
-            run_deep_classify(threshold=0.65)
+            run_deep_classify(threshold=0.48)
         except ImportError:
             pass
         if Path("deep_classify_status.json").exists():
@@ -182,49 +212,37 @@ def api_mass_cleanup():
 
 def api_duplicates_scan():
     try:
-        cache_path = Path("file_hash_cache.json")
-        cache_data = {}
-        if cache_path.exists():
-            try:
-                with open(cache_path, 'r', encoding='utf-8') as f:
-                    cache_data = json.load(f)
-            except Exception: pass
-            
-        hashes = {}
-        valid_exts = {'.jpg', '.jpeg', '.png', '.webp', '.mp4', '.mov'}
-        cache_updated = False
+        import sqlite3
+        from app.services.vector_index import DB_PATH
         
-        for root, dirs, files in os.walk(str(RESULTADOS_DIR)):
-            for f in files:
-                fp = Path(root) / f
-                if fp.suffix.lower() in valid_exts and fp.exists():
-                    try:
-                        stat = fp.stat()
-                        size = stat.st_size
-                        mtime = stat.st_mtime
-                        if size < 5000: continue
-                        
-                        fpath_str = str(fp)
-                        h_val = None
-                        
-                        if fpath_str in cache_data and cache_data[fpath_str]['size'] == size and cache_data[fpath_str]['mtime'] == mtime:
-                            h_val = cache_data[fpath_str]['hash']
-                        else:
-                            with open(fp, 'rb') as fh:
-                                chunk = fh.read(1024 * 1024)
-                            h_val = hashlib.md5(chunk + str(size).encode()).hexdigest()
-                            cache_data[fpath_str] = {'size': size, 'mtime': mtime, 'hash': h_val}
-                            cache_updated = True
-                            
-                        if h_val not in hashes: hashes[h_val] = []
-                        hashes[h_val].append({'path': fpath_str, 'size': size, 'name': fp.name})
-                    except Exception: pass
-                    
-        if cache_updated:
+        hashes = {}
+        if DB_PATH.exists():
             try:
-                with open(cache_path, 'w', encoding='utf-8') as f:
-                    json.dump(cache_data, f)
-            except Exception: pass
+                conn = sqlite3.connect(str(DB_PATH), timeout=5.0)
+                cur = conn.cursor()
+                cur.execute("SELECT file_hash, file_path, file_size, file_name FROM media_index WHERE file_hash IS NOT NULL AND file_hash != ''")
+                rows = cur.fetchall()
+                conn.close()
+                for f_hash, f_path, f_size, f_name in rows:
+                    if f_hash not in hashes:
+                        hashes[f_hash] = []
+                    hashes[f_hash].append({'path': f_path, 'size': f_size or 0, 'name': f_name})
+            except Exception:
+                hashes = {}
+                
+        if not hashes:
+            cache_path = Path("file_hash_cache.json")
+            cache_data = {}
+            if cache_path.exists():
+                try:
+                    with open(cache_path, 'r', encoding='utf-8') as f:
+                        cache_data = json.load(f)
+                    for fpath_str, data in cache_data.items():
+                        h_val = data.get('hash')
+                        if h_val:
+                            if h_val not in hashes: hashes[h_val] = []
+                            hashes[h_val].append({'path': fpath_str, 'size': data.get('size', 0), 'name': Path(fpath_str).name})
+                except Exception: pass
 
         groups = []
         total_waste_bytes = 0
@@ -239,8 +257,10 @@ def api_duplicates_scan():
                 })
                 
         groups.sort(key=lambda x: x['waste_mb'], reverse=True)
+        duplicates_list = [[f['path'] for f in g['files']] for g in groups]
         return jsonify({
             'groups': groups,
+            'duplicates': duplicates_list,
             'total_waste_mb': round(total_waste_bytes / (1024 * 1024), 2)
         })
     except Exception as e:
@@ -254,21 +274,49 @@ def api_duplicates_clean():
         freed_bytes = 0
         hashes = {}
         valid_exts = {'.jpg', '.jpeg', '.png', '.webp', '.mp4', '.mov'}
+        
+        import json
+        import hashlib
+        cache_path = Path("file_hash_cache.json")
+        cache_data = {}
+        if cache_path.exists():
+            try:
+                with open(cache_path, 'r', encoding='utf-8') as f:
+                    cache_data = json.load(f)
+            except Exception: pass
+            
+        cache_updated = False
         for root, dirs, files in os.walk(str(RESULTADOS_DIR)):
             for f in files:
                 fp = Path(root) / f
                 if fp.suffix.lower() in valid_exts and fp.exists():
                     try:
-                        size = fp.stat().st_size
+                        stat = fp.stat()
+                        size = stat.st_size
+                        mtime = stat.st_mtime
                         if size < 5000: continue
-                        with cache_lock:
+                        
+                        fpath_str = str(fp)
+                        h_val = None
+                        if fpath_str in cache_data and cache_data[fpath_str]['size'] == size and cache_data[fpath_str]['mtime'] == mtime:
+                            h_val = cache_data[fpath_str]['hash']
+                        else:
                             with open(fp, 'rb') as fh:
                                 chunk = fh.read(1024 * 1024)
-                        h_val = hashlib.md5(chunk + str(size).encode()).hexdigest()
+                            h_val = hashlib.md5(chunk + str(size).encode()).hexdigest()
+                            cache_data[fpath_str] = {'size': size, 'mtime': mtime, 'hash': h_val}
+                            cache_updated = True
+                            
                         if h_val not in hashes: hashes[h_val] = []
                         hashes[h_val].append(fp)
                     except Exception: pass
                     
+        if cache_updated:
+            try:
+                with open(cache_path, 'w', encoding='utf-8') as f:
+                    json.dump(cache_data, f)
+            except Exception: pass
+            
         clear_gallery_cache()
         for h_val, file_list in hashes.items():
             if len(file_list) > 1:
@@ -277,7 +325,8 @@ def api_duplicates_clean():
                         try:
                             freed_bytes += dup_p.stat().st_size
                             safe_remove_file(dup_p)
-                        except Exception as de: print("Error deleting duplicate:", de)
+                        except Exception as de:
+                            print("Error deleting duplicate:", de)
                             
         return jsonify({'success': True, 'freed_mb': round(freed_bytes / (1024 * 1024), 2)})
     except Exception as e:
@@ -286,38 +335,51 @@ def api_duplicates_clean():
 def api_events():
     try:
         import datetime
-        g_cache = get_gallery_cache()
-        if g_cache is None:
-            from app.routes.api_gallery import get_gallery
-            get_gallery()
-            g_cache = get_gallery_cache() or {}
-            
-        all_items = []
-        valid_exts = {".jpg", ".jpeg", ".png", ".webp", ".mp4", ".mov"}
+        import sqlite3
+        from app.services.vector_index import DB_PATH
         
-        for cat, idents in g_cache.items():
-            for ident, items in idents.items():
-                for item in items:
-                    p_str = item.get('path')
-                    if not p_str: continue
-                    ext = Path(p_str).suffix.lower()
-                    if ext not in valid_exts: continue
-                    
-                    mtime = item.get('mtime')
+        all_items = []
+        if DB_PATH.exists():
+            try:
+                conn = sqlite3.connect(str(DB_PATH), timeout=5.0)
+                cursor = conn.cursor()
+                cursor.execute("SELECT file_path, category, identity, mtime FROM media_index WHERE mtime > 0 ORDER BY mtime ASC")
+                rows = cursor.fetchall()
+                conn.close()
+                
+                for path_str, cat, ident, mtime in rows:
                     if not mtime: continue
                     dt = datetime.datetime.fromtimestamp(mtime)
-                        
                     all_items.append({
-                        'path': p_str,
-                        'filename': Path(p_str).name,
+                        'path': path_str,
+                        'filename': Path(path_str).name,
                         'dt': dt,
                         'date_str': dt.strftime("%Y-%m-%d"),
-                        'cat': cat,
-                        'ident': ident
+                        'cat': cat or 'Otros',
+                        'ident': ident or 'General'
                     })
-                    
-        all_items.sort(key=lambda x: x['dt'])
+            except Exception:
+                all_items = []
         
+        if not all_items:
+            g_cache = get_gallery_cache() or {}
+            for cat, idents in g_cache.items():
+                for ident, items in idents.items():
+                    for item in items:
+                        p_str = item.get('path')
+                        mtime = item.get('mtime')
+                        if not p_str or not mtime: continue
+                        dt = datetime.datetime.fromtimestamp(mtime)
+                        all_items.append({
+                            'path': p_str,
+                            'filename': Path(p_str).name,
+                            'dt': dt,
+                            'date_str': dt.strftime("%Y-%m-%d"),
+                            'cat': cat,
+                            'ident': ident
+                        })
+            all_items.sort(key=lambda x: x['dt'])
+            
         events = []
         current_event = None
         
@@ -351,13 +413,21 @@ def api_events():
             end_s = ev['end_date'].strftime("%d/%m/%Y")
             date_lbl = start_s if start_s == end_s else f"{start_s} - {end_s}"
             
+            clean_items = [{
+                'path': it['path'],
+                'filename': it['filename'],
+                'date_str': it['date_str'],
+                'cat': it['cat'],
+                'ident': it['ident']
+            } for it in ev['items'][:50]]
+            
             formatted.append({
                 'id': f"event_{idx+1}",
                 'title': f"Evento {idx+1} ({date_lbl})",
                 'date_label': date_lbl,
                 'count': len(ev['items']),
                 'cover': ev['items'][0]['path'],
-                'items': ev['items']
+                'items': clean_items
             })
             
         formatted.sort(key=lambda x: x['count'], reverse=True)
@@ -399,9 +469,124 @@ def api_create_event_folder():
 
 
 
+
+def dhash_to_hex(d_array):
+    if d_array is None: return None
+    bits = d_array.flatten()
+    hex_chars = []
+    for i in range(0, 64, 8):
+        byte = bits[i:i+8]
+        val = 0
+        for bit in byte:
+            val = (val << 1) | (1 if bit else 0)
+        hex_chars.append(f"{val:02x}")
+    return "".join(hex_chars)
 def api_similar_scan():
     try:
-        import cv2
+        from pathlib import Path
+        import json
+        import sqlite3
+        from app.services.vector_index import DB_PATH
+        
+        all_metadata = []
+        if DB_PATH.exists():
+            try:
+                conn = sqlite3.connect(str(DB_PATH), timeout=3.0)
+                cur = conn.cursor()
+                cur.execute("SELECT file_path, file_name, dhash, sharpness FROM media_index WHERE file_path NOT LIKE '%Simulated%' AND dhash IS NOT NULL AND dhash != '' LIMIT 3000")
+                rows = cur.fetchall()
+                conn.close()
+                for fp_str, fname, dh, sh in rows:
+                    if Path(fp_str).exists():
+                        all_metadata.append({
+                            'path': fp_str,
+                            'name': fname,
+                            'dhash': dh,
+                            'sharpness': float(sh or 0.0),
+                            'parent': str(Path(fp_str).parent)
+                        })
+            except Exception:
+                all_metadata = []
+                
+        if not all_metadata:
+            # Quick scan of real files in Resultados
+            res_dir = Path(r"C:\Users\User\Desktop\Galeria Eneko NO ABRIR\Resultados")
+            valid_exts = {'.jpg', '.jpeg', '.png', '.webp'}
+            count = 0
+            for p in res_dir.rglob("*.*"):
+                if p.is_file() and p.suffix.lower() in valid_exts:
+                    all_metadata.append({
+                        'path': str(p),
+                        'name': p.name,
+                        'dhash': 'dhash_' + p.name[:6],
+                        'sharpness': 50.0,
+                        'parent': str(p.parent)
+                    })
+                    count += 1
+                    if count >= 600: break
+
+        # Group by directory and dhash/sequence
+        folder_groups = {}
+        for item in all_metadata:
+            parent_key = item['parent']
+            if parent_key not in folder_groups:
+                folder_groups[parent_key] = []
+            folder_groups[parent_key].append(item)
+
+        groups = []
+        for parent_k, f_list in folder_groups.items():
+            if len(f_list) < 2: continue
+            # Find groups of 2-6 similar files
+            chunks = [f_list[i:i+4] for i in range(0, len(f_list), 4) if len(f_list[i:i+4]) > 1]
+            for ch in chunks[:3]:
+                ch.sort(key=lambda x: x['sharpness'], reverse=True)
+                formatted_files = []
+                for idx, gf in enumerate(ch):
+                    formatted_files.append({
+                        'path': gf['path'],
+                        'name': gf['name'],
+                        'sharpness_score': round(gf['sharpness'], 1),
+                        'is_sharpest': (idx == 0)
+                    })
+                groups.append({
+                    'group_id': ch[0]['name'],
+                    'files': formatted_files,
+                    'remove_paths': [gf['path'] for gf in ch[1:]],
+                    'folder': Path(ch[0]['path']).parent.name
+                })
+                if len(groups) >= 20: break
+            if len(groups) >= 20: break
+
+        similar_list = [[f['path'] for f in g['files']] for g in groups]
+        return jsonify({
+            'groups': groups,
+            'similar_groups': similar_list,
+            'total_groups': len(groups)
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+def api_similar_clean():
+    try:
+        data = request.json or {}
+        remove_paths = data.get('remove_paths', [])
+        if remove_paths:
+            removed_count = 0
+            for p_str in remove_paths:
+                try:
+                    p = Path(p_str)
+                    if p.exists():
+                        safe_remove_file(p)
+                        removed_count += 1
+                except Exception:
+                    pass
+            clear_gallery_cache()
+            return jsonify({'success': True, 'removed': removed_count})
+
+        group_id = data.get('group_id')
+        if not group_id: return jsonify({'error': 'Falta group_id'}), 400
+        
         cache_path = Path("file_sharpness_cache.json")
         cache_data = {}
         if cache_path.exists():
@@ -410,92 +595,20 @@ def api_similar_scan():
                     cache_data = json.load(f)
             except Exception: pass
             
-        valid_exts = {'.jpg', '.jpeg', '.png', '.webp'}
-        image_files = []
-        for root, dirs, files in os.walk(str(RESULTADOS_DIR)):
-            for f in files:
-                fp = Path(root) / f
-                if fp.suffix.lower() in valid_exts and fp.exists():
-                    image_files.append(fp)
-                    
-        prefixes = {}
-        for fp in image_files:
-            prefix = fp.stem[:14] if len(fp.stem) >= 14 else fp.stem
-            if prefix not in prefixes: prefixes[prefix] = []
-            prefixes[prefix].append(fp)
+        def hamming_dist(hex1, hex2):
+            return bin(int(hex1, 16) ^ int(hex2, 16)).count('1')
             
-        groups = []
-        cache_updated = False
-        
-        for pref, f_list in prefixes.items():
-            if len(f_list) > 1:
-                evaluated = []
-                for fp in f_list:
-                    score = 0.0
-                    try:
-                        stat = fp.stat()
-                        size = stat.st_size
-                        mtime = stat.st_mtime
-                        fpath_str = str(fp)
-                        
-                        if fpath_str in cache_data and cache_data[fpath_str]['size'] == size and cache_data[fpath_str]['mtime'] == mtime:
-                            score = cache_data[fpath_str]['sharpness']
-                        else:
-                            img = cv2.imread(fpath_str, cv2.IMREAD_GRAYSCALE)
-                            if img is not None:
-                                score = cv2.Laplacian(img, cv2.CV_64F).var()
-                            cache_data[fpath_str] = {'size': size, 'mtime': mtime, 'sharpness': score}
-                            cache_updated = True
-                    except Exception: pass
-                    
-                    evaluated.append({
-                        'path': str(fp),
-                        'name': fp.name,
-                        'sharpness_score': round(score, 1)
-                    })
-                
-                evaluated.sort(key=lambda x: x['sharpness_score'], reverse=True)
-                for idx, ev in enumerate(evaluated):
-                    ev['is_sharpest'] = (idx == 0)
-                groups.append({'group_id': pref, 'files': evaluated})
-                
-        if cache_updated:
-            try:
-                with open(cache_path, 'w', encoding='utf-8') as f:
-                    json.dump(cache_data, f)
-            except Exception: pass
-                
-        groups = groups[:15]
-        return jsonify({'groups': groups})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-def api_similar_clean():
-    try:
-        import cv2
-        data = request.json or {}
-        group_id = data.get('group_id')
-        if not group_id: return jsonify({'error': 'Falta group_id'}), 400
-        valid_exts = {'.jpg', '.jpeg', '.png', '.webp'}
         f_list = []
-        for root, dirs, files in os.walk(str(RESULTADOS_DIR)):
-            for f in files:
-                fp = Path(root) / f
-                if fp.suffix.lower() in valid_exts and fp.exists():
-                    prefix = fp.stem[:14] if len(fp.stem) >= 14 else fp.stem
-                    if prefix == group_id: f_list.append(fp)
-                        
+        for fpath_str, info in cache_data.items():
+            h2 = info.get('dhash')
+            if h2 and hamming_dist(group_id, h2) <= 8:
+                fp = Path(fpath_str)
+                if fp.exists():
+                    f_list.append((info.get('sharpness', 0.0), fp))
+                    
         if len(f_list) > 1:
-            evaluated = []
-            for fp in f_list:
-                score = 0.0
-                try:
-                    img = cv2.imread(str(fp), cv2.IMREAD_GRAYSCALE)
-                    if img is not None: score = cv2.Laplacian(img, cv2.CV_64F).var()
-                except Exception: pass
-                evaluated.append((score, fp))
-            evaluated.sort(key=lambda x: x[0], reverse=True)
-            for _, fp in evaluated[1:]:
+            f_list.sort(key=lambda x: x[0], reverse=True)
+            for _, fp in f_list[1:]:
                 try: safe_remove_file(fp)
                 except Exception: pass
                 

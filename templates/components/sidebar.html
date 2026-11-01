@@ -1,0 +1,56 @@
+<aside class="sidebar">
+    <!-- Brand / Library Header -->
+    <div class="sidebar-header" style="padding: 16px 18px 12px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255,255,255,0.06); flex-shrink:0;">
+        <div style="display: flex; align-items: center; gap: 10px;">
+            <div style="width: 28px; height: 28px; border-radius: 8px; background: linear-gradient(135deg, #0a84ff, #bf5af2); display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 10px rgba(10,132,255,0.25);">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+            </div>
+            <div>
+                <h2 style="font-size: 0.95rem; font-weight: 700; color: #fff; margin: 0; letter-spacing: -0.3px;">Álbumes</h2>
+                <span id="sidebar-total-badge" style="font-size: 0.7rem; color: #8e8e93; font-weight: 500;">Fototeca Inteligente</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Quick Smart Tools Action Chips -->
+    <div style="padding: 10px 14px; display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 5px; border-bottom: 1px solid rgba(255,255,255,0.04); flex-shrink:0;">
+        <button class="smart-tool-chip" onclick="if(typeof openExactDuplicatesModal==='function')openExactDuplicatesModal()" title="Escanear y eliminar duplicados exactos en disco" style="background: rgba(255, 159, 10, 0.08); border: 1px solid rgba(255, 159, 10, 0.2); color: #ff9f0a; border-radius: 8px; padding: 6px 2px; font-size: 10.5px; font-weight: 600; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 2px; transition: all 0.15s;">
+            <span style="font-size: 13px;">⚡</span>
+            <span>Duplicados</span>
+        </button>
+
+        <button class="smart-tool-chip" onclick="if(typeof openSimilarPhotosModal==='function')openSimilarPhotosModal()" title="Agrupar secuencias y conservar solo la más nítida" style="background: rgba(191, 90, 242, 0.08); border: 1px solid rgba(191, 90, 242, 0.2); color: #da8fff; border-radius: 8px; padding: 6px 2px; font-size: 10.5px; font-weight: 600; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 2px; transition: all 0.15s;">
+            <span style="font-size: 13px;">📸</span>
+            <span>Ráfagas</span>
+        </button>
+
+        <button class="smart-tool-chip" onclick="if(typeof runMassCleanup==='function')runMassCleanup()" title="Auditoría y limpieza inteligente global" style="background: rgba(48, 209, 88, 0.08); border: 1px solid rgba(48, 209, 88, 0.2); color: #30d158; border-radius: 8px; padding: 6px 2px; font-size: 10.5px; font-weight: 600; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 2px; transition: all 0.15s;">
+            <span style="font-size: 13px;">🧹</span>
+            <span>Limpieza</span>
+        </button>
+
+        <button id="btn-video-indexer-chip" class="smart-tool-chip" onclick="if(typeof toggleVideoIndexer==='function')toggleVideoIndexer()" title="Pre-escanear caras en vídeos en segundo plano" style="background: rgba(10, 132, 255, 0.08); border: 1px solid rgba(10, 132, 255, 0.2); color: #64d2ff; border-radius: 8px; padding: 6px 2px; font-size: 10.5px; font-weight: 600; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 2px; transition: all 0.15s;">
+            <span id="video-indexer-icon" style="font-size: 13px;">🎬</span>
+            <span id="video-indexer-text">Vídeos</span>
+        </button>
+    </div>
+
+    <!-- Scrollable Sidebar Body with Tree & IA Suggestions -->
+    <div id="sidebar-scroll-area" class="custom-scrollbar" style="flex: 1; overflow-y: auto; padding: 8px 10px 20px; display:flex; flex-direction:column; gap:12px;">
+        <!-- IA Suggestions Compact Container -->
+        <div id="ia-suggestions-container" style="display: none; background: rgba(191, 90, 242, 0.06); border: 1px solid rgba(191, 90, 242, 0.2); border-radius: 12px; padding: 10px;">
+            <div style="font-size: 11px; font-weight: 700; color: #da8fff; margin-bottom: 8px; display:flex; align-items:center; gap:6px;">
+                <span>✨</span> <span>SUGERENCIAS DE FUSIÓN IA</span>
+            </div>
+            <div id="ia-suggestions-list"></div>
+        </div>
+        
+        <!-- Tree Navigation Container (Albums) -->
+        <div id="tree-container" style="flex:1;">
+            <div style="padding: 20px; text-align: center; color: #8e8e93;">
+                <div class="loader-small" style="margin: 0 auto 10px;"></div>
+                <span style="font-size: 12px;">Cargando álbumes...</span>
+            </div>
+        </div>
+    </div>
+</aside>

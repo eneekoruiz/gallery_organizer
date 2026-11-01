@@ -1,0 +1,463 @@
+    <!-- STATS MODAL -->
+    <div id="stats-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.85); backdrop-filter:blur(10px); z-index:10000; align-items:center; justify-content:center; padding:20px;">
+        <div class="modal-content" style="background:#1c1c1e; border:1px solid rgba(255,255,255,0.15); border-radius:18px; padding:25px; width:480px; max-width:92%; max-height:85vh; overflow-y:auto; color:white; position:relative; box-shadow:0 20px 50px rgba(0,0,0,0.8);">
+            <button onclick="document.getElementById('stats-modal').style.display = 'none'" style="position: absolute; top: 12px; right: 15px; background: none; border: none; color: #8e8e93; font-size: 24px; cursor: pointer;">&times;</button>
+            <h2 style="margin-top: 0; color: #ffcc00; text-align: center; display:flex; align-items:center; justify-content:center; gap:8px;">📊 Estadísticas de la Biblioteca</h2>
+            
+            <div id="stats-content" style="font-size: 14px; line-height: 1.8;">
+                <div style="text-align: center; padding: 20px;"><div class="loader-small"></div><p style="color:#aaa; margin-top:10px;">Cargando estadísticas...</p></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL REVISIÓN DE SUGERENCIA IA CON VISTA PREVIA FACIAL -->
+    <div id="modal-suggestion-preview" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.85); backdrop-filter:blur(15px); z-index:10000; align-items:center; justify-content:center; padding:20px;">
+        <div style="background:rgba(28,28,32,0.97); border:1px solid rgba(191,90,242,0.35); border-radius:20px; padding:28px; width:520px; max-width:94%; box-shadow:0 25px 60px rgba(0,0,0,0.8); color:white; position:relative;">
+            <button onclick="closeSuggestionPreviewModal()" style="position:absolute; top:14px; right:16px; background:none; border:none; color:#8e8e93; font-size:22px; cursor:pointer;">&times;</button>
+            
+            <div style="display:flex; align-items:center; gap:10px; margin-bottom:16px;">
+                <div style="width:36px; height:36px; border-radius:10px; background:linear-gradient(135deg, #bf5af2, #0a84ff); display:flex; align-items:center; justify-content:center; font-size:18px;">✨</div>
+                <div>
+                    <h3 style="margin:0; font-size:1.15rem; font-weight:700; color:#fff;">Sugerencia de Fusión IA</h3>
+                    <div id="sug-preview-subtitle" style="font-size:0.8rem; color:#8e8e93;">La IA ha detectado una alta probabilidad de coincidencia facial</div>
+                </div>
+            </div>
+
+            <!-- Comparador Visual Lado a Lado -->
+            <div style="display:grid; grid-template-columns:1fr auto 1fr; gap:14px; align-items:center; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.06); padding:16px; border-radius:16px; margin-bottom:20px;">
+                <!-- Origen (Persona Nueva) -->
+                <div style="text-align:center;">
+                    <div style="width:90px; height:90px; border-radius:50%; margin:0 auto 10px; overflow:hidden; border:2px solid rgba(191,90,242,0.6); box-shadow:0 6px 16px rgba(191,90,242,0.25); background:#1c1c1e;">
+                        <img id="sug-source-img" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E" style="width:100%; height:100%; object-fit:cover; display:block;" onerror="this.onerror=null; this.src=window.INLINE_PERSON_SVG;">
+                    </div>
+                    <div id="sug-source-name" style="font-weight:700; font-size:0.85rem; color:#fff; word-break:break-word;">Persona Nueva</div>
+                    <div id="sug-source-count" style="font-size:0.75rem; color:#8e8e93; margin-top:2px;">0 fotos</div>
+                </div>
+
+                <!-- Flecha y Porcentaje -->
+                <div style="text-align:center; padding:0 6px;">
+                    <div id="sug-similarity-badge" style="background:rgba(48,209,88,0.2); color:#30d158; border:1px solid rgba(48,209,88,0.4); padding:4px 8px; border-radius:12px; font-weight:800; font-size:0.85rem; margin-bottom:6px;">88%</div>
+                    <div style="font-size:1.2rem; color:#64d2ff;">➔</div>
+                </div>
+
+                <!-- Destino (Persona Conocida) -->
+                <div style="text-align:center;">
+                    <div style="width:90px; height:90px; border-radius:50%; margin:0 auto 10px; overflow:hidden; border:2px solid rgba(10,132,255,0.6); box-shadow:0 6px 16px rgba(10,132,255,0.25); background:#1c1c1e;">
+                        <img id="sug-target-img" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E" style="width:100%; height:100%; object-fit:cover; display:block;" onerror="this.onerror=null; this.src=window.INLINE_PERSON_SVG;">
+                    </div>
+                    <div id="sug-target-name" style="font-weight:700; font-size:0.85rem; color:#64d2ff; word-break:break-word;">Identidad</div>
+                    <div id="sug-target-count" style="font-size:0.75rem; color:#8e8e93; margin-top:2px;">0 fotos</div>
+                </div>
+            </div>
+
+            <!-- Botones de Acción -->
+            <div style="display:flex; flex-direction:column; gap:10px;">
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+                    <button id="btn-sug-view-photos" onclick="viewSuggestionSourcePhotos()" style="background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.12); color:#fff; padding:10px 14px; border-radius:12px; font-weight:600; font-size:0.85rem; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:6px;">
+                        👁️ Ver Fotos
+                    </button>
+                    <button id="btn-sug-open-options" onclick="openFullMergeFromSuggestion()" style="background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.12); color:#aaa; padding:10px 14px; border-radius:12px; font-weight:600; font-size:0.85rem; cursor:pointer;">
+                        ⚙️ Más Opciones
+                    </button>
+                </div>
+                <div style="display:grid; grid-template-columns:1fr 1.5fr; gap:10px; margin-top:4px;">
+                    <button onclick="closeSuggestionPreviewModal()" style="background:transparent; border:none; color:#8e8e93; padding:12px; font-size:0.9rem; cursor:pointer;">
+                        Descartar
+                    </button>
+                    <button id="btn-sug-confirm-merge" onclick="confirmSuggestionMergeDirect()" style="background:linear-gradient(135deg, #30d158, #28a745); border:none; color:#fff; padding:12px 18px; border-radius:12px; font-weight:700; font-size:0.95rem; cursor:pointer; box-shadow:0 4px 15px rgba(48,209,88,0.35); display:flex; align-items:center; justify-content:center; gap:8px;">
+                        ✅ Confirmar Fusión
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal de Fusión / Renombrado de Grupo -->
+    <div id="modal-merge" style="display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.85); backdrop-filter:blur(15px); z-index:9999; align-items:center; justify-content:center;">
+        <div style="background:rgba(28,28,30,0.95); border:1px solid rgba(255,255,255,0.2); border-radius:18px; padding:25px; width:440px; max-width:90%; box-shadow:0 20px 50px rgba(0,0,0,0.8); color:white;">
+
+
+            <h2 style="margin-top:0; font-size:1.25rem;"><svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M8 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm2-3a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm4 8c0 1-1 1-1 1H3s-1 0-1-1 1-4 6-4 6 3 6 4zm-1-.004c-.001-.246-.154-.986-.832-1.664C11.516 10.68 10.289 10 8 10c-2.29 0-3.516.68-4.168 1.332-.678.678-.83 1.418-.832 1.664h10z"/></svg> Fusionar o Renombrar Grupo</h2>
+
+            <p style="font-size:0.85rem; color:#aaa; margin-bottom:20px;">
+
+                Asigna las <strong id="merge-count-span">3</strong> fotos de '<span id="merge-group-name">Persona Nueva</span>' a una persona de tu galería para mejorar el aprendizaje IA:
+
+            </p>
+
+            
+
+            <div style="margin-bottom:15px;">
+
+                <label style="display:block; font-size:0.8rem; font-weight:bold; margin-bottom:6px; color:#30d158;">
+
+                    🔗 Opción A: Fusionar con persona ya existente
+
+                </label>
+
+                <div id="merge-existing-select" style="width:100%; max-height:200px; overflow-y:auto; border-radius:8px; background:#2c2c2e; border:1px solid #444; color:white; font-size:0.9rem;">
+
+                    <!-- Secciones plegables de categorías -->
+
+                </div>
+
+                <input type="hidden" id="merge-selected-value" value="">
+
+            </div>
+
+            
+
+            <div style="text-align:center; font-size:0.8rem; color:#666; margin:10px 0;">— O BIEN —</div>
+
+            
+
+            <div style="margin-bottom:20px;">
+
+                <label style="display:block; font-size:0.8rem; font-weight:bold; margin-bottom:6px; color:#0a84ff;">
+
+                    <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M5.121 12.596a.5.5 0 1 0-.242.97l.613.153a.5.5 0 0 0 .242-.97l-.613-.153zM10.879 12.596a.5.5 0 0 0 .242.97l.613-.153a.5.5 0 1 0-.242-.97l-.613.153zM8 15a.5.5 0 0 0 .5-.5V14a.5.5 0 0 0-1 0v.5a.5.5 0 0 0 .5.5zM3 8a.5.5 0 0 0 .5.5h.5a.5.5 0 0 0 0-1h-.5A.5.5 0 0 0 3 8zm9.5 0a.5.5 0 0 0 .5-.5h-.5a.5.5 0 0 0 0 1h.5a.5.5 0 0 0 .5-.5z"/></svg> Opción B: Crear una persona nueva
+
+                </label>
+
+                <input type="text" id="merge-new-input" placeholder="Nombre de la nueva persona..." style="width:100%; padding:10px; border-radius:8px; background:#2c2c2e; border:1px solid #444; color:white; font-size:0.9rem; box-sizing:border-box;">
+
+            </div>
+
+            
+
+            <div style="display:flex; justify-content:flex-end; gap:10px; margin-top:20px;">
+
+                <button onclick="closeMergeModal()" style="background:transparent; border:none; color:#aaa; padding:10px 16px; font-size:0.9rem; cursor:pointer;">Cancelar</button>
+
+                <button id="btn-submit-merge" onclick="submitMergeGroup()" style="background:#30d158; color:white; border:none; padding:10px 20px; border-radius:8px; font-weight:bold; font-size:0.9rem; cursor:pointer;"><svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M8 15s-1.5-1-1.5-3 1.5-3 1.5-3 1.5 1 1.5 3-1.5 3-1.5 3zm0-12s3 1.5 3 4.5c0 1.5-1 3-3 4.5C6 10.5 5 9 5 7.5 5 4.5 8 3 8 3z"/></svg> Aplicar Fusión / Guardar</button>
+
+            </div>
+
+        </div>
+
+    </div>
+
+<!-- MODAL DUPLICADOS EXACTOS -->
+
+<div id="modal-duplicates" class="modal" style="display:none; position:fixed; z-index:9999; left:0; top:0; width:100%; height:100%; background:rgba(0,0,0,0.85); backdrop-filter:blur(8px); justify-content:center; align-items:center;">
+
+    <div style="background:#1c1c1e; border:1px solid #ff9f0a; border-radius:16px; padding:25px; width:90%; max-width:900px; max-height:85vh; overflow-y:auto; color:#fff; box-shadow:0 10px 40px rgba(0,0,0,0.8);">
+
+        <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #3a3a3c; padding-bottom:15px; margin-bottom:20px;">
+
+            <h2 style="margin:0; color:#ff9f0a; font-size:1.4rem; display:flex; align-items:center; gap:10px;"><svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M8 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm2-3a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm4 8c0 1-1 1-1 1H3s-1 0-1-1 1-4 6-4 6 3 6 4zm-1-.004c-.001-.246-.154-.986-.832-1.664C11.516 10.68 10.289 10 8 10c-2.29 0-3.516.68-4.168 1.332-.678.678-.83 1.418-.832 1.664h10z"/></svg> Limpieza de Duplicados Exactos</h2>
+
+            <button onclick="closeExactDuplicatesModal()" style="background:none; border:none; color:#8e8e93; font-size:1.8rem; cursor:pointer;">&times;</button>
+
+        </div>
+
+        <div id="duplicates-loading" style="text-align:center; padding:40px;">
+
+            <div class="loader-small" style="margin:0 auto 15px auto;"></div>
+
+            <p style="color:#aaa;">Escaneando galería en busca de réplicas exactas byte a byte...</p>
+
+        </div>
+
+        <div id="duplicates-content" style="display:none;"></div>
+
+    </div>
+
+</div>
+
+
+
+<!-- MODAL FOTOS PARECIDAS -->
+
+<div id="modal-similar" class="modal" style="display:none; position:fixed; z-index:9999; left:0; top:0; width:100%; height:100%; background:rgba(0,0,0,0.85); backdrop-filter:blur(8px); justify-content:center; align-items:center;">
+
+    <div style="background:#1c1c1e; border:1px solid #bf5af2; border-radius:16px; padding:25px; width:90%; max-width:900px; max-height:85vh; overflow-y:auto; color:#fff; box-shadow:0 10px 40px rgba(0,0,0,0.8);">
+
+        <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #3a3a3c; padding-bottom:15px; margin-bottom:20px;">
+
+            <h2 style="margin:0; color:#bf5af2; font-size:1.4rem; display:flex; align-items:center; gap:10px;"><svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M15 12a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h1.172a3 3 0 0 0 2.12-.879l.83-.828A1 1 0 0 1 6.827 3h2.344a1 1 0 0 1 .707.293l.828.828A3 3 0 0 0 12.828 5H14a1 1 0 0 1 1 1v6zM2 4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2h-1.172a2 2 0 0 1-1.414-.586l-.828-.828A2 2 0 0 0 9.172 2H6.828a2 2 0 0 0-1.414.586l-.828.828A2 2 0 0 1 3.172 4H2z"/><path d="M8 11a2.5 2.5 0 1 1 0-5 2.5 2.5 0 0 1 0 5zm0 1a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM3 6.5a.5.5 0 1 1-1 0 .5.5 0 0 1 1 0z"/></svg> Fotos Parecidas y Ráfagas</h2>
+
+            <button onclick="closeSimilarPhotosModal()" style="background:none; border:none; color:#8e8e93; font-size:1.8rem; cursor:pointer;">&times;</button>
+
+        </div>
+
+        <div id="similar-loading" style="text-align:center; padding:40px;">
+
+            <div class="loader-small" style="margin:0 auto 15px auto;"></div>
+
+            <p style="color:#aaa;">Analizando varianza de nitidez y similitud en secuencias...</p>
+
+        </div>
+
+        <div id="similar-content" style="display:none;"></div>
+
+    </div>
+
+</div>
+
+
+
+
+
+<!-- Modal de Configuración Inicial (Local vs Google Drive) -->
+
+<div id="setup-modal" style="display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.85); backdrop-filter: blur(12px); z-index: 10000; align-items: center; justify-content: center; padding: 20px;">
+
+    <div style="background: rgba(22,25,35,0.95); border: 1px solid rgba(255,255,255,0.15); border-radius: 24px; padding: 32px; max-width: 540px; width: 100%; box-shadow: 0 20px 50px rgba(0,0,0,0.5); text-align: center; color: white;">
+
+        <h2 style="font-size: 1.8rem; font-weight: 800; margin-bottom: 8px; background: linear-gradient(135deg, #a855f7, #3b82f6); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">⚙️ Entorno de Almacenamiento</h2>
+
+        <p style="color: #94a3b8; font-size: 0.95rem; margin-bottom: 24px;">Selecciona dónde procesar y organizar tus fotografías y vídeos:</p>
+
+
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px;">
+
+            <div id="opt-local" onclick="selectStorageMode('local')" style="background: rgba(255,255,255,0.05); border: 2px solid #a855f7; border-radius: 16px; padding: 20px; cursor: pointer; transition: all 0.2s;">
+
+                <div style="font-size: 2.2rem; margin-bottom: 8px;">💻</div>
+
+                <div style="font-weight: 700; font-size: 1.05rem;">Disco Local</div>
+
+                <div style="color: #64748b; font-size: 0.8rem; margin-top: 4px;">Almacenamiento en PC</div>
+
+            </div>
+
+            <div id="opt-gdrive" onclick="selectStorageMode('gdrive')" style="background: rgba(255,255,255,0.02); border: 2px solid transparent; border-radius: 16px; padding: 20px; cursor: pointer; transition: all 0.2s;">
+
+                <div style="font-size: 2.2rem; margin-bottom: 8px;">☁️</div>
+
+                <div style="font-weight: 700; font-size: 1.05rem;">Google Drive</div>
+
+                <div style="color: #64748b; font-size: 0.8rem; margin-top: 4px;">Conexión API Nube</div>
+
+            </div>
+
+        </div>
+
+
+
+        <div id="field-local" style="margin-bottom: 20px; text-align: left;">
+
+            <label style="font-size: 0.85rem; color: #94a3b8; display: block; margin-bottom: 6px;">Ruta del Directorio Local:</label>
+
+            <input type="text" id="input-local-path" value="C:\Users\User\Desktop\Galeria Eneko NO ABRIR" style="width: 100%; background: rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.15); border-radius: 10px; padding: 12px; color: white; font-family: monospace; font-size: 0.9rem;">
+
+        </div>
+
+
+
+        <div id="field-gdrive" style="display: none; margin-bottom: 20px; text-align: left;">
+
+            <label style="font-size: 0.85rem; color: #94a3b8; display: block; margin-bottom: 6px;">Enlace o ID de Carpeta de Google Drive:</label>
+
+            <input type="text" id="input-gdrive-url" placeholder="https://drive.google.com/drive/folders/1Qr6K..." value="https://drive.google.com/drive/folders/1Qr6KXPxcgdlzbSHVyDOg4cBb4GReSAfD" style="width: 100%; background: rgba(0,0,0,0.4); border: 1px solid rgba(255,255,255,0.15); border-radius: 10px; padding: 12px; color: white; font-family: monospace; font-size: 0.9rem;">
+
+        </div>
+
+
+
+        <button onclick="saveStorageConfig()" style="width: 100%; background: linear-gradient(135deg, #a855f7, #6366f1); border: none; border-radius: 12px; padding: 14px; color: white; font-weight: 700; font-size: 1rem; cursor: pointer; box-shadow: 0 8px 20px rgba(168,85,247,0.3);">
+
+            <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M8 15s-1.5-1-1.5-3 1.5-3 1.5-3 1.5 1 1.5 3-1.5 3-1.5 3zm0-12s3 1.5 3 4.5c0 1.5-1 3-3 4.5C6 10.5 5 9 5 7.5 5 4.5 8 3 8 3z"/></svg> Guardar e Iniciar Galería
+
+        </button>
+
+    </div>
+
+</div>
+
+
+
+
+
+
+
+    <div id="modal-map" class="lightbox hidden" style="z-index: 3000;">
+
+        <div style="background-color: #1c1c1e; padding: 20px; border-radius: 12px; width: 80%; height: 80%; color: white; border: 1px solid #333; position: relative; display: flex; flex-direction: column;">
+
+            <button onclick="document.getElementById('modal-map').classList.add('hidden')" style="position: absolute; top: 10px; right: 10px; background: none; border: none; color: white; font-size: 24px; cursor: pointer; z-index: 4000;">✕</button>
+
+            <h2 style="margin-top: 0; color: #32ade6; text-align: center;">🗺️ Mapa de Fotos</h2>
+
+            <div id="map-container" style="flex: 1; border-radius: 8px; overflow: hidden; background: #000;"></div>
+
+        </div>
+
+    </div>
+
+
+
+    <!-- Evolution Modal -->
+
+    <div id="modal-evolution" class="lightbox hidden" style="z-index: 3000;">
+
+        <div style="background-color: #1c1c1e; padding: 20px; border-radius: 12px; width: 90%; max-width: 1000px; color: white; border: 1px solid #333; position: relative;">
+
+            <button onclick="document.getElementById('modal-evolution').classList.add('hidden')" style="position: absolute; top: 10px; right: 10px; background: none; border: none; color: white; font-size: 24px; cursor: pointer; z-index: 4000;">✕</button>
+
+            <h2 id="evolution-title" style="margin-top: 0; color: #0a84ff; text-align: center;">📈 Evolución de</h2>
+
+            <div id="evolution-container" style="display: flex; overflow-x: auto; gap: 10px; padding: 10px; background: #000; border-radius: 8px; align-items: center; min-height: 200px;">
+
+            </div>
+
+        </div>
+
+    </div>
+
+
+
+
+<!-- Modal de Comparacin -->
+<div id="compareModal" class="modal" style="display: none; align-items: center; justify-content: center; z-index: 10000; position: fixed; inset: 0; background: rgba(0,0,0,0.9); padding: 20px;">
+    <div style="background: #1c1c1e; width: 90%; max-width: 1200px; height: 80vh; border-radius: 16px; display: flex; flex-direction: column; overflow: hidden; position: relative;">
+        <button onclick="closeCompareModal()" style="position: absolute; top: 15px; right: 15px; background: rgba(255,255,255,0.1); border: none; color: white; padding: 8px 12px; border-radius: 8px; cursor: pointer; z-index: 10;">X Cerrar</button>
+        <div style="padding: 15px 20px; background: rgba(255,255,255,0.05); font-size: 1.2rem; font-weight: bold; border-bottom: 1px solid rgba(255,255,255,0.1);">Comparacin de Tomas Similares</div>
+        <div style="display: flex; flex: 1; overflow: hidden;">
+            <div style="flex: 1; border-right: 1px solid rgba(255,255,255,0.1); display: flex; flex-direction: column;">
+                <div style="padding: 10px; text-align: center; color: #aaa; font-size: 0.9rem;" id="compare-path-1">Foto Actual</div>
+                <div style="flex: 1; padding: 10px; display: flex; align-items: center; justify-content: center;">
+                    <img id="compare-img-1" src="" style="max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 8px;" />
+                </div>
+            </div>
+            <div style="flex: 1; display: flex; flex-direction: column;">
+                <div style="padding: 10px; text-align: center; color: #aaa; font-size: 0.9rem;" id="compare-path-2">Versión Sugerida</div>
+                <div style="flex: 1; padding: 10px; display: flex; align-items: center; justify-content: center;">
+                    <img id="compare-img-2" src="" style="max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 8px;" />
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal de Mapa y Eventos Organizados -->
+<div id="modal-events-map" style="display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.9); backdrop-filter:blur(15px); z-index:9999; align-items:center; justify-content:center; padding:20px;">
+    <div style="background:#1c1c1e; width:95%; max-width:1300px; height:90vh; border-radius:20px; border:1px solid rgba(255,255,255,0.15); display:flex; flex-direction:column; overflow:hidden; box-shadow:0 25px 60px rgba(0,0,0,0.9);">
+        <div style="padding:16px 24px; background:rgba(255,255,255,0.05); display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid rgba(255,255,255,0.1);">
+            <div style="display:flex; align-items:center; gap:16px;">
+                <h2 style="margin:0; font-size:1.3rem; color:white; display:flex; align-items:center; gap:8px;">
+                    <svg width="20" height="20" fill="#0a84ff" viewBox="0 0 16 16"><path d="M8 16s6-5.686 6-10A6 6 0 0 0 2 6c0 4.314 6 10 6 10zm0-7a3 3 0 1 1 0-6 3 3 0 0 1 0 6z"/></svg> Eventos & Recuerdos
+                </h2>
+                <!-- Segmented Tabs Switcher -->
+                <div style="display:flex; background:rgba(0,0,0,0.5); padding:3px; border-radius:10px; border:1px solid rgba(255,255,255,0.1); gap:4px;">
+                    <button id="btn-events-tab-map" onclick="switchEventsTab('map')" style="background:#0a84ff; color:#fff; border:none; padding:5px 14px; border-radius:7px; font-size:12px; font-weight:700; cursor:pointer; transition:all 0.15s;">🗺️ Mapa</button>
+                    <button id="btn-events-tab-timeline" onclick="switchEventsTab('timeline')" style="background:transparent; color:#8e8e93; border:none; padding:5px 14px; border-radius:7px; font-size:12px; font-weight:700; cursor:pointer; transition:all 0.15s;">📅 Línea de Tiempo</button>
+                </div>
+            </div>
+            <button onclick="closeEventsMapModal()" style="background:rgba(255,255,255,0.1); border:none; color:white; padding:8px 16px; border-radius:10px; cursor:pointer; font-weight:600;">✕ Cerrar</button>
+        </div>
+        
+        <div id="events-map-view" style="display:flex; flex:1; overflow:hidden;">
+            <!-- Map Container (Left 50%) -->
+            <div style="flex:1; border-right:1px solid rgba(255,255,255,0.1); position:relative; display:flex; flex-direction:column;">
+                <div style="padding:10px 15px; background:rgba(0,0,0,0.2); font-size:0.85rem; color:#aaa;">📍 Fotos con coordenadas GPS (Leaflet Map)</div>
+                <div id="events-map-container" style="flex:1; width:100%; height:100%; background:#111;"></div>
+            </div>
+            
+            <!-- Events Container (Right 50%) -->
+            <div style="flex:1; display:flex; flex-direction:column; background:#18181a; overflow-y:auto; padding:20px;">
+                <h3 style="margin-top:0; color:#0a84ff; font-size:1.1rem;">🎉 Eventos Detectados Automáticamente</h3>
+                <p style="color:#aaa; font-size:0.85rem; margin-top:-5px;">Fotos agrupadas por metadatos de fecha y ubicación. Puedes crear un álbum con un clic.</p>
+                
+                <div id="events-list-content" style="margin-top:10px; display:flex; flex-direction:column; gap:15px;">
+                    <div style="text-align:center; padding:40px;"><div class="loader-small" style="margin:auto;"></div> Cargando eventos...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Timeline / Memories View (Full width) -->
+        <div id="events-timeline-view" style="display:none; flex:1; flex-direction:column; background:#141416; overflow-y:auto; padding:24px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:18px;">
+                <div>
+                    <h3 style="margin:0; font-size:1.2rem; color:#fff; font-weight:700;">📅 Recuerdos y Momentos Especiales</h3>
+                    <div style="font-size:0.8rem; color:#8e8e93; margin-top:2px;">Álbumes clasificados cronológicamente por años y estaciones</div>
+                </div>
+                <div id="timeline-years-bar" style="display:flex; gap:6px; flex-wrap:wrap;"></div>
+            </div>
+            <div id="events-timeline-content" style="display:flex; flex-direction:column; gap:20px;">
+                <div style="text-align:center; padding:40px; color:#8e8e93;"><div class="loader-small" style="margin:auto 0 10px auto;"></div> Cargando línea de tiempo...</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL DE ATAJOS DE TECLADO (SHORTCUTS CHEAT SHEET) -->
+<div id="modal-shortcuts" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.85); backdrop-filter:blur(20px); -webkit-backdrop-filter:blur(20px); z-index:10000; align-items:center; justify-content:center; padding:20px;">
+    <div style="background:rgba(24,24,28,0.98); border:1px solid rgba(255,255,255,0.15); border-radius:22px; padding:26px 30px; width:640px; max-width:95%; max-height:90vh; overflow-y:auto; color:white; position:relative; box-shadow:0 30px 80px rgba(0,0,0,0.9);">
+        <button onclick="closeShortcutsModal()" style="position:absolute; top:16px; right:18px; background:none; border:none; color:#8e8e93; font-size:22px; cursor:pointer; transition:color 0.2s;" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='#8e8e93'">&times;</button>
+        
+        <div style="display:flex; align-items:center; gap:12px; margin-bottom:20px;">
+            <div style="width:40px; height:40px; border-radius:12px; background:linear-gradient(135deg, #0a84ff, #bf5af2); display:flex; align-items:center; justify-content:center; font-size:20px; box-shadow:0 4px 15px rgba(10,132,255,0.4);">⌨️</div>
+            <div>
+                <h3 style="margin:0; font-size:1.3rem; font-weight:800; color:#fff;">Atajos de Teclado</h3>
+                <div style="font-size:0.8rem; color:#8e8e93; margin-top:2px;">Navega y clasifica a la velocidad de la luz</div>
+            </div>
+        </div>
+
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px;">
+            <!-- Navegación & Visor -->
+            <div style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.06); border-radius:14px; padding:14px;">
+                <div style="font-size:11px; font-weight:700; color:#64d2ff; text-transform:uppercase; letter-spacing:0.8px; margin-bottom:10px;">🖼️ Visor Lightbox</div>
+                <div style="display:flex; flex-direction:column; gap:8px; font-size:12px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center;"><span style="color:#ccc;">Foto siguiente</span><kbd style="background:rgba(255,255,255,0.12); padding:2px 8px; border-radius:6px; font-weight:700; color:#fff;">→</kbd></div>
+                    <div style="display:flex; justify-content:space-between; align-items:center;"><span style="color:#ccc;">Foto anterior</span><kbd style="background:rgba(255,255,255,0.12); padding:2px 8px; border-radius:6px; font-weight:700; color:#fff;">←</kbd></div>
+                    <div style="display:flex; justify-content:space-between; align-items:center;"><span style="color:#ccc;">Play / Pausa vídeo</span><kbd style="background:rgba(255,255,255,0.12); padding:2px 8px; border-radius:6px; font-weight:700; color:#fff;">Espacio</kbd></div>
+                    <div style="display:flex; justify-content:space-between; align-items:center;"><span style="color:#ccc;">Cerrar visor</span><kbd style="background:rgba(255,255,255,0.12); padding:2px 8px; border-radius:6px; font-weight:700; color:#fff;">Esc</kbd></div>
+                    <div style="display:flex; justify-content:space-between; align-items:center;"><span style="color:#ccc;">Eliminar / Papelera</span><kbd style="background:rgba(255,69,58,0.25); color:#ff453a; padding:2px 8px; border-radius:6px; font-weight:700;">Supr / Del</kbd></div>
+                </div>
+            </div>
+
+            <!-- Zoom & Pantalla -->
+            <div style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.06); border-radius:14px; padding:14px;">
+                <div style="font-size:11px; font-weight:700; color:#ffd60a; text-transform:uppercase; letter-spacing:0.8px; margin-bottom:10px;">🔍 Zoom & Pan</div>
+                <div style="display:flex; flex-direction:column; gap:8px; font-size:12px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center;"><span style="color:#ccc;">Acercar zoom</span><kbd style="background:rgba(255,255,255,0.12); padding:2px 8px; border-radius:6px; font-weight:700; color:#fff;">+</kbd></div>
+                    <div style="display:flex; justify-content:space-between; align-items:center;"><span style="color:#ccc;">Alejar zoom</span><kbd style="background:rgba(255,255,255,0.12); padding:2px 8px; border-radius:6px; font-weight:700; color:#fff;">-</kbd></div>
+                    <div style="display:flex; justify-content:space-between; align-items:center;"><span style="color:#ccc;">Reiniciar a 100%</span><kbd style="background:rgba(255,255,255,0.12); padding:2px 8px; border-radius:6px; font-weight:700; color:#fff;">0</kbd></div>
+                    <div style="display:flex; justify-content:space-between; align-items:center;"><span style="color:#ccc;">Zoom libre</span><span style="color:#8e8e93; font-size:11px;">Rueda Ratón</span></div>
+                    <div style="display:flex; justify-content:space-between; align-items:center;"><span style="color:#ccc;">Mover foto</span><span style="color:#8e8e93; font-size:11px;">Clic + Arrastrar</span></div>
+                </div>
+            </div>
+
+            <!-- Triage Inteligente -->
+            <div style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.06); border-radius:14px; padding:14px;">
+                <div style="font-size:11px; font-weight:700; color:#a855f7; text-transform:uppercase; letter-spacing:0.8px; margin-bottom:10px;">🏷️ Triage Rápido IA</div>
+                <div style="display:flex; flex-direction:column; gap:8px; font-size:12px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center;"><span style="color:#ccc;">Asignar sugerencia</span><kbd style="background:rgba(168,85,247,0.25); color:#da8fff; padding:2px 8px; border-radius:6px; font-weight:700;">1 – 5</kbd></div>
+                    <div style="display:flex; justify-content:space-between; align-items:center;"><span style="color:#ccc;">Saltar / Siguiente</span><kbd style="background:rgba(255,255,255,0.12); padding:2px 8px; border-radius:6px; font-weight:700; color:#fff;">→</kbd></div>
+                    <div style="display:flex; justify-content:space-between; align-items:center;"><span style="color:#ccc;">Limpieza rápida ON/OFF</span><span style="color:#30d158; font-weight:600;">Swipe Mode</span></div>
+                </div>
+            </div>
+
+            <!-- Global & Herramientas -->
+            <div style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.06); border-radius:14px; padding:14px;">
+                <div style="font-size:11px; font-weight:700; color:#30d158; text-transform:uppercase; letter-spacing:0.8px; margin-bottom:10px;">⚡ Global & Info</div>
+                <div style="display:flex; flex-direction:column; gap:8px; font-size:12px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center;"><span style="color:#ccc;">Inspector EXIF</span><kbd style="background:rgba(255,255,255,0.12); padding:2px 8px; border-radius:6px; font-weight:700; color:#fff;">I</kbd></div>
+                    <div style="display:flex; justify-content:space-between; align-items:center;"><span style="color:#ccc;">Recuadros de caras</span><kbd style="background:rgba(255,255,255,0.12); padding:2px 8px; border-radius:6px; font-weight:700; color:#fff;">B</kbd></div>
+                    <div style="display:flex; justify-content:space-between; align-items:center;"><span style="color:#ccc;">Búsqueda Spotlight</span><kbd style="background:rgba(255,255,255,0.12); padding:2px 8px; border-radius:6px; font-weight:700; color:#fff;">Ctrl + K</kbd></div>
+                    <div style="display:flex; justify-content:space-between; align-items:center;"><span style="color:#ccc;">Ver este panel</span><kbd style="background:rgba(255,255,255,0.12); padding:2px 8px; border-radius:6px; font-weight:700; color:#fff;">?</kbd></div>
+                </div>
+            </div>
+        </div>
+
+        <div style="margin-top:20px; text-align:center;">
+            <button onclick="closeShortcutsModal()" style="background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.15); color:#fff; padding:10px 24px; border-radius:12px; font-weight:700; font-size:13px; cursor:pointer; transition:all 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.2)'" onmouseout="this.style.background='rgba(255,255,255,0.1)'">
+                ¡Entendido!
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+window.openShortcutsModal = function() {
+    var modal = document.getElementById('modal-shortcuts');
+    if (modal) modal.style.display = 'flex';
+};
+window.closeShortcutsModal = function() {
+    var modal = document.getElementById('modal-shortcuts');
+    if (modal) modal.style.display = 'none';
+};
+</script>

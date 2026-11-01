@@ -2,161 +2,322 @@
 
 {% block content %}
     {% include 'components/modals.html' %}
-    {% include 'components/sidebar.html' %}    <!-- Main Content: Mosaico -->
-    <main class="gallery-main">
-        <header class="gallery-header" style="background: rgba(28,28,30,0.7); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border-bottom: 1px solid rgba(255,255,255,0.08); padding: 14px 24px; position: sticky; top: 0; z-index: 100; border-radius: 0 0 16px 16px; margin-bottom: 15px;">
-            <!-- ROW 1: Breadcrumbs & Grid Zoom Control -->
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 12px; flex-wrap: wrap; gap: 10px;">
-                <div id="apple-breadcrumbs" style="font-size: 13px; color: #8e8e93; display: flex; align-items: center; gap: 6px; font-weight: 500;">
-                    <span style="cursor: pointer; color: #0a84ff;" onclick="loadAlbumsHome()">Home</span>
-                    <span id="bc-separator-1" style="display:none;">&gt;</span>
-                    <span id="bc-category" style="cursor: pointer; color: #0a84ff; display:none;"></span>
-                    <span id="bc-separator-2" style="display:none;">&gt;</span>
-                    <span id="bc-person" style="color: #fff; display:none;"></span>
-                </div>
-                
-                <!-- Integrated Apple-Style Grid Zoom Slider -->
-                <div id="top-hud-zoom-controls" class="zoom-controls" style="display: flex; align-items: center; gap: 8px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); padding: 5px 14px; border-radius: 20px;">
-                    <svg width="13" height="13" viewBox="0 0 16 16" fill="#8e8e93"><path d="M6.5 12a5.5 5.5 0 1 0 0-11 5.5 5.5 0 0 0 0 11zM13 6.5a6.5 6.5 0 1 1-13 0 6.5 6.5 0 0 1 13 0z"/><path d="M10.344 11.742c.03.04.062.078.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1.007 1.007 0 0 0-.115-.1 6.538 6.538 0 0 1-1.398 1.4z"/><path d="M3 6.5h7a.5.5 0 0 1 0 1H3a.5.5 0 0 1 0-1z"/></svg>
-                    <input type="range" id="zoom-slider" min="80" max="400" value="180" step="10" style="width: 110px; accent-color: #0a84ff; cursor: pointer;">
-                    <svg width="13" height="13" viewBox="0 0 16 16" fill="#8e8e93"><path d="M6.5 12a5.5 5.5 0 1 0 0-11 5.5 5.5 0 0 0 0 11zM13 6.5a6.5 6.5 0 1 1-13 0 6.5 6.5 0 0 1 13 0z"/><path d="M10.344 11.742c.03.04.062.078.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l-3.85-3.85a1.007 1.007 0 0 0-.115-.1 6.538 6.538 0 0 1-1.398 1.4z"/><path d="M6.002 3a.5.5 0 0 1 .5.5V6h2.5a.5.5 0 0 1 0 1h-2.5v2.5a.5.5 0 0 1-1 0V7h-2.5a.5.5 0 0 1 0-1h2.5V3.5a.5.5 0 0 1 .5-.5z"/></svg>
-                    <span id="zoom-label" style="font-size: 12px; color: #aaa; min-width: 26px; text-align: right; font-weight:600;">6×</span>
+    {% include 'components/sidebar.html' %}
+    {% include 'components/lightbox.html' %}
+
+    <!-- Library Loading Overlay -->
+    <style>
+        @keyframes pulse-avatar { 0%,100% { transform: scale(1); opacity:0.9; } 50% { transform: scale(1.15); opacity:1; } }
+        @keyframes shimmer-bar { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+        @keyframes fade-in-up { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
+    </style>
+    <div id="library-loading-overlay" style="display:none; position:fixed; inset:0; background:radial-gradient(ellipse at center, #12131a 0%, #0c0d12 70%); z-index:99999; flex-direction:column; align-items:center; justify-content:center; color:white; transition:opacity 0.2s ease, visibility 0.2s ease;">
+        <div style="text-align:center; max-width:420px; padding:20px; animation: fade-in-up 0.6s ease;">
+            <div style="font-size:3.5rem; margin-bottom:22px; animation: pulse-avatar 2s infinite ease-in-out; filter:drop-shadow(0 0 20px rgba(168,85,247,0.4));">🔮</div>
+            <h2 style="font-size:1.4rem; font-weight:800; margin-bottom:6px; background:linear-gradient(135deg, #a855f7, #3b82f6, #06b6d4); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-size:200% auto;">Cargando Galería Inteligente</h2>
+            <p id="loading-status-text" style="font-size:0.82rem; color:#8e8e93; margin-bottom:28px; line-height:1.5;">Sincronizando fotos de la biblioteca...</p>
+            
+            <div style="width:300px; height:5px; background:rgba(255,255,255,0.06); border-radius:10px; overflow:hidden; position:relative; margin:0 auto 12px auto;">
+                <div id="loading-progress-bar" style="width:0%; height:100%; background:linear-gradient(90deg, #a855f7, #3b82f6, #06b6d4); border-radius:10px; transition:width 0.5s cubic-bezier(0.4,0,0.2,1); box-shadow:0 0 12px rgba(168,85,247,0.5);"></div>
+            </div>
+            <div id="loading-progress-percentage" style="font-size:12px; font-weight:700; color:rgba(168,85,247,0.9); letter-spacing:0.5px;">0%</div>
+        </div>
+    </div>
+
+    <!-- Main Content Area -->
+    <main class="gallery-main" style="display: flex; flex-direction: column; height: 100vh; overflow: hidden; flex: 1; background: #0b0c0e;">
+        
+        <!-- TOP APP NAVIGATION BAR (Apple Glassmorphism) -->
+        <nav class="top-nav-bar" style="background: rgba(16, 17, 22, 0.88); backdrop-filter: blur(25px); -webkit-backdrop-filter: blur(25px); border-bottom: 1px solid rgba(255,255,255,0.06); padding: 8px 20px; display: flex; justify-content: space-between; align-items: center; z-index: 150; flex-shrink: 0;">
+            <!-- Brand -->
+            <div style="display: flex; align-items: center; gap: 10px;">
+                <div style="display: flex; align-items: center; gap: 6px; cursor: pointer;" onclick="loadAlbumsHome()">
+                    <span style="font-size: 1.15rem; font-weight: 800; letter-spacing: -0.4px; background: linear-gradient(135deg, #0a84ff 0%, #bf5af2 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">SmartGallery</span>
+                    <span style="font-size: 0.65rem; padding: 1px 5px; border-radius: 4px; background: rgba(10,132,255,0.12); color: #64d2ff; font-weight: 700;">AI</span>
                 </div>
             </div>
 
-            <!-- ROW 2: Title, Avatar, Subtitle & Action Controls -->
-            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:16px;">
-                <div style="display:flex; align-items:center; gap:14px;">
-                    <img id="gallery-avatar" src="" style="width:52px; height:52px; border-radius:50%; object-fit:cover; border:2px solid #30d158; box-shadow:0 0 12px rgba(48,209,88,0.3); display:none;">
-                    <div>
-                        <h1 id="gallery-title" style="margin:0; font-size:1.5rem; font-weight:700; letter-spacing:-0.4px; color:white;">Todas las Fotos</h1>
-                        <p id="gallery-subtitle" style="margin:2px 0 0 0; color:#8e8e93; font-size:0.85rem;">Selecciona un álbum en el panel izquierdo.</p>
+            <!-- Segmented Main Navigation Tabs (macOS style) -->
+            <div class="main-nav-tabs" style="display: flex; align-items: center; background: rgba(255,255,255,0.04); padding: 3px; border-radius: 9px; border: 1px solid rgba(255,255,255,0.06); gap: 2px;">
+                <button id="nav-btn-gallery" class="nav-tab-item active" onclick="loadAlbumsHome()" style="border:none; background:transparent; color:#8e8e93; padding:5px 12px; border-radius:7px; font-size:12px; font-weight:600; cursor:pointer; display:flex; align-items:center; gap:6px; transition:all 0.15s;">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
+                    <span>Fototeca</span>
+                </button>
+                <button id="nav-btn-map" class="nav-tab-item" onclick="openEventsMapModal()" style="border:none; background:transparent; color:#8e8e93; padding:5px 12px; border-radius:7px; font-size:12px; font-weight:600; cursor:pointer; display:flex; align-items:center; gap:6px; transition:all 0.15s;">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"></polygon><line x1="8" y1="2" x2="8" y2="18"></line><line x1="16" y1="6" x2="16" y2="22"></line></svg>
+                    <span>Eventos</span>
+                </button>
+                <button id="nav-btn-stats" class="nav-tab-item" onclick="openStatsModal()" style="border:none; background:transparent; color:#8e8e93; padding:5px 12px; border-radius:7px; font-size:12px; font-weight:600; cursor:pointer; display:flex; align-items:center; gap:6px; transition:all 0.15s;">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>
+                    <span>Estadísticas</span>
+                </button>
+                <button id="nav-btn-settings" class="nav-tab-item" onclick="toggleSettingsDrawer(true)" style="border:none; background:transparent; color:#8e8e93; padding:5px 12px; border-radius:7px; font-size:12px; font-weight:600; cursor:pointer; display:flex; align-items:center; gap:6px; transition:all 0.15s;">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+                    <span>Ajustes</span>
+                </button>
+                <button id="nav-btn-wakelock" class="nav-tab-item" onclick="toggleWakeLock()" style="border:none; background:rgba(48,209,88,0.12); color:#30d158; padding:5px 12px; border-radius:7px; font-size:12px; font-weight:600; cursor:pointer; display:flex; align-items:center; gap:6px; transition:all 0.15s;" title="Mantener pantalla del móvil siempre encendida">
+                    <span id="wakelock-icon" style="font-size:13px;">💡</span>
+                    <span id="wakelock-text">Pantalla Activa: ON</span>
+                </button>
+            </div>
+
+            <!-- Right Controls: Quick Search & AI Engine -->
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <div class="top-search-wrapper" style="position: relative;">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#8e8e93" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="position: absolute; left: 10px; top: 50%; transform: translateY(-50%);"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                    <input type="text" id="top-search-input" placeholder="Buscar... (Ctrl+K)" oninput="handleSpotlightSearch(this.value)" onfocus="handleSpotlightSearch(this.value)" style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.08); padding: 5px 10px 5px 28px; border-radius: 16px; color: #fff; font-size: 0.78rem; width: 180px; outline: none; transition: all 0.2s;">
+                    <div id="spotlight-dropdown" style="display:none; position:absolute; top:calc(100% + 8px); right:0; width:280px; max-height:340px; overflow-y:auto; background:rgba(20,21,26,0.96); backdrop-filter:blur(25px); border:1px solid rgba(255,255,255,0.12); border-radius:12px; box-shadow:0 12px 40px rgba(0,0,0,0.7); z-index:2000; padding:6px;" class="custom-scrollbar"></div>
+                </div>
+
+                <div style="position:relative;">
+                    <button id="btn-bg-autoclassify" onclick="toggleEnginePanel()" style="display:inline-flex; align-items:center; gap:5px; background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.08); color:#e5e5ea; border-radius:16px; padding:5px 10px; font-size:11px; font-weight:600; cursor:pointer; transition:all 0.2s;" title="Panel del Motor IA">
+                        <span id="bg-autoclassify-icon">⚡</span>
+                        <span id="bg-autoclassify-text">IA</span>
+                    </button>
+                    <!-- Panel desplegable del motor -->
+                    <div id="engine-panel" style="display:none; position:absolute; top:calc(100% + 8px); right:0; width:340px; background:rgba(18,20,28,0.97); backdrop-filter:blur(30px); border:1px solid rgba(255,255,255,0.12); border-radius:14px; box-shadow:0 20px 60px rgba(0,0,0,0.8); z-index:3000; overflow:hidden;">
+                        <div style="padding:12px 14px; border-bottom:1px solid rgba(255,255,255,0.07); display:flex; justify-content:space-between; align-items:center;">
+                            <div>
+                                <div style="font-size:12px; font-weight:700; color:#fff;">Motor de IA</div>
+                                <div id="engine-phase-label" style="font-size:10px; color:#8e8e93;">Inactivo</div>
+                            </div>
+                            <div style="display:flex; gap:6px; align-items:center;">
+                                <button id="btn-engine-start" onclick="startEngine()" style="background:#0a84ff; color:#fff; border:none; border-radius:8px; padding:4px 10px; font-size:11px; font-weight:700; cursor:pointer;">▶ Iniciar</button>
+                                <button id="btn-engine-stop" onclick="stopEngine()" style="display:none; background:#ff453a; color:#fff; border:none; border-radius:8px; padding:4px 10px; font-size:11px; font-weight:700; cursor:pointer;">⏹ Parar</button>
+                                <button onclick="toggleEnginePanel()" style="background:transparent; border:none; color:#8e8e93; font-size:16px; cursor:pointer; line-height:1;">×</button>
+                            </div>
+                        </div>
+                        <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:1px; background:rgba(255,255,255,0.05);">
+                            <div style="background:rgba(18,20,28,0.97); padding:8px 10px; text-align:center;">
+                                <div id="engine-stat-scanned" style="font-size:16px; font-weight:700; color:#64d2ff;">0</div>
+                                <div style="font-size:9px; color:#8e8e93;">Analizadas</div>
+                            </div>
+                            <div style="background:rgba(18,20,28,0.97); padding:8px 10px; text-align:center;">
+                                <div id="engine-stat-known" style="font-size:16px; font-weight:700; color:#30d158;">0</div>
+                                <div style="font-size:9px; color:#8e8e93;">Identificadas</div>
+                            </div>
+                            <div style="background:rgba(18,20,28,0.97); padding:8px 10px; text-align:center;">
+                                <div id="engine-stat-review" style="font-size:16px; font-weight:700; color:#ff9f0a;">0</div>
+                                <div style="font-size:9px; color:#8e8e93;">A Revisión</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </nav>
+
+        <!-- SUB-HEADER (Clean Title & Unified Controls) -->
+        <header class="gallery-header" id="main-gallery-header">
+            <!-- Row 1: Main Header Row (Title, Avatar, Quick Controls, Collapse Toggle) -->
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap;">
+                <!-- Left: Avatar, Title & Subtitle -->
+                <div style="display:flex; align-items:center; gap:10px; min-width:0;">
+                    <img id="gallery-avatar" class="gallery-avatar-img" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E" style="width:36px; height:36px; border-radius:50%; object-fit:cover; border:1.5px solid #0a84ff; display:none; flex-shrink:0;">
+                    <div style="min-width:0;">
+                        <h1 id="gallery-title" style="margin:0; font-size:1.2rem; font-weight:700; letter-spacing:-0.3px; color:white; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Todas las Fotos</h1>
+                        <p id="gallery-subtitle" style="margin:2px 0 0 0; color:#8e8e93; font-size:0.75rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Explora tus álbumes</p>
                     </div>
                 </div>
 
-                <!-- Action Toolbar Buttons -->
-                <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                <!-- Right: Action Buttons, Density & Collapse Controls -->
+                <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
+                    <!-- Grid Density Switcher (S, M, L) -->
+                    <div id="grid-density-controls" style="display:inline-flex; background:rgba(255,255,255,0.04); padding:2px; border-radius:8px; border:1px solid rgba(255,255,255,0.08); gap:2px;" title="Tamaño de las miniaturas">
+                        <button class="grid-density-btn" data-size="130" onclick="setGridDensity(130, this)" title="Miniaturas compactas">▫ Compacto</button>
+                        <button class="grid-density-btn active" data-size="180" onclick="setGridDensity(180, this)" title="Miniaturas normales">⊞ Normal</button>
+                        <button class="grid-density-btn" data-size="260" onclick="setGridDensity(260, this)" title="Miniaturas grandes">▦ Grande</button>
+                    </div>
+
+                    <!-- Action Buttons -->
+                    <button id="btn-toggle-multiselect" class="hud-action-btn" onclick="toggleMultiSelectMode()" style="background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.08); color:#e5e5ea; border-radius:8px; padding:5px 9px; font-size:12px; font-weight:600; cursor:pointer; display:flex; align-items:center; gap:5px;" title="Selección múltiple de fotos">
+                        <svg width="12" height="12" fill="currentColor" viewBox="0 0 16 16"><path d="M14 1a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1h12zM2 0a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V2a2 2 0 0 0-2-2H2z"/><path d="M10.97 4.97a.75.75 0 0 1 1.071 1.05l-3.992 4.99a.75.75 0 0 1-1.08.02L4.324 8.384a.75.75 0 1 1 1.06-1.06l2.094 2.093 3.473-4.425a.235.235 0 0 1 .02-.022z"/></svg>
+                        <span>Seleccionar</span>
+                    </button>
+
+                    <button id="btn-rename-group" class="hud-action-btn" onclick="renameCurrentGroup()" style="display:none; background:rgba(48,209,88,0.15); border:1px solid rgba(48,209,88,0.4); color:#30d158; border-radius:8px; padding:5px 9px; font-size:12px; font-weight:600; cursor:pointer;" title="Asignar un nombre o renombrar">
+                        <span>✏️ Renombrar</span>
+                    </button>
+
+                    <button id="btn-merge-group" class="hud-action-btn" onclick="openMergeModal()" style="display:none; background:rgba(255,159,10,0.15); border:1px solid rgba(255,159,10,0.3); color:#ff9f0a; border-radius:8px; padding:5px 9px; font-size:12px; font-weight:600; cursor:pointer;" title="Fusionar esta persona con otra identidad">
+                        <span>🤝 Fusionar</span>
+                    </button>
+
+                    <button id="btn-delete-group" class="hud-action-btn" onclick="deleteCurrentGroup()" style="display:none; background:rgba(255,69,58,0.15); border:1px solid rgba(255,69,58,0.4); color:#ff453a; border-radius:8px; padding:5px 9px; font-size:12px; font-weight:600; cursor:pointer;" title="Disolver este grupo">
+                        <span>🗑️ Disolver</span>
+                    </button>
+
+                    <button id="btn-ignore-group" class="hud-action-btn" onclick="ignoreCurrentGroup()" style="display:none; background:rgba(255,159,10,0.15); border:1px solid rgba(255,159,10,0.4); color:#ff9f0a; border-radius:8px; padding:5px 9px; font-size:12px; font-weight:600; cursor:pointer;" title="Ignorar falso positivo">
+                        <span>🚫 Ignorar</span>
+                    </button>
+
+                    <button id="btn-export-zip" class="hud-action-btn" onclick="exportCurrentAlbumZip()" style="background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.08); color:#e5e5ea; border-radius:8px; padding:5px 9px; font-size:12px; font-weight:600; cursor:pointer; display:flex; align-items:center; gap:4px;" title="Descargar este álbum en ZIP">
+                        <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                        <span>ZIP</span>
+                    </button>
+
+                    <!-- Collapse / Expand Header Toggle -->
+                    <button id="btn-toggle-header-collapse" class="header-collapse-toggle-btn" onclick="toggleHeaderCollapse()" title="Plegar / Desplegar barra de herramientas para maximizar fotos">
+                        <span id="header-collapse-icon">▲</span>
+                        <span id="header-collapse-label">Plegar</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Row 2: Collapsible Details (Filters, Confidence Stats & Timeline) -->
+            <div class="gallery-header-collapsible" style="margin-top:8px; display:flex; flex-direction:column; gap:8px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
                     <!-- Segmented Filter Control -->
-                    <div id="filter-toggle-container" style="display:inline-flex; background:rgba(255,255,255,0.06); padding:3px; border-radius:9px; border:1px solid rgba(255,255,255,0.1); gap:3px;">
-                        <button class="filter-toggle-btn" onclick="setPhotoFilter('all', this)" style="padding:5px 12px; border-radius:6px; border:none; background:#0a84ff; color:white; font-size:12px; font-weight:600; cursor:pointer;">Todas</button>
-                        <button class="filter-toggle-btn" onclick="setPhotoFilter('solo', this)" style="padding:5px 12px; border-radius:6px; border:none; background:transparent; color:#aaa; font-size:12px; cursor:pointer;">En solitario</button>
-                        <button class="filter-toggle-btn" onclick="setPhotoFilter('group', this)" style="padding:5px 12px; border-radius:6px; border:none; background:transparent; color:#aaa; font-size:12px; cursor:pointer;">En compañía</button>
-                        <button class="filter-toggle-btn" onclick="setPhotoFilter('with_me', this)" style="padding:5px 12px; border-radius:6px; border:none; background:transparent; color:#aaa; font-size:12px; cursor:pointer;">Conmigo (YO)</button>
-                        <button class="filter-toggle-btn" onclick="setPhotoFilter('without_me', this)" style="padding:5px 12px; border-radius:6px; border:none; background:transparent; color:#aaa; font-size:12px; cursor:pointer;">Sin mí</button>
+                    <div id="filter-toggle-container" style="display:inline-flex; background:rgba(255,255,255,0.04); padding:2px; border-radius:8px; border:1px solid rgba(255,255,255,0.06); gap:1px;">
+                        <button class="filter-toggle-btn active" onclick="setPhotoFilter('all', this)">Todas</button>
+                        <button class="filter-toggle-btn" onclick="setPhotoFilter('solo', this)">En solitario</button>
+                        <button class="filter-toggle-btn" onclick="setPhotoFilter('group', this)">En compañía</button>
+                        <button class="filter-toggle-btn" onclick="setPhotoFilter('with_me', this)">Conmigo</button>
+                        <button class="filter-toggle-btn" onclick="setPhotoFilter('without_me', this)">Sin mí</button>
+                        <div style="width: 1px; background: rgba(255,255,255,0.1); margin: 2px 3px;"></div>
+                        <button class="filter-toggle-btn" id="filter-blurry-btn" onclick="toggleHideBlurry(this)" style="color: #ff9f0a;">
+                            <span>✨ Borrosas</span>
+                        </button>
+                        <button class="filter-toggle-btn" id="filter-dudoso-btn" onclick="setPhotoFilter('dudoso', this)" style="color: #ff9f0a; display: none;">
+                            <span>⚠️ Dudosas (<span id="dudoso-count">0</span>)</span>
+                        </button>
                     </div>
 
-                    <button id="btn-toggle-multiselect" class="hud-action-btn" onclick="toggleMultiSelectMode()" style="background:rgba(94,92,230,0.2); border:1px solid rgba(94,92,230,0.5); color:#9d9bf0;">
-                        <svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><path d="M14 1a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1h12zM2 0a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V2a2 2 0 0 0-2-2H2z"/><path d="M10.97 4.97a.75.75 0 0 1 1.071 1.05l-3.992 4.99a.75.75 0 0 1-1.08.02L4.324 8.384a.75.75 0 1 1 1.06-1.06l2.094 2.093 3.473-4.425a.235.235 0 0 1 .02-.022z"/></svg> Selección Múltiple
-                    </button>
-                    <div class="header-controls">
-                        <button id="settings-btn" class="nav-btn" title="Configuración">⚙️</button>
-                        <button id="view-stats-btn" class="nav-btn" title="Ver Estadísticas">📊</button>
-                        <button id="reset-face-btn" class="nav-btn" onclick="resetFaceLearningConfirm()" title="Reiniciar Aprendizaje de IA (Caras)">🧠</button>
+                    <!-- Album Stats Badges Container -->
+                    <div id="gallery-stats-container" style="display:flex; align-items:center; gap:6px;">
+                        <!-- Injected dynamically by renderGrid -->
                     </div>
-
-
-                    <button id="btn-reanalyze" class="hud-action-btn" onclick="forceReanalyze()" style="display:none; background:rgba(10,132,255,0.2); border:1px solid rgba(10,132,255,0.5); color:#64d2ff;">
-                        <svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><path fill-rule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z"/><path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z"/></svg> Re-Análisis IA
-                    </button>
-
-                    <button id="btn-rename-group" class="hud-action-btn" onclick="renameCurrentGroup()" style="display:none; background:rgba(48,209,88,0.2); border:1px solid rgba(48,209,88,0.5); color:#30d158;">
-                        <svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><path d="M8 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm2-3a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm4 8c0 1-1 1-1 1H3s-1 0-1-1 1-4 6-4 6 3 6 4zm-1-.004c-.001-.246-.154-.986-.832-1.664C11.516 10.68 10.289 10 8 10c-2.29 0-3.516.68-4.168 1.332-.678.678-.83 1.418-.832 1.664h10z"/></svg> Fusionar / Renombrar
-                    </button>
-
-                    <button id="btn-ignore-group" class="hud-action-btn" onclick="ignoreCurrentGroup()" style="display:none; background:rgba(255,159,10,0.2); border:1px solid rgba(255,159,10,0.5); color:#ff9f0a;">
-                        <svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z"/><path d="M3.78 8.875a.5.5 0 0 1 .536-.35 5.013 5.013 0 0 0 7.368 0 .5.5 0 1 1 .632.766 6.012 6.012 0 0 1-8.88 0 .5.5 0 0 1-.356-.416z"/></svg> Ignorar
-                    </button>
-
-                    <button id="btn-delete-group" class="hud-action-btn" onclick="deleteCurrentGroup()" style="display:none; background:rgba(255,69,58,0.2); border:1px solid rgba(255,69,58,0.5); color:#ff453a;">
-                        <svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><path d="M5.5 2.5a.5.5 0 0 1 .5.5v1h2v-1a.5.5 0 0 1 1 0v1h2v-1a.5.5 0 0 1 1 0v1h1a.5.5 0 0 1 .5.5v11a.5.5 0 0 1-.5.5h-9a.5.5 0 0 1-.5-.5v-11a.5.5 0 0 1 .5-.5h1v-1a.5.5 0 0 1 .5-.5zm-1 2v10h8v-10h-8z"/></svg> Disolver
-                    </button>
-
-                    <button id="btn-show-timeline" class="hud-action-btn" onclick="document.getElementById('timeline-container').style.display = document.getElementById('timeline-container').style.display === 'none' ? 'block' : 'none';" style="background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.15); color:white;">
-                        <svg width="14" height="14" fill="currentColor" viewBox="0 0 16 16"><path d="M8 3.5a.5.5 0 0 0-1 0V9a.5.5 0 0 0 .252.434l3.5 2a.5.5 0 0 0 .496-.868L8 8.71V3.5z"/><path d="M8 16A8 8 0 1 0 8 0a8 8 0 0 0 0 16zm7-8A7 7 0 1 1 1 8a7 7 0 0 1 14 0z"/></svg> Línea Temporal
-                    </button>
                 </div>
-            </div>
 
-            <!-- Timeline Slider Drawer -->
-            <div id="timeline-container" style="display:none; margin-top:12px; padding:10px 16px; background:rgba(0,0,0,0.3); border-radius:12px; border:1px solid rgba(255,255,255,0.08);">
-                <div style="display:flex; align-items:center; gap:12px;">
-                    <span style="font-size:12px; color:#8e8e93; font-weight:600;">Filtrar Año:</span>
-                    <input type="range" id="timeline-slider" min="2014" max="2026" value="2026" style="flex:1; cursor:pointer; accent-color:#0a84ff;" onchange="filterTimeline(this.value)" oninput="document.getElementById('timeline-display').textContent = this.value">
-                    <span id="timeline-display" style="font-size:13px; color:#0a84ff; font-weight:bold; min-width:35px; text-align:right;">2026</span>
+                <!-- Timeline Year Filter (Dynamic Year Capsules) -->
+                <div id="timeline-container" style="display:none; padding:6px 12px; background:rgba(0,0,0,0.3); border-radius:8px; border:1px solid rgba(255,255,255,0.06);">
+                    <div style="display:flex; align-items:center; gap:10px;">
+                        <span style="font-size:10px; color:#8e8e93; font-weight:700; text-transform:uppercase; letter-spacing:0.5px; white-space:nowrap;">Línea Temporal:</span>
+                        <div id="timeline-years-container" style="display:flex; gap:6px; overflow-x:auto; padding-bottom:2px; flex:1;" class="custom-scrollbar">
+                            <!-- Dynamically populated year buttons -->
+                        </div>
+                    </div>
                 </div>
             </div>
         </header>
         
-        <div id="grid-container" class="grid-container">
-            <!-- Thumbnails -->
+        <!-- Media Grid Scrollable Area -->
+        <div id="grid-container" class="grid-container masonry-grid-container" style="flex: 1; overflow-y: auto; padding: 20px;">
+            <!-- Photos & Thumbnails dynamically injected by app.js -->
         </div>
     </main>
 
-    <!-- Settings Modal -->
-    <div id="settings-modal" class="modal">
-        <div class="modal-content" style="max-width: 500px;">
-            <div class="modal-header">
-                <h3>⚙️ Configuración del Entorno</h3>
-                <button class="close-btn" id="settings-close">&times;</button>
+    <!-- Settings & Tools Right Drawer Panel -->
+    <div id="drawer-overlay" class="drawer-overlay" onclick="toggleSettingsDrawer(false)"></div>
+    <aside id="settings-drawer" class="settings-drawer" style="display: none;">
+        <div class="drawer-header">
+            <div style="display:flex; align-items:center; gap:10px;">
+                <div style="width:28px; height:28px; border-radius:8px; background:rgba(10,132,255,0.2); color:#0a84ff; display:flex; align-items:center; justify-content:center;">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+                </div>
+                <h3 style="margin:0; font-size:1.1rem; font-weight:700; color:#fff;">Configuración & IA</h3>
             </div>
-            <div class="modal-body" style="padding: 20px;">
-                <div class="form-group">
-                    <label>Modo de Almacenamiento:</label>
-                    <select id="storage-mode" style="width:100%; padding: 8px; margin-top: 5px; border-radius: 4px; border: 1px solid #ccc; background: #fff;">
-                        <option value="local">💻 Disco Local (C:\...)</option>
+            <button class="drawer-close-btn" onclick="toggleSettingsDrawer(false)">&times;</button>
+        </div>
+
+        <div class="drawer-body">
+            <!-- Section 1: Entorno de Almacenamiento -->
+            <div class="drawer-section">
+                <h4 class="drawer-section-title">📁 Entorno de Almacenamiento</h4>
+                <div class="form-group" style="margin-top:8px;">
+                    <label style="font-size:12px; color:#aaa; display:block; margin-bottom:4px;">Modo de Almacenamiento:</label>
+                    <select id="storage-mode" onchange="selectStorageMode(this.value)" style="width:100%; padding:8px 10px; border-radius:8px; border:1px solid rgba(255,255,255,0.15); background:#2c2c2e; color:#fff; font-size:13px;">
+                        <option value="local">💻 Disco Local (PC)</option>
                         <option value="gdrive">☁️ Google Drive (Nube)</option>
                     </select>
                 </div>
-                
-                <div class="form-group" id="gdrive-settings" style="display:none; margin-top: 15px;">
-                    <label>Enlace o ID de Carpeta de Google Drive:</label>
-                    <input type="text" id="gdrive-link" placeholder="https://drive.google.com/drive/folders/1Qr6K..." style="width:100%; padding: 8px; margin-top: 5px; border-radius: 4px; border: 1px solid #ccc;">
-                </div>
-                
-                <button id="save-settings-btn" style="width: 100%; padding: 10px; background: #007bff; color: white; border: none; border-radius: 6px; margin-top: 20px; font-weight: bold; cursor: pointer;">Guardar y Aplicar Cambios</button>
 
-                <div style="margin-top: 20px; border-top: 1px solid rgba(255,255,255,0.1); padding-top: 15px;">
-                    <label style="font-weight:bold; color:#0a84ff;">🧠 Reaprendizaje Seguro de Caras:</label>
-                    <p style="font-size:12px; color:#aaa; margin:4px 0 10px 0;">Recalcula las huellas vectoriales de cada persona basándose únicamente en las fotos confirmadas y descartando fotos atípicas/erróneas.</p>
-                    <button id="btn-rebuild-centroids" onclick="rebuildCleanCentroidsConfirm()" style="width: 100%; padding: 10px; background: rgba(10,132,255,0.2); border: 1px solid rgba(10,132,255,0.5); color: #64d2ff; border-radius: 6px; font-weight: bold; cursor: pointer;">🔄 Recalcular Modelo de IA Ahora</button>
+                <div id="field-local" class="form-group" style="margin-top:10px;">
+                    <label style="font-size:12px; color:#aaa; display:block; margin-bottom:4px;">Ruta del Directorio Local:</label>
+                    <input type="text" id="input-local-path" value="C:\Users\User\Desktop\Galeria Eneko NO ABRIR" style="width:100%; padding:8px 10px; border-radius:8px; border:1px solid rgba(255,255,255,0.15); background:#1c1c1e; color:#fff; font-size:12px; font-family:monospace;">
                 </div>
+
+                <div id="field-gdrive" class="form-group" style="display:none; margin-top:10px;">
+                    <label style="font-size:12px; color:#aaa; display:block; margin-bottom:4px;">Enlace / ID Google Drive:</label>
+                    <input type="text" id="input-gdrive-url" placeholder="https://drive.google.com/drive/folders/..." style="width:100%; padding:8px 10px; border-radius:8px; border:1px solid rgba(255,255,255,0.15); background:#1c1c1e; color:#fff; font-size:12px;">
+                </div>
+
+                <button id="save-settings-btn" onclick="saveStorageConfig()" class="drawer-btn primary-btn" style="margin-top:12px; width:100%; padding:10px; background:#0a84ff; color:#fff; border:none; border-radius:8px; font-weight:600; cursor:pointer;">
+                    💾 Guardar y Aplicar Cambios
+                </button>
+            </div>
+
+            <!-- Section 2: Reaprendizaje de Caras -->
+            <div class="drawer-section">
+                <h4 class="drawer-section-title" style="color:#0a84ff;">🧠 Modelo Facial SFace</h4>
+                <p class="drawer-section-desc">Recalcula los centroides faciales usando únicamente fotos confirmadas de personas (excluye lugares y eventos).</p>
+                <button id="btn-rebuild-centroids" onclick="rebuildCleanCentroidsConfirm()" class="drawer-btn action-btn-blue">
+                    🔄 Recalcular Modelo de IA Ahora
+                </button>
+                <button onclick="resetFaceLearningConfirm()" class="drawer-btn action-btn-purple" style="margin-top:8px;">
+                    🧠 Reiniciar Aprendizaje de IA
+                </button>
+            </div>
+
+            <!-- Section 3: Búsqueda Intensiva YO -->
+            <div class="drawer-section">
+                <h4 class="drawer-section-title" style="color:#30d158;">🔍 Búsqueda Intensiva de YO</h4>
+                <p class="drawer-section-desc">Escanea TODA la galería buscando tus fotos con umbral flexible adaptativo.</p>
+                <button id="btn-yo-search" onclick="startIntensiveYoSearch()" class="drawer-btn action-btn-green">
+                    🔍 Buscar Todas Mis Fotos
+                </button>
+            </div>
+
+            <!-- Section 4: Motor Auto-Corrección -->
+            <div class="drawer-section">
+                <h4 class="drawer-section-title" style="color:#ff9f0a;">🤖 Motor de Auto-Corrección</h4>
+                <p class="drawer-section-desc">Analiza continuamente toda la galería en dos fases:<br>A) Desconocidos → Identidades conocidas<br>B) Auditoría inversa (corrige fotos mal asignadas)</p>
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:8px;">
+                    <div style="background:rgba(255,255,255,0.04); border-radius:8px; padding:8px; text-align:center;">
+                        <div id="drawer-stat-fixed" style="font-size:20px; font-weight:700; color:#30d158;">0</div>
+                        <div style="font-size:10px; color:#8e8e93;">Corregidas</div>
+                    </div>
+                    <div style="background:rgba(255,255,255,0.04); border-radius:8px; padding:8px; text-align:center;">
+                        <div id="drawer-stat-cycle" style="font-size:20px; font-weight:700; color:#ff9f0a;">0</div>
+                        <div style="font-size:10px; color:#8e8e93;">Ciclos</div>
+                    </div>
+                </div>
+                <button onclick="startEngine()" class="drawer-btn" style="background:rgba(255,159,10,0.15); border:1px solid rgba(255,159,10,0.4); color:#ff9f0a; width:100%; margin-bottom:6px;">
+                    ▶ Arrancar Motor Ahora
+                </button>
+                <button onclick="stopEngine()" class="drawer-btn" style="background:rgba(255,69,58,0.1); border:1px solid rgba(255,69,58,0.3); color:#ff453a; width:100%;">
+                    ⏹ Detener Motor
+                </button>
+            </div>
+        </div>
+    </aside>
+
+    <!-- iCloud Delete Modal -->
+    <div id="icloud-delete-modal" class="modal-overlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.7); backdrop-filter:blur(10px); z-index:9000; align-items:center; justify-content:center;">
+        <div class="modal-content" style="background:rgba(30,30,32,0.95); border:1px solid rgba(255,255,255,0.1); border-radius:16px; padding:24px; width:90%; max-width:400px; box-shadow:0 12px 40px rgba(0,0,0,0.5);">
+            <div style="text-align:center; margin-bottom:16px;">
+                <div style="font-size:40px; margin-bottom:8px;">🍎🗑️</div>
+                <h3 style="margin:0; color:#fff; font-size:1.2rem;">Eliminar Foto de Apple</h3>
+                <p style="margin:8px 0 0 0; color:#8e8e93; font-size:0.9rem; line-height:1.4;">Esta foto proviene de iCloud. ¿Cómo deseas eliminarla?</p>
+            </div>
+            
+            <div style="display:flex; flex-direction:column; gap:10px; margin-top:20px;">
+                <button onclick="executeIcloudDelete('local')" style="background:rgba(10,132,255,0.15); color:#0a84ff; border:1px solid rgba(10,132,255,0.3); padding:12px; border-radius:10px; font-weight:600; cursor:pointer; text-align:left; display:flex; flex-direction:column; gap:4px; transition:all 0.2s;" onmouseover="this.style.background='rgba(10,132,255,0.25)'" onmouseout="this.style.background='rgba(10,132,255,0.15)'">
+                    <span style="font-size:1rem;">Ocultar solo en Fototeca AI</span>
+                    <span style="font-size:0.75rem; font-weight:400; color:rgba(10,132,255,0.8);">Mantiene la foto original en tu iPhone y en la carpeta de iCloud en Windows.</span>
+                </button>
+                
+                <button onclick="executeIcloudDelete('icloud')" style="background:rgba(255,69,58,0.15); color:#ff453a; border:1px solid rgba(255,69,58,0.3); padding:12px; border-radius:10px; font-weight:600; cursor:pointer; text-align:left; display:flex; flex-direction:column; gap:4px; transition:all 0.2s;" onmouseover="this.style.background='rgba(255,69,58,0.25)'" onmouseout="this.style.background='rgba(255,69,58,0.15)'">
+                    <span style="font-size:1rem;">Eliminar DEFINITIVAMENTE</span>
+                    <span style="font-size:0.75rem; font-weight:400; color:rgba(255,69,58,0.8);">Borra el archivo original. Se sincronizará el borrado con tu iPhone e iCloud.</span>
+                </button>
+                
+                <button onclick="document.getElementById('icloud-delete-modal').style.display='none'" style="background:transparent; color:#8e8e93; border:1px solid rgba(255,255,255,0.1); padding:10px; border-radius:10px; font-weight:600; cursor:pointer; margin-top:8px; transition:all 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.05)'" onmouseout="this.style.background='transparent'">
+                    Cancelar
+                </button>
             </div>
         </div>
     </div>
+    <!-- Load modules -->
+    <script src="{{ url_for('static', filename='dist/app.js') }}"></script>
 
-
-    <!-- Modals -->
-    <div id="identity-modal" class="modal">
-    <div id="floating-action-bar" class="floating-action-bar">
-        <span class="fab-count" id="fab-count">0 seleccionadas</span>
-        <select id="fab-reassign-select" class="fab-select">
-            <option value="">-- Reasignar a... --</option>
-        </select>
-        <button class="fab-btn" onclick="applyBulkReassign()" style="color:#0a84ff; font-weight:bold;">Aplicar</button>
-        <button class="fab-btn" onclick="applyBulkRemoveFromFolder()" style="color:#ff9f0a; font-weight:bold;"><svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708z"/></svg> Quitar de esta carpeta</button>
-        <button class="fab-btn" onclick="applyBulkIgnore()" style="color:#ff453a;">Ignorar Todo</button>
-        <div style="width:1px; height:20px; background:rgba(255,255,255,0.2);"></div>
-        <button class="fab-btn" onclick="clearSelection()">Cancelar</button>
-    </div>
-
-    <!-- Floating Batch Action Bar -->
-    <div id="batch-action-bar" style="display:none; position:fixed; bottom:25px; left:50%; transform:translateX(-50%); z-index:9999; background:rgba(20,20,25,0.92); backdrop-filter:blur(20px); border:1px solid rgba(255,255,255,0.18); border-radius:16px; padding:12px 24px; box-shadow:0 12px 40px rgba(0,0,0,0.6); align-items:center; gap:16px;">
-        <span id="batch-count" style="font-weight:bold; color:#30d158; font-size:14px;">0 seleccionadas</span>
-        
-        <select id="batch-target-select" style="background:#2c2c2e; color:white; border:1px solid #444; border-radius:8px; padding:8px 14px; font-size:13px; outline:none; max-width:220px;">
-            <option value="">Seleccionar carpeta destino...</option>
-        </select>
-        
-        <button onclick="executeBatchMove()" style="background:#30d158; color:black; font-weight:bold; border:none; border-radius:8px; padding:8px 18px; font-size:13px; cursor:pointer; transition:all 0.2s;">
-            <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16"><path d="M8 15s-1.5-1-1.5-3 1.5-3 1.5-3 1.5 1 1.5 3-1.5 3-1.5 3zm0-12s3 1.5 3 4.5c0 1.5-1 3-3 4.5C6 10.5 5 9 5 7.5 5 4.5 8 3 8 3z"/></svg> Mover y Entrenar IA
-        </button>
-        
-        <button onclick="clearBatchSelection()" style="background:transparent; color:#888; border:none; font-size:16px; cursor:pointer; padding:4px 8px;">
-            ✕
-        </button>
-    </div>
-
-
-    {% include 'components/lightbox.html' %}
-<script type="module" src="{{ url_for('static', filename='dist/app.js') }}"></script>
 {% endblock %}

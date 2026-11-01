@@ -9,6 +9,7 @@ def api_duplicates_route():
     return api_duplicates()
 
 @api_tools_bp.route('/purge_exact_duplicates', methods=['POST'])
+@api_tools_bp.route('/purge_duplicates', methods=['POST'])
 def api_purge_exact_duplicates_route():
     return api_purge_exact_duplicates()
 
@@ -29,6 +30,7 @@ def api_pending_sorted_route():
     return api_pending_sorted()
 
 @api_tools_bp.route('/mass_cleanup', methods=['POST'])
+@api_tools_bp.route('/cleanup_mass', methods=['POST'])
 def api_mass_cleanup_route():
     return api_mass_cleanup()
 

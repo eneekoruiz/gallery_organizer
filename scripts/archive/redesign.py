@@ -1,0 +1,780 @@
+import os
+import re
+
+CSS_CONTENT = """
+/* ==========================================================================
+   APPLE PHOTOS macOS / iOS REDESIGN
+   ========================================================================== */
+
+:root {
+    --bg-dark: #000000;
+    --bg-panel: rgba(30, 30, 30, 0.6);
+    --bg-hover: rgba(255, 255, 255, 0.1);
+    --accent: #0a84ff;
+    --accent-hover: #0070e0;
+    --text-main: #f5f5f7;
+    --text-muted: #86868b;
+    --text-dim: #98989d;
+    --border: rgba(255, 255, 255, 0.15);
+    --radius: 14px;
+    
+    /* Semantic Colors */
+    --success: #30d158;
+    --warning: #ff9f0a;
+    --danger: #ff453a;
+    --purple: #bf5af2;
+    
+    /* Layout */
+    --sidebar-width: 280px;
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+    background-color: var(--bg-dark);
+    color: var(--text-main);
+    display: flex;
+    height: 100vh;
+    overflow: hidden;
+    font-size: 14px;
+    letter-spacing: -0.01em;
+}
+
+/* ==========================================================================
+   SCROLLBAR (macOS Style)
+   ========================================================================== */
+::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 10px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.4);
+    border: 2px solid transparent;
+    background-clip: padding-box;
+}
+
+/* ==========================================================================
+   GLASSMORPHISM BASE CLASSES
+   ========================================================================== */
+.glass-panel {
+    background: var(--bg-panel);
+    backdrop-filter: blur(25px) saturate(180%);
+    -webkit-backdrop-filter: blur(25px) saturate(180%);
+    border: 1px solid var(--border);
+}
+
+/* ==========================================================================
+   SIDEBAR
+   ========================================================================== */
+.sidebar {
+    width: var(--sidebar-width);
+    background: rgba(28, 28, 30, 0.7);
+    backdrop-filter: blur(30px) saturate(200%);
+    -webkit-backdrop-filter: blur(30px) saturate(200%);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    padding: 20px 0;
+    z-index: 50;
+    flex-shrink: 0;
+}
+
+.sidebar h2 {
+    padding: 0 20px 15px;
+    font-weight: 600;
+    font-size: 1.1rem;
+    color: var(--text-main);
+    letter-spacing: -0.02em;
+}
+
+.sidebar .search-bar {
+    padding: 0 20px 15px;
+}
+
+.sidebar .search-bar input {
+    width: 100%;
+    background: rgba(255, 255, 255, 0.1);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+    padding: 8px 12px 8px 30px;
+    border-radius: 8px;
+    color: var(--text-main);
+    outline: none;
+    font-size: 0.9rem;
+    transition: all 0.3s ease;
+    background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="%2386868b" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>');
+    background-repeat: no-repeat;
+    background-position: 10px center;
+}
+
+.sidebar .search-bar input:focus {
+    background: rgba(255, 255, 255, 0.15);
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px rgba(10, 132, 255, 0.3);
+}
+
+.tree-container {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0 10px;
+}
+
+.tree-folder {
+    padding: 8px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.2s ease, transform 0.1s ease;
+    display: flex;
+    align-items: center;
+}
+.tree-folder:active {
+    transform: scale(0.98);
+}
+.tree-folder.category {
+    font-weight: 600;
+    color: var(--text-muted);
+    margin-top: 15px;
+    margin-bottom: 5px;
+    cursor: default;
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+.tree-folder.identity {
+    margin-left: 5px;
+    font-size: 0.95rem;
+    justify-content: space-between;
+}
+.tree-folder.identity:hover {
+    background: var(--bg-hover);
+}
+.badge-count {
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-weight: 500;
+}
+
+/* Sidebar Actions */
+.sidebar > div[onclick] {
+    margin: 5px 20px;
+    border: none !important;
+    background: rgba(255, 255, 255, 0.05) !important;
+    color: var(--text-main) !important;
+    transition: all 0.3s ease;
+    border-radius: 8px !important;
+    padding: 10px 12px !important;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 500 !important;
+    font-size: 0.9rem;
+}
+.sidebar > div[onclick]:hover {
+    background: rgba(255, 255, 255, 0.1) !important;
+    transform: scale(1.02);
+}
+.sidebar > div[onclick]:active {
+    transform: scale(0.98);
+}
+
+/* ==========================================================================
+   MAIN GALLERY AREA
+   ========================================================================== */
+.gallery-main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-dark);
+    position: relative;
+    overflow: hidden;
+}
+
+.gallery-header {
+    padding: 30px 40px 15px;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(30px) saturate(200%);
+    -webkit-backdrop-filter: blur(30px) saturate(200%);
+    border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+
+.gallery-header h1 {
+    font-size: 2.2rem;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    margin: 0;
+    line-height: 1.2;
+}
+
+.gallery-header p {
+    color: var(--text-muted);
+    font-size: 0.95rem;
+    margin-top: 4px;
+}
+
+/* Premium Buttons */
+.premium-btn {
+    padding: 8px 16px;
+    border-radius: 20px;
+    border: none;
+    font-weight: 500;
+    font-size: 0.9rem;
+    cursor: pointer;
+    background: var(--accent);
+    color: white;
+    transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+    box-shadow: 0 4px 12px rgba(10, 132, 255, 0.3);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+}
+.premium-btn:hover {
+    background: var(--accent-hover);
+    box-shadow: 0 6px 16px rgba(10, 132, 255, 0.4);
+    transform: translateY(-1px);
+}
+.premium-btn:active {
+    transform: translateY(1px) scale(0.98);
+    box-shadow: 0 2px 8px rgba(10, 132, 255, 0.3);
+}
+
+/* Grid Container */
+.grid-container {
+    flex: 1;
+    padding: 20px 40px 100px; /* Extra bottom padding for floating bar */
+    overflow-y: auto;
+    display: grid;
+    /* Perfect square grid setup */
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    grid-auto-rows: 1fr;
+    gap: 12px;
+    align-content: flex-start;
+}
+/* Force square aspect ratio using pseudo-element trick or aspect-ratio */
+.media-card, .thumbnail {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    background: #1c1c1e;
+    border-radius: 8px;
+    overflow: hidden;
+    cursor: pointer;
+    transition: all 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+    border: 1px solid rgba(255,255,255,0.05);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+}
+
+.media-card:hover, .thumbnail:hover {
+    transform: scale(1.02);
+    box-shadow: 0 10px 20px rgba(0,0,0,0.4);
+    z-index: 2;
+    border-color: rgba(255,255,255,0.2);
+}
+
+.media-card img, .media-card video, .thumbnail img, .thumbnail video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    transition: transform 0.5s ease;
+}
+
+.media-card:hover img, .media-card:hover video {
+    transform: scale(1.05);
+}
+
+/* Selected State */
+.media-card.selected-card {
+    border: 3px solid var(--success) !important;
+    transform: scale(0.95);
+    border-radius: 12px;
+}
+.media-card.selected-card img {
+    border-radius: 8px;
+}
+
+/* Media Titles & Overlays */
+.media-title {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    padding: 12px 10px 8px;
+    background: linear-gradient(transparent, rgba(0, 0, 0, 0.8));
+    font-size: 0.75rem;
+    color: #fff;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-weight: 500;
+}
+
+.play-icon {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(255, 255, 255, 0.2);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+    color: white;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1rem;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+    pointer-events: none;
+    border: 1px solid rgba(255,255,255,0.3);
+}
+
+/* Badges */
+.badge {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    padding: 4px 8px;
+    border-radius: 6px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    z-index: 5;
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+}
+
+/* Stack styling for grouped photos */
+.media-stack {
+    position: relative;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.4);
+    transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.media-stack::before, .media-stack::after {
+    content: "";
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background-color: #2c2c2e;
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: inherit;
+    z-index: -1;
+    transition: all 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.media-stack::before { transform: rotate(3deg) translate(4px, 4px); background-color: #1c1c1e; z-index: -2; }
+.media-stack::after { transform: rotate(-2deg) translate(-4px, 2px); z-index: -1; }
+.media-stack:hover { transform: translateY(-5px); }
+.media-stack:hover::before { transform: rotate(6deg) translate(8px, 8px); box-shadow: 0 5px 15px rgba(0,0,0,0.3); }
+.media-stack:hover::after { transform: rotate(-4deg) translate(-8px, 4px); box-shadow: 0 5px 15px rgba(0,0,0,0.3); }
+
+/* ==========================================================================
+   LIGHTBOX (Detailed Viewer)
+   ========================================================================== */
+.lightbox {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(0,0,0,0.85);
+    backdrop-filter: blur(40px) saturate(180%);
+    -webkit-backdrop-filter: blur(40px) saturate(180%);
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    opacity: 1;
+    transition: opacity 0.3s ease;
+}
+.lightbox.hidden {
+    opacity: 0;
+    pointer-events: none;
+}
+
+.lightbox-toolbar {
+    height: 64px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0 20px;
+    background: linear-gradient(rgba(0,0,0,0.5), transparent);
+    z-index: 10;
+}
+
+.toolbar-center {
+    font-weight: 500;
+    font-size: 0.95rem;
+    color: rgba(255,255,255,0.9);
+}
+
+.icon-btn {
+    background: rgba(255,255,255,0.1);
+    border: 1px solid rgba(255,255,255,0.05);
+    color: var(--text-main);
+    font-size: 0.9rem;
+    cursor: pointer;
+    padding: 8px 14px;
+    border-radius: 8px;
+    transition: all 0.2s ease;
+    font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    backdrop-filter: blur(10px);
+}
+.icon-btn:hover {
+    background: rgba(255,255,255,0.2);
+    transform: translateY(-1px);
+}
+.icon-btn:active {
+    transform: scale(0.96);
+}
+
+.lightbox-content {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+    position: relative;
+}
+
+/* MEDIA CENTERING FIX */
+.viewer-wrapper {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    position: relative;
+    overflow: hidden;
+    width: 100%;
+    height: 100%;
+    box-sizing: border-box;
+}
+
+.lb-media-container {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    max-width: 100%;
+    max-height: 100%;
+    /* No strict width/height to let the element dictate, but bounded */
+    transition: transform 0.2s ease-out;
+}
+
+.lb-media-element {
+    max-width: 100%;
+    max-height: calc(100vh - 120px);
+    object-fit: contain;
+    border-radius: 8px;
+    box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+}
+video.lb-media-element {
+    /* Ensures videos don't do weird alignments */
+    margin: auto;
+    display: block;
+}
+
+/* Bounding Boxes */
+.lb-bounding-box {
+    position: absolute;
+    border: 2px solid rgba(10, 132, 255, 0.8);
+    border-radius: 8px;
+    pointer-events: auto;
+    cursor: move;
+    box-shadow: 0 0 0 1px rgba(0,0,0,0.2), inset 0 0 0 1px rgba(0,0,0,0.2);
+    transition: border-color 0.2s ease, background 0.2s ease;
+    z-index: 10;
+    box-sizing: border-box;
+    background: rgba(10, 132, 255, 0.05);
+}
+.lb-bounding-box:hover, .lb-bounding-box.active {
+    border-color: var(--success);
+    background: rgba(48, 209, 88, 0.1);
+    z-index: 50 !important;
+}
+.lb-bb-badge {
+    position: absolute;
+    top: -10px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(10, 132, 255, 0.9);
+    color: white;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 6px;
+    border-radius: 10px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    z-index: 10;
+    pointer-events: none;
+    transition: all 0.2s;
+    white-space: nowrap;
+}
+.lb-bounding-box.active .lb-bb-badge {
+    background: var(--success);
+    transform: translateX(-50%) scale(1.1);
+}
+
+/* ==========================================================================
+   METADATA PANEL (Right Side in Lightbox)
+   ========================================================================== */
+.metadata-panel {
+    width: 340px;
+    background: rgba(28, 28, 30, 0.65);
+    backdrop-filter: blur(40px) saturate(200%);
+    -webkit-backdrop-filter: blur(40px) saturate(200%);
+    border-left: 1px solid var(--border);
+    padding: 20px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.metadata-panel.hidden {
+    display: none;
+}
+.metadata-panel h3 {
+    font-size: 0.85rem;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 600;
+    margin-bottom: 10px;
+}
+
+.meta-card, .audit-card, .person-card {
+    background: rgba(255, 255, 255, 0.06);
+    border-radius: 12px;
+    padding: 16px;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.meta-item {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 10px;
+    font-size: 0.85rem;
+}
+.meta-item:last-child {
+    margin-bottom: 0;
+}
+.meta-label {
+    color: var(--text-muted);
+}
+.meta-value {
+    font-weight: 500;
+    color: var(--text-main);
+}
+
+/* Persons */
+.person-card {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin-bottom: 12px;
+    transition: all 0.2s ease;
+}
+.person-card:hover, .person-card.active {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.15);
+}
+.person-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+.person-avatar {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    object-fit: cover;
+    border: 2px solid var(--accent);
+    box-shadow: 0 4px 10px rgba(0,0,0,0.3);
+}
+.person-info {
+    flex: 1;
+    min-width: 0;
+}
+.person-name {
+    font-weight: 600;
+    font-size: 0.95rem;
+    color: #fff;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.person-confidence {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-top: 2px;
+}
+
+/* Premium Select inside Person Card */
+.premium-select, .person-select {
+    width: 100%;
+    background: rgba(0,0,0,0.3);
+    color: white;
+    border: 1px solid rgba(255,255,255,0.1);
+    padding: 8px 12px;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    outline: none;
+    transition: all 0.2s;
+    appearance: none; /* Hide default arrow */
+    background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>');
+    background-repeat: no-repeat;
+    background-position: right 12px center;
+}
+.premium-select:focus, .person-select:focus {
+    border-color: var(--accent);
+    background: rgba(0,0,0,0.5);
+}
+
+/* ==========================================================================
+   MODALS (macOS Dialog Style)
+   ========================================================================== */
+#stats-modal .lightbox-content-box,
+.modal-content {
+    background: rgba(30, 30, 30, 0.85) !important;
+    backdrop-filter: blur(50px) saturate(200%) !important;
+    -webkit-backdrop-filter: blur(50px) saturate(200%) !important;
+    border: 1px solid rgba(255,255,255,0.15) !important;
+    border-radius: 18px !important;
+    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255,255,255,0.05) !important;
+    padding: 30px !important;
+    color: var(--text-main) !important;
+    animation: modalPop 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+@keyframes modalPop {
+    0% { transform: scale(0.95); opacity: 0; }
+    100% { transform: scale(1); opacity: 1; }
+}
+
+#stats-modal h2 {
+    font-size: 1.4rem;
+    font-weight: 600;
+    margin-bottom: 20px;
+    color: var(--text-main) !important;
+    text-align: center;
+}
+
+/* ==========================================================================
+   FLOATING ACTION BAR
+   ========================================================================== */
+.floating-action-bar {
+    position: fixed;
+    bottom: -100px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(30, 30, 30, 0.85);
+    backdrop-filter: blur(30px) saturate(200%);
+    -webkit-backdrop-filter: blur(30px) saturate(200%);
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 100px;
+    padding: 10px 20px;
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    box-shadow: 0 15px 40px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.05);
+    z-index: 99999;
+    transition: bottom 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+.floating-action-bar.visible {
+    bottom: 30px;
+}
+
+/* ==========================================================================
+   MISC UTIL
+   ========================================================================== */
+.loader-small {
+    display: inline-block;
+    width: 14px; height: 14px;
+    border: 2px solid rgba(255,255,255,0.2);
+    border-top: 2px solid var(--accent);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+@keyframes spin { 100% { transform: rotate(360deg); } }
+
+.duplicate-banner {
+    background: rgba(255, 159, 10, 0.15);
+    border: 1px solid rgba(255, 159, 10, 0.3);
+    border-radius: 12px;
+    padding: 12px;
+    margin-bottom: 15px;
+}
+.duplicate-banner-title {
+    color: var(--warning);
+    font-weight: 600;
+    font-size: 0.9rem;
+    margin-bottom: 4px;
+}
+.duplicate-btn-delete {
+    background: var(--danger);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    padding: 6px 12px;
+    font-size: 0.8rem;
+    font-weight: 500;
+    cursor: pointer;
+    margin-top: 8px;
+    transition: background 0.2s;
+}
+.duplicate-btn-delete:hover {
+    background: #ff3b30;
+}
+"""
+
+with open(r'C:\Users\User\Desktop\Eneko\smart_gallery_app\static\style.css', 'w', encoding='utf-8') as f:
+    f.write(CSS_CONTENT)
+
+# Patch index.html
+with open(r'C:\Users\User\Desktop\Eneko\smart_gallery_app\templates\index.html', 'r', encoding='utf-8') as f:
+    html = f.read()
+
+# 1. Update font
+html = html.replace(
+    '<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">',
+    '<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">'
+)
+
+# 2. Cleanup inline styles in Sidebar to use native classes or look cleaner
+html = re.sub(r'style="margin-top: 20px; font-weight: bold; color: #ffcc00; text-align: center; border: 1px solid #ffcc00; border-radius: 8px; padding: 10px; cursor: pointer; background: rgba\(255,204,0,0.1\);"', '', html)
+html = re.sub(r'style="margin-top: 10px; margin-bottom: 10px; font-weight: bold; color: #0a84ff; text-align: center; border: 1px solid #0a84ff; border-radius: 8px; padding: 10px; cursor: pointer; background: rgba\(10,132,255,0.1\);"', '', html)
+html = re.sub(r'style="margin-bottom: 10px; font-weight: bold; color: #30d158; text-align: center; border: 1px solid #30d158; border-radius: 8px; padding: 10px; cursor: pointer; background: rgba\(48,209,88,0.1\);"', '', html)
+html = re.sub(r'style="margin-bottom: 10px; font-weight: bold; color: #ff9f0a; text-align: center; border: 1px solid #ff9f0a; border-radius: 8px; padding: 10px; cursor: pointer; background: rgba\(255,159,10,0.1\);"', '', html)
+html = re.sub(r'style="margin-bottom: 20px; font-weight: bold; color: #bf5af2; text-align: center; border: 1px solid #bf5af2; border-radius: 8px; padding: 10px; cursor: pointer; background: rgba\(191,90,242,0.1\);"', '', html)
+
+# 3. Clean up stats modal style to use modal-content glass style
+html = re.sub(r'style="background-color: #1e1e1e; padding: 30px; border-radius: 12px; width: 400px; max-width: 90%; color: white; border: 1px solid #333; position: relative;"', 'class="modal-content" style="width: 400px; max-width: 90%; margin: auto; margin-top: 10vh; position: relative;"', html)
+# Modals are sometimes double output, replace all instances
+html = re.sub(r'style="background-color: #1e1e1e; padding: 30px; border-radius: 12px; width: 400px; max-width: 90%; color: white; border: 1px solid #333; position: relative;"', 'class="modal-content" style="width: 400px; max-width: 90%; margin: auto; margin-top: 10vh; position: relative;"', html)
+
+# Remove explicit styles from buttons in lightbox toolbar that override CSS
+html = re.sub(r'style="background: linear-gradient\(135deg, #8b5cf6, #6366f1\); color: white; margin-bottom: 8px;"', 'class="icon-btn"', html)
+
+with open(r'C:\Users\User\Desktop\Eneko\smart_gallery_app\templates\index.html', 'w', encoding='utf-8') as f:
+    f.write(html)
+
+print("Styles and HTML patched successfully.")
