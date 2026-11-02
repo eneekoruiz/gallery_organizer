@@ -730,6 +730,103 @@ def api_stats():
                         android_classified_files.add(p)
                         
     breakdown_sorted = dict(sorted(breakdown.items(), key=lambda item: item[1], reverse=True))
+
+    # Telemetría del Asistente en Segundo Plano y Sincronización iCloud
+    import time, json
+    progress_file = APP_DIR / "scratch" / "apple_progress.json"
+    apple_db_file = APP_DIR / "apple_db.json"
+    
+    total_apple_db = 0
+    if apple_db_file.exists():
+        try:
+            with open(apple_db_file, 'r', encoding='utf-8') as f_adb:
+                total_apple_db = len(json.load(f_adb))
+        except Exception:
+            pass
+
+    assistant_data = {
+        "active": False,
+        "status": "completed",
+        "total": 0,
+        "processed": 0,
+        "remaining": 0,
+        "percentage": 100.0,
+        "rate": 0.0,
+        "eta_minutes": 0,
+        "eta_formatted": "Completado",
+        "cloud_placeholders": 0,
+        "icloud_total": 0,
+        "yo": 0,
+        "known_persons": 0,
+        "capturas": 0,
+        "sin_rostro": 0,
+        "desconocidos": 0,
+        "errors": 0,
+        "total_apple_db": total_apple_db,
+        "last_update_seconds_ago": 999999
+    }
+
+    if progress_file.exists():
+        try:
+            mtime = progress_file.stat().st_mtime
+            sec_ago = max(0, int(time.time() - mtime))
+            with open(progress_file, 'r', encoding='utf-8') as pf:
+                pdata = json.load(pf)
+                
+            p_total = int(pdata.get('total', 0))
+            p_proc = int(pdata.get('processed', 0))
+            p_rem = max(0, p_total - p_proc)
+            p_pct = round((p_proc / p_total * 100), 1) if p_total > 0 else 100.0
+            p_rate = float(pdata.get('rate', 0.0))
+            p_eta_m = float(pdata.get('eta_minutes', 0.0))
+            
+            if p_rem == 0 or pdata.get('status') == 'completed':
+                eta_fmt = "Completado"
+            elif p_eta_m > 60:
+                eta_fmt = f"{int(p_eta_m // 60)}h {int(p_eta_m % 60)}m"
+            elif p_eta_m > 0:
+                eta_fmt = f"{int(p_eta_m)} min"
+            else:
+                eta_fmt = "Calculando..."
+
+            is_recently_active = (sec_ago < 90 and pdata.get('status') == 'running')
+            
+            assistant_data.update({
+                "active": is_recently_active,
+                "status": "running" if is_recently_active else pdata.get('status', 'completed'),
+                "total": p_total,
+                "processed": p_proc,
+                "remaining": p_rem,
+                "percentage": p_pct,
+                "rate": p_rate,
+                "eta_minutes": p_eta_m,
+                "eta_formatted": eta_fmt,
+                "cloud_placeholders": pdata.get('cloud_placeholders', 0),
+                "icloud_total": pdata.get('icloud_total', 0),
+                "yo": pdata.get('yo', 0),
+                "known_persons": pdata.get('known_persons', 0),
+                "capturas": pdata.get('capturas', 0),
+                "sin_rostro": pdata.get('sin_rostro', 0),
+                "desconocidos": pdata.get('desconocidos', 0),
+                "errors": pdata.get('errors', 0),
+                "last_update_seconds_ago": sec_ago
+            })
+        except Exception as e_p:
+            print("Error loading apple_progress.json:", e_p)
+
+    try:
+        from app.services.face_service import _ENGINE_STATE, _ENGINE_THREAD
+        engine_alive = _ENGINE_THREAD is not None and _ENGINE_THREAD.is_alive()
+        assistant_data["engine"] = {
+            "running": bool(_ENGINE_STATE.get("running") and engine_alive),
+            "phase": _ENGINE_STATE.get("phase", "idle"),
+            "cycle": _ENGINE_STATE.get("cycle", 0),
+            "total_scanned": _ENGINE_STATE.get("total_scanned", 0),
+            "total_suggested": _ENGINE_STATE.get("total_suggested", 0),
+            "total_fixed": _ENGINE_STATE.get("total_fixed", 0)
+        }
+    except Exception:
+        pass
                 
     return jsonify({
         "total": len(total_files),
@@ -742,7 +839,8 @@ def api_stats():
         "iphone_clasificadas": len(iphone_classified_files),
         "android_total": len(android_total_files),
         "android_clasificadas": len(android_classified_files),
-        "breakdown": breakdown_sorted
+        "breakdown": breakdown_sorted,
+        "assistant": assistant_data
     })
 
 def find_avatar_image(target_dir):

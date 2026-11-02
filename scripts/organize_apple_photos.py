@@ -20,6 +20,14 @@ import json
 from pathlib import Path
 import cv2
 import numpy as np
+from PIL import Image, ImageFile
+
+try:
+    import pi_heif
+    pi_heif.register_heif_opener()
+except Exception:
+    pass
+ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 # Set UTF-8 encoding
 if sys.platform == 'win32':
@@ -122,16 +130,27 @@ def main():
             existing.add(f.lower())
 
     valid_exts = {'.jpg', '.jpeg', '.png', '.webp', '.heic', '.heif'}
-    candidates = [
-        f for f in ICLOUD_DIR.iterdir()
-        if f.is_file() and f.suffix.lower() in valid_exts and f.name.lower() not in existing
-    ]
+    all_icloud_files = list(ICLOUD_DIR.iterdir())
+    candidates = []
+    cloud_placeholders = 0
+    for f in all_icloud_files:
+        if f.is_file() and f.suffix.lower() in valid_exts and f.name.lower() not in existing:
+            try:
+                st = f.stat()
+                if st.st_file_attributes & 0x00400000:
+                    cloud_placeholders += 1
+                else:
+                    candidates.append(f)
+            except Exception:
+                cloud_placeholders += 1
 
     total = len(candidates)
-    print(f"Total unorganized candidates: {total}", flush=True)
+    print(f"Total unorganized local candidates: {total} (plus {cloud_placeholders} in iCloud cloud sync)", flush=True)
 
     stats = {
         'total': total,
+        'cloud_placeholders': cloud_placeholders,
+        'icloud_total': len(all_icloud_files),
         'processed': 0,
         'yo': 0,
         'known_persons': 0,
@@ -140,8 +159,21 @@ def main():
         'desconocidos': 0,
         'errors': 0,
         'start_time': time.time(),
-        'status': 'running'
+        'status': 'running' if total > 0 else 'completed'
     }
+
+    if total == 0:
+        stats['status'] = 'completed'
+        stats['message'] = 'Todas las fotos locales de iCloud están completamente organizadas.'
+        save_state()
+        try:
+            PROGRESS_FILE.parent.mkdir(parents=True, exist_ok=True)
+            with open(PROGRESS_FILE, 'w', encoding='utf-8') as pf:
+                json.dump(stats, pf, indent=2, cls=NumpyEncoder)
+        except Exception:
+            pass
+        print("=== TODAS LAS FOTOS LOCALES DE ICLOUD YA ESTÁN ORGANIZADAS ===", flush=True)
+        return
 
     t0 = time.time()
     for idx, fpath in enumerate(candidates, 1):
@@ -175,6 +207,13 @@ def main():
                 # 2. Face detection
                 b = np.fromfile(str(fpath), dtype=np.uint8)
                 img = cv2.imdecode(b, cv2.IMREAD_COLOR)
+                if img is None:
+                    try:
+                        with Image.open(fpath) as pil_im:
+                            pil_rgb = pil_im.convert('RGB')
+                            img = np.array(pil_rgb)[:, :, ::-1]
+                    except Exception:
+                        img = None
                 if img is None:
                     stats['errors'] += 1
                 else:

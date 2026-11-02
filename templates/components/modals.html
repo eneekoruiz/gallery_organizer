@@ -1,11 +1,44 @@
-    <!-- STATS MODAL -->
-    <div id="stats-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.85); backdrop-filter:blur(10px); z-index:10000; align-items:center; justify-content:center; padding:20px;">
-        <div class="modal-content" style="background:#1c1c1e; border:1px solid rgba(255,255,255,0.15); border-radius:18px; padding:25px; width:480px; max-width:92%; max-height:85vh; overflow-y:auto; color:white; position:relative; box-shadow:0 20px 50px rgba(0,0,0,0.8);">
-            <button onclick="document.getElementById('stats-modal').style.display = 'none'" style="position: absolute; top: 12px; right: 15px; background: none; border: none; color: #8e8e93; font-size: 24px; cursor: pointer;">&times;</button>
-            <h2 style="margin-top: 0; color: #ffcc00; text-align: center; display:flex; align-items:center; justify-content:center; gap:8px;">📊 Estadísticas de la Biblioteca</h2>
+    <!-- STATS & TELEMETRY MODAL (Apple Glassmorphism Pro) -->
+    <style>
+        @keyframes pulse-glow {
+            0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(48, 209, 88, 0.7); }
+            70% { transform: scale(1.1); box-shadow: 0 0 0 8px rgba(48, 209, 88, 0); }
+            100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(48, 209, 88, 0); }
+        }
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+    </style>
+    <div id="stats-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.85); backdrop-filter:blur(18px); -webkit-backdrop-filter:blur(18px); z-index:10000; align-items:center; justify-content:center; padding:16px;">
+        <div class="modal-content custom-scrollbar" style="background:rgba(18, 20, 27, 0.95); backdrop-filter:blur(35px) saturate(190%); -webkit-backdrop-filter:blur(35px) saturate(190%); border:1px solid rgba(255,255,255,0.13); border-radius:24px; padding:28px; width:820px; max-width:96%; max-height:90vh; overflow-y:auto; color:white; position:relative; box-shadow:0 30px 90px rgba(0,0,0,0.9), inset 0 1px 0 rgba(255,255,255,0.12);">
+            <!-- Modal Header -->
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:20px; padding-bottom:16px; border-bottom:1px solid rgba(255,255,255,0.08); gap:12px;">
+                <div>
+                    <div style="display:inline-flex; align-items:center; gap:6px; background:linear-gradient(135deg, rgba(10,132,255,0.15), rgba(191,90,242,0.15)); border:1px solid rgba(191,90,242,0.3); padding:3px 10px; border-radius:20px; font-size:11px; font-weight:700; color:#bf5af2; margin-bottom:6px;">
+                        <span>✨</span> <span>TELEMETRÍA EN TIEMPO REAL</span>
+                    </div>
+                    <h2 style="margin:0; font-size:1.4rem; font-weight:800; letter-spacing:-0.5px; background:linear-gradient(135deg, #ffffff 30%, #64d2ff 100%); -webkit-background-clip:text; -webkit-text-fill-color:transparent;">
+                        Centro de Control y Estadísticas
+                    </h2>
+                    <div style="font-size:0.8rem; color:#8e8e93; margin-top:2px;">
+                        Métricas de la fototeca, progreso del asistente de fondo y sincronización con iCloud
+                    </div>
+                </div>
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <button id="btn-refresh-stats" onclick="openStatsModal(true)" style="background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.1); color:#e5e5ea; padding:7px 12px; border-radius:10px; font-size:12px; font-weight:600; cursor:pointer; display:flex; align-items:center; gap:6px; transition:all 0.2s;" title="Actualizar datos">
+                        <svg id="stats-refresh-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+                        <span>Actualizar</span>
+                    </button>
+                    <button onclick="closeStatsModal()" style="background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.1); color:#8e8e93; width:32px; height:32px; border-radius:10px; font-size:18px; line-height:1; cursor:pointer; display:flex; align-items:center; justify-content:center; transition:all 0.2s;" onmouseover="this.style.color='#fff'; this.style.background='rgba(255,255,255,0.12)'" onmouseout="this.style.color='#8e8e93'; this.style.background='rgba(255,255,255,0.06)'">&times;</button>
+                </div>
+            </div>
             
-            <div id="stats-content" style="font-size: 14px; line-height: 1.8;">
-                <div style="text-align: center; padding: 20px;"><div class="loader-small"></div><p style="color:#aaa; margin-top:10px;">Cargando estadísticas...</p></div>
+            <div id="stats-content">
+                <div style="text-align: center; padding: 40px 20px;">
+                    <div class="loader-small" style="margin:auto; width:36px; height:36px;"></div>
+                    <p style="color:#8e8e93; margin-top:14px; font-size:13px;">Calculando métricas y telemetría de la galería...</p>
+                </div>
             </div>
         </div>
     </div>

@@ -1027,65 +1027,300 @@ async function filterTimeline(year) {
         }
 
         
-                async function openStatsModal() {
+                let statsPollInterval = null;
+        let lastStatsData = null;
+
+        window.closeStatsModal = function() {
+            const modal = document.getElementById('stats-modal');
+            if (modal) modal.style.display = 'none';
+            if (statsPollInterval) {
+                clearInterval(statsPollInterval);
+                statsPollInterval = null;
+            }
+        };
+
+        window.openStatsModal = async function(isManualRefresh = false) {
             const modal = document.getElementById('stats-modal');
             if (!modal) return;
             modal.style.display = 'flex';
-            document.getElementById('stats-content').innerHTML = '<div style="text-align: center; padding: 30px;"><div class="loader-small" style="margin:auto;"></div><p style="margin-top:12px; color:#8e8e93;">Calculando métricas y distribución de la galería...</p></div>';
-            
+
+            const refreshIcon = document.getElementById('stats-refresh-icon');
+            if (refreshIcon) refreshIcon.style.animation = 'spin 0.8s linear infinite';
+
+            if (!isManualRefresh && !lastStatsData) {
+                document.getElementById('stats-content').innerHTML = `
+                    <div style="text-align:center; padding:50px 20px;">
+                        <div class="loader-small" style="margin:auto; width:36px; height:36px;"></div>
+                        <p style="color:#8e8e93; margin-top:14px; font-size:13px;">Obteniendo telemetría en tiempo real...</p>
+                    </div>`;
+            }
+
             try {
                 const res = await fetch('/api/stats');
                 const data = await res.json();
-                
-                if (data.error) {
-                    document.getElementById('stats-content').innerHTML = `<p style="color:red">${data.error}</p>`;
-                    return;
+                lastStatsData = data;
+                renderStatsContent(data);
+
+                // Auto-poll if assistant is active or running
+                const asst = data.assistant || {};
+                if (asst.active || asst.status === 'running') {
+                    if (!statsPollInterval) {
+                        statsPollInterval = setInterval(async () => {
+                            const m = document.getElementById('stats-modal');
+                            if (!m || m.style.display === 'none') {
+                                clearInterval(statsPollInterval);
+                                statsPollInterval = null;
+                                return;
+                            }
+                            try {
+                                const r = await fetch('/api/stats');
+                                const d = await r.json();
+                                lastStatsData = d;
+                                renderStatsContent(d);
+                            } catch (e) {}
+                        }, 2500);
+                    }
+                } else if (statsPollInterval) {
+                    clearInterval(statsPollInterval);
+                    statsPollInterval = null;
                 }
-                
-                const percentage = data.total > 0 ? Math.round((data.clasificadas / data.total) * 100) : 0;
-                
-                document.getElementById('stats-content').innerHTML = `
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
-                        <span>Total de fotos en la galería:</span>
-                        <strong>${data.total}</strong>
-                    </div>
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 8px; color: #30d158;">
-                        <span>✏️ Ordenadas Oficialmente por Mí:</span>
-                        <strong>${data.manual_user || 0}</strong>
-                    </div>
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 8px; color: #0a84ff;">
-                        <span>✨ Ordenadas Oficialmente por IA:</span>
-                        <strong>${data.ia_verified || 0}</strong>
-                    </div>
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 8px; color: #ff9f0a;">
-                        <span>⚠️ Dudosas / Revisión:</span>
-                        <strong>${data.dudosos || 0}</strong>
-                    </div>
-                    <div style="display: flex; justify-content: space-between; margin-bottom: 20px; color: #ff453a;">
-                        <span>❓ Sin Ordenar / Pendientes:</span>
-                        <strong>${data.pendientes || 0}</strong>
-                    </div>
-                    
-                    <div style="width: 100%; background-color: #333; border-radius: 10px; height: 20px; overflow: hidden;">
-                        <div style="width: ${percentage}%; background-color: #30d158; height: 100%; text-align: center; font-size: 12px; line-height: 20px; color: black; font-weight: bold;">
-                            ${percentage}%
+            } catch (err) {
+                document.getElementById('stats-content').innerHTML = `<p style="color:#ff453a; text-align:center; padding:30px;">Error al cargar estadísticas: ${err.message}</p>`;
+            } finally {
+                if (refreshIcon) refreshIcon.style.animation = 'none';
+            }
+        };
+
+        function renderStatsBreakdownList(breakdown, filter = '') {
+            const entries = Object.entries(breakdown);
+            if (!entries.length) return '<div style="color:#8e8e93; text-align:center; padding:15px;">No hay álbumes para mostrar</div>';
+            
+            const maxCount = entries[0][1] || 1;
+            const q = filter.trim().toLowerCase();
+            const filtered = q ? entries.filter(([name]) => name.toLowerCase().includes(q)) : entries;
+
+            if (!filtered.length) {
+                return `<div style="color:#8e8e93; text-align:center; padding:15px;">No se encontraron álbumes que coincidan con "${filter}"</div>`;
+            }
+
+            return filtered.map(([name, count]) => {
+                const pct = Math.round((count / maxCount) * 100);
+                return `
+                    <div class="stats-album-item" style="display:flex; align-items:center; justify-content:space-between; padding:6px 8px; border-radius:8px; margin-bottom:4px; background:rgba(255,255,255,0.02); transition:background 0.15s;" onmouseover="this.style.background='rgba(255,255,255,0.06)'" onmouseout="this.style.background='rgba(255,255,255,0.02)'">
+                        <div style="flex:1; min-width:0; margin-right:12px;">
+                            <div style="font-size:13px; font-weight:600; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${name}</div>
+                            <div style="width:100%; height:4px; background:rgba(255,255,255,0.06); border-radius:2px; margin-top:4px; overflow:hidden;">
+                                <div style="width:${pct}%; height:100%; background:linear-gradient(90deg, #0a84ff, #bf5af2); border-radius:2px;"></div>
+                            </div>
+                        </div>
+                        <div style="font-size:12px; font-weight:700; color:#8e8e93; font-feature-settings:'tnum'; flex-shrink:0;">
+                            ${count.toLocaleString()}
                         </div>
                     </div>
-                    <div style="text-align: center; font-size: 12px; color: #aaa; margin-top: 5px; margin-bottom: 20px;">Progreso Global de Clasificación</div>
-                    
-                    <h3 style="color: #0a84ff; font-size: 16px; margin-bottom: 10px; border-bottom: 1px solid #333; padding-bottom: 5px;">Desglose Completo por Álbum / Persona</h3>
-                    <div style="max-height: 250px; overflow-y: auto; padding-right: 10px; font-size: 14px;" class="custom-scrollbar">
-                        ${Object.entries(data.breakdown || {}).map(([name, count]) => `
-                            <div style="display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid #222;">
-                                <span>${name}</span>
-                                <span style="color: #aaa;">${count}</span>
-                            </div>
-                        `).join('')}
-                    </div>
                 `;
-            } catch (err) {
-                document.getElementById('stats-content').innerHTML = `<p style="color:red">Error al cargar estadísticas: ${err.message}</p>`;
-            }
+            }).join('');
+        }
+
+        window.filterStatsList = function(q) {
+            const listEl = document.getElementById('stats-album-list');
+            if (!listEl || !lastStatsData) return;
+            listEl.innerHTML = renderStatsBreakdownList(lastStatsData.breakdown || {}, q);
+        };
+
+        function renderStatsContent(data) {
+            const asst = data.assistant || {};
+            const totalGallery = data.total || 0;
+            const classified = data.clasificadas || 0;
+            const manualUser = data.manual_user || 0;
+            const iaVerified = data.ia_verified || 0;
+            const dudosos = data.dudosos || 0;
+            const pendientes = data.pendientes || 0;
+            const pctGlobal = totalGallery > 0 ? Math.round((classified / totalGallery) * 100) : 0;
+
+            const asstStatus = asst.status || 'completed';
+            const isAsstRunning = asst.active || asstStatus === 'running';
+            const asstTotal = asst.total || 0;
+            const asstProc = asst.processed || 0;
+            const asstRem = asst.remaining !== undefined ? asst.remaining : Math.max(0, asstTotal - asstProc);
+            const asstPct = asst.percentage || (asstTotal > 0 ? Math.round((asstProc / asstTotal) * 100) : 100);
+            const asstRate = asst.rate || 0;
+            const asstEta = asst.eta_formatted || (asstRem === 0 ? 'Completado' : (asst.eta_minutes ? `~${Math.round(asst.eta_minutes)} min` : 'Calculando...'));
+            const cloudPlaceholders = asst.cloud_placeholders || 0;
+            const totalAppleOrganized = asst.total_apple_db || data.iphone_clasificadas || 0;
+
+            const html = `
+                <!-- HERO CARD: ASISTENTE AUTÓNOMO EN SEGUNDO PLANO -->
+                <div style="background: linear-gradient(135deg, rgba(10,132,255,0.1) 0%, rgba(191,90,242,0.1) 100%); border: 1px solid rgba(10,132,255,0.3); border-radius: 18px; padding: 20px; margin-bottom: 22px; position: relative; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.3);">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px; flex-wrap:wrap; gap:8px;">
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <div style="width:32px; height:32px; border-radius:8px; background:linear-gradient(135deg, #0a84ff, #bf5af2); display:flex; align-items:center; justify-content:center; font-size:16px;">⚡</div>
+                            <div>
+                                <div style="font-size:14px; font-weight:800; color:#fff;">Asistente Autónomo (iCloud & Aprendizaje)</div>
+                                <div style="font-size:11px; color:#8e8e93;">Organización facial en segundo plano y extracción de características</div>
+                            </div>
+                        </div>
+                        <div>
+                            ${isAsstRunning ? `
+                                <div style="display:inline-flex; align-items:center; gap:6px; background:rgba(48,209,88,0.15); border:1px solid rgba(48,209,88,0.4); padding:4px 10px; border-radius:14px; font-size:11px; font-weight:700; color:#30d158;">
+                                    <span style="display:inline-block; width:8px; height:8px; border-radius:50%; background:#30d158; box-shadow:0 0 8px #30d158; animation:pulse-glow 1.5s infinite;"></span>
+                                    ANALIZANDO EN TIEMPO REAL
+                                </div>
+                            ` : `
+                                <div style="display:inline-flex; align-items:center; gap:6px; background:rgba(100,210,255,0.12); border:1px solid rgba(100,210,255,0.3); padding:4px 10px; border-radius:14px; font-size:11px; font-weight:700; color:#64d2ff;">
+                                    <span>✓</span> TODO ORGANIZADO
+                                </div>
+                            `}
+                        </div>
+                    </div>
+
+                    <!-- Progress Bar & Big Counter -->
+                    <div style="margin-bottom:16px;">
+                        <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:6px;">
+                            <div>
+                                <span style="font-size:26px; font-weight:900; letter-spacing:-0.5px; color:#fff; font-feature-settings:'tnum';">${asstProc.toLocaleString()}</span>
+                                <span style="font-size:14px; color:#8e8e93; font-weight:600;"> / ${asstTotal.toLocaleString()} fotos del lote</span>
+                            </div>
+                            <div style="text-align:right;">
+                                <span style="font-size:16px; font-weight:800; color:#64d2ff;">${asstPct}%</span>
+                                <span style="font-size:11px; color:#8e8e93; margin-left:6px;">(${asstRem.toLocaleString()} restantes)</span>
+                            </div>
+                        </div>
+
+                        <div style="width:100%; height:12px; background:rgba(255,255,255,0.08); border-radius:10px; overflow:hidden; position:relative; padding:1px;">
+                            <div style="width:${Math.min(100, asstPct)}%; height:100%; border-radius:8px; background:linear-gradient(90deg, #0a84ff 0%, #bf5af2 50%, #30d158 100%); transition:width 0.6s cubic-bezier(0.16, 1, 0.3, 1); box-shadow:0 0 12px rgba(10,132,255,0.6);"></div>
+                        </div>
+                    </div>
+
+                    <!-- 4 Assistant Telemetry Tiles -->
+                    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(130px, 1fr)); gap:10px; margin-bottom:14px;">
+                        <div style="background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.07); padding:10px; border-radius:12px; text-align:center;">
+                            <div style="font-size:10px; color:#8e8e93; font-weight:700; text-transform:uppercase;">Velocidad</div>
+                            <div style="font-size:18px; font-weight:800; color:#64d2ff; margin-top:2px;">${asstRate} <span style="font-size:11px; font-weight:500;">img/s</span></div>
+                        </div>
+                        <div style="background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.07); padding:10px; border-radius:12px; text-align:center;">
+                            <div style="font-size:10px; color:#8e8e93; font-weight:700; text-transform:uppercase;">Tiempo Restante</div>
+                            <div style="font-size:18px; font-weight:800; color:#ffd60a; margin-top:2px;">${asstEta}</div>
+                        </div>
+                        <div style="background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.07); padding:10px; border-radius:12px; text-align:center;">
+                            <div style="font-size:10px; color:#8e8e93; font-weight:700; text-transform:uppercase;">Total Apple en Álbumes</div>
+                            <div style="font-size:18px; font-weight:800; color:#30d158; margin-top:2px;">${totalAppleOrganized.toLocaleString()}</div>
+                        </div>
+                        <div style="background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.07); padding:10px; border-radius:12px; text-align:center;">
+                            <div style="font-size:10px; color:#8e8e93; font-weight:700; text-transform:uppercase;">iCloud en la Nube</div>
+                            <div style="font-size:18px; font-weight:800; color:#bf5af2; margin-top:2px;" title="Pendientes de sincronización local por iCloud para Windows">${cloudPlaceholders.toLocaleString()}</div>
+                        </div>
+                    </div>
+
+                    <!-- Assistant Breakdown Tags -->
+                    <div style="display:flex; flex-wrap:wrap; gap:6px; font-size:11px;">
+                        <span style="background:rgba(255,255,255,0.06); padding:4px 8px; border-radius:8px; color:#e5e5ea;">👤 YO: <strong>${asst.yo || 0}</strong></span>
+                        <span style="background:rgba(255,255,255,0.06); padding:4px 8px; border-radius:8px; color:#e5e5ea;">🏷️ Conocidas: <strong>${asst.known_persons || 0}</strong></span>
+                        <span style="background:rgba(255,255,255,0.06); padding:4px 8px; border-radius:8px; color:#e5e5ea;">📸 Capturas: <strong>${asst.capturas || 0}</strong></span>
+                        <span style="background:rgba(255,255,255,0.06); padding:4px 8px; border-radius:8px; color:#e5e5ea;">🌄 Sin Rostro: <strong>${asst.sin_rostro || 0}</strong></span>
+                        <span style="background:rgba(255,255,255,0.06); padding:4px 8px; border-radius:8px; color:#e5e5ea;">❓ Desconocidos: <strong>${asst.desconocidos || 0}</strong></span>
+                        ${asst.errors ? `<span style="background:rgba(255,69,58,0.15); border:1px solid rgba(255,69,58,0.3); padding:4px 8px; border-radius:8px; color:#ff453a;">⚠️ Errores: <strong>${asst.errors}</strong></span>` : ''}
+                    </div>
+                </div>
+
+                <!-- SECCIÓN 2: ESTADO GLOBAL DE LA FOTOTECA -->
+                <div style="margin-bottom:22px;">
+                    <div style="font-size:12px; font-weight:700; color:#8e8e93; text-transform:uppercase; letter-spacing:0.5px; margin-bottom:10px;">
+                        Estado Global de la Galería
+                    </div>
+
+                    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); gap:10px; margin-bottom:14px;">
+                        <!-- Total -->
+                        <div style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); padding:14px; border-radius:14px;">
+                            <div style="font-size:11px; color:#8e8e93; font-weight:600;">Total Elementos</div>
+                            <div style="font-size:24px; font-weight:800; color:#fff; margin-top:2px;">${totalGallery.toLocaleString()}</div>
+                            <div style="font-size:11px; color:#64d2ff; margin-top:4px;">${pctGlobal}% clasificado</div>
+                        </div>
+
+                        <!-- Manual User -->
+                        <div style="background:rgba(48,209,88,0.06); border:1px solid rgba(48,209,88,0.2); padding:14px; border-radius:14px;">
+                            <div style="display:flex; justify-content:space-between; align-items:center;">
+                                <span style="font-size:11px; color:#30d158; font-weight:600;">✏️ Confirmadas por Mí</span>
+                                <span style="font-size:9px; background:rgba(48,209,88,0.2); color:#30d158; padding:1px 5px; border-radius:4px; font-weight:700;">100% Certeza</span>
+                            </div>
+                            <div style="font-size:24px; font-weight:800; color:#30d158; margin-top:2px;">${manualUser.toLocaleString()}</div>
+                            <div style="font-size:11px; color:rgba(48,209,88,0.8); margin-top:4px;">Centroides anclados</div>
+                        </div>
+
+                        <!-- IA Verified -->
+                        <div style="background:rgba(10,132,255,0.06); border:1px solid rgba(10,132,255,0.2); padding:14px; border-radius:14px;">
+                            <div style="display:flex; justify-content:space-between; align-items:center;">
+                                <span style="font-size:11px; color:#0a84ff; font-weight:600;">✨ Validadas por IA</span>
+                                <span style="font-size:9px; background:rgba(10,132,255,0.2); color:#0a84ff; padding:1px 5px; border-radius:4px; font-weight:700;">Alta Confianza</span>
+                            </div>
+                            <div style="font-size:24px; font-weight:800; color:#0a84ff; margin-top:2px;">${iaVerified.toLocaleString()}</div>
+                            <div style="font-size:11px; color:rgba(10,132,255,0.8); margin-top:4px;">Reconocimiento SFace</div>
+                        </div>
+
+                        <!-- Pendientes / Dudosas -->
+                        <div style="background:rgba(255,159,10,0.06); border:1px solid rgba(255,159,10,0.2); padding:14px; border-radius:14px;">
+                            <div style="display:flex; justify-content:space-between; align-items:center;">
+                                <span style="font-size:11px; color:#ff9f0a; font-weight:600;">⚠️ Por Revisar</span>
+                                <span style="font-size:9px; background:rgba(255,159,10,0.2); color:#ff9f0a; padding:1px 5px; border-radius:4px; font-weight:700;">Dudosas + Nuevas</span>
+                            </div>
+                            <div style="font-size:24px; font-weight:800; color:#ff9f0a; margin-top:2px;">${(dudosos + pendientes).toLocaleString()}</div>
+                            <div style="font-size:11px; color:rgba(255,159,10,0.8); margin-top:4px;">${dudosos} dudosas / ${pendientes} pendientes</div>
+                        </div>
+                    </div>
+
+                    <!-- Segmented Progress Bar -->
+                    <div style="margin-bottom:12px;">
+                        <div style="width:100%; height:10px; background:rgba(255,255,255,0.08); border-radius:8px; overflow:hidden; display:flex;">
+                            <div style="width:${totalGallery > 0 ? (manualUser / totalGallery * 100) : 0}%; background:#30d158;" title="Manuales: ${manualUser}"></div>
+                            <div style="width:${totalGallery > 0 ? (iaVerified / totalGallery * 100) : 0}%; background:#0a84ff;" title="IA: ${iaVerified}"></div>
+                            <div style="width:${totalGallery > 0 ? (dudosos / totalGallery * 100) : 0}%; background:#ff9f0a;" title="Dudosas: ${dudosos}"></div>
+                            <div style="width:${totalGallery > 0 ? (pendientes / totalGallery * 100) : 0}%; background:#ff453a;" title="Pendientes: ${pendientes}"></div>
+                        </div>
+                    </div>
+
+                    <!-- Device Origin Badges -->
+                    <div style="display:flex; gap:10px; flex-wrap:wrap;">
+                        <div style="flex:1; min-width:200px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.06); padding:10px 14px; border-radius:10px; display:flex; justify-content:space-between; align-items:center;">
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                <span style="font-size:16px;">🍎</span>
+                                <div>
+                                    <div style="font-size:12px; font-weight:700; color:#fff;">Apple iPhone / iCloud</div>
+                                    <div style="font-size:10px; color:#8e8e93;">${(data.iphone_clasificadas || 0).toLocaleString()} organizadas</div>
+                                </div>
+                            </div>
+                            <div style="font-size:14px; font-weight:800; color:#fff;">${(data.iphone_total || 0).toLocaleString()}</div>
+                        </div>
+
+                        <div style="flex:1; min-width:200px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.06); padding:10px 14px; border-radius:10px; display:flex; justify-content:space-between; align-items:center;">
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                <span style="font-size:16px;">🤖</span>
+                                <div>
+                                    <div style="font-size:12px; font-weight:700; color:#fff;">Android & Otras Fuentes</div>
+                                    <div style="font-size:10px; color:#8e8e93;">${(data.android_clasificadas || 0).toLocaleString()} organizadas</div>
+                                </div>
+                            </div>
+                            <div style="font-size:14px; font-weight:800; color:#fff;">${(data.android_total || 0).toLocaleString()}</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- SECCIÓN 3: DESGLOSE POR ÁLBUM / PERSONA (CON BUSCADOR) -->
+                <div>
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:12px; flex-wrap:wrap; gap:10px;">
+                        <div style="font-size:12px; font-weight:700; color:#8e8e93; text-transform:uppercase; letter-spacing:0.5px;">
+                            Distribución por Álbum y Persona (${Object.keys(data.breakdown || {}).length} álbumes)
+                        </div>
+                        <div style="position:relative; width:220px;">
+                            <input type="text" id="stats-filter-input" placeholder="🔍 Filtrar álbum..." oninput="filterStatsList(this.value)" style="width:100%; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); padding:5px 10px; border-radius:8px; color:#fff; font-size:12px; outline:none; transition:border-color 0.2s;" onfocus="this.style.borderColor='#0a84ff'" onblur="this.style.borderColor='rgba(255,255,255,0.12)'">
+                        </div>
+                    </div>
+
+                    <div id="stats-album-list" style="max-height: 280px; overflow-y: auto; padding-right: 6px;" class="custom-scrollbar">
+                        ${renderStatsBreakdownList(data.breakdown || {})}
+                    </div>
+                </div>
+            `;
+
+            document.getElementById('stats-content').innerHTML = html;
         }
         
         
