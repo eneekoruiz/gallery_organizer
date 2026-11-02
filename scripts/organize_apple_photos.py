@@ -171,128 +171,122 @@ def main():
                     'original': str(fpath),
                     'type': 'screenshot'
                 }
-                stats['processed'] = idx
-                continue
-
-            # 2. Face detection
-            b = np.fromfile(str(fpath), dtype=np.uint8)
-            img = cv2.imdecode(b, cv2.IMREAD_COLOR)
-            if img is None:
-                stats['errors'] += 1
-                stats['processed'] = idx
-                continue
-
-            h, w = img.shape[:2]
-            max_d = 960
-            scale = 1.0
-            if max(h, w) > max_d:
-                scale = max_d / max(h, w)
-                det_img = cv2.resize(img, (int(w * scale), int(h * scale)))
             else:
-                det_img = img
-
-            dh, dw = det_img.shape[:2]
-            detector.setInputSize((dw, dh))
-            detector.setScoreThreshold(0.35)
-            _, faces = detector.detect(det_img)
-
-            if faces is None or len(faces) == 0:
-                # No face detected
-                dest_dir = BASE_RESULTADOS / "Revision_Interactiva" / "Sin_Rostro"
-                dest_dir.mkdir(parents=True, exist_ok=True)
-                dest_path = dest_dir / fpath.name
-                shutil.copy2(str(fpath), str(dest_path))
-                stats['sin_rostro'] += 1
-                apple_db[str(dest_path)] = {
-                    'category': 'Revision_Interactiva',
-                    'identity': 'Sin_Rostro',
-                    'original': str(fpath),
-                    'faces_count': 0
-                }
-                stats['processed'] = idx
-                continue
-
-            # Faces detected: extract features & match
-            feature_vectors = []
-            cached_faces_info = []
-            is_yo = False
-            best_sim = -1.0
-            best_k = None
-
-            for face in faces:
-                if scale != 1.0:
-                    face_full = face.copy()
-                    face_full[:14] /= scale
+                # 2. Face detection
+                b = np.fromfile(str(fpath), dtype=np.uint8)
+                img = cv2.imdecode(b, cv2.IMREAD_COLOR)
+                if img is None:
+                    stats['errors'] += 1
                 else:
-                    face_full = face
+                    h, w = img.shape[:2]
+                    max_d = 960
+                    scale = 1.0
+                    if max(h, w) > max_d:
+                        scale = max_d / max(h, w)
+                        det_img = cv2.resize(img, (int(w * scale), int(h * scale)))
+                    else:
+                        det_img = img
 
-                aligned = recognizer.alignCrop(img, face_full)
-                feat = recognizer.feature(aligned)[0]
-                fn = feat / (np.linalg.norm(feat) + 1e-10)
-                feature_vectors.append(fn)
+                    dh, dw = det_img.shape[:2]
+                    detector.setInputSize((dw, dh))
+                    detector.setScoreThreshold(0.35)
+                    _, faces = detector.detect(det_img)
 
-                # Check YO (pure + sunglasses)
-                yo_sim = 0.0
-                if yo_pure is not None:
-                    yo_sim = max(yo_sim, float(np.dot(fn, yo_pure)))
-                if yo_sunglasses is not None:
-                    yo_sim = max(yo_sim, float(np.dot(fn, yo_sunglasses)))
+                    if faces is None or len(faces) == 0:
+                        # No face detected -> Sin_Rostro
+                        dest_dir = BASE_RESULTADOS / "Revision_Interactiva" / "Sin_Rostro"
+                        dest_dir.mkdir(parents=True, exist_ok=True)
+                        dest_path = dest_dir / fpath.name
+                        shutil.copy2(str(fpath), str(dest_path))
+                        stats['sin_rostro'] += 1
+                        apple_db[str(dest_path)] = {
+                            'category': 'Revision_Interactiva',
+                            'identity': 'Sin_Rostro',
+                            'original': str(fpath),
+                            'faces_count': 0
+                        }
+                    else:
+                        # Faces detected: extract features & match
+                        feature_vectors = []
+                        cached_faces_info = []
+                        is_yo = False
+                        best_sim = -1.0
+                        best_k = None
 
-                if yo_sim >= 0.45:
-                    is_yo = True
+                        for face in faces:
+                            if scale != 1.0:
+                                face_full = face.copy()
+                                face_full[:14] /= scale
+                            else:
+                                face_full = face
 
-                # Check against 407 identity centroids
-                sims = np.dot(centroid_matrix, fn)
-                top_idx = np.argmax(sims)
-                top_sim = float(sims[top_idx])
-                if top_sim > best_sim:
-                    best_sim = top_sim
-                    best_k = keys_list[top_idx]
+                            aligned = recognizer.alignCrop(img, face_full)
+                            feat = recognizer.feature(aligned)[0]
+                            fn = feat / (np.linalg.norm(feat) + 1e-10)
+                            feature_vectors.append(fn)
 
-                cached_faces_info.append({
-                    'x': int(face_full[0]),
-                    'y': int(face_full[1]),
-                    'width': int(face_full[2]),
-                    'height': int(face_full[3]),
-                    'img_width': w,
-                    'img_height': h,
-                    'identity': 'YO' if yo_sim >= 0.45 else (best_k[1] if best_sim >= 0.52 and best_k else 'Desconocido'),
-                    'confidence': f"🏷️ Dataset ({max(yo_sim, best_sim)*100:.1f}%)" if (yo_sim >= 0.45 or best_sim >= 0.52) else "❓ Desconocido"
-                })
+                            # Check YO (pure + sunglasses)
+                            yo_sim = 0.0
+                            if yo_pure is not None:
+                                yo_sim = max(yo_sim, float(np.dot(fn, yo_pure)))
+                            if yo_sunglasses is not None:
+                                yo_sim = max(yo_sim, float(np.dot(fn, yo_sunglasses)))
 
-            if is_yo:
-                dest_dir = BASE_RESULTADOS / "YO" / "YO"
-                stats['yo'] += 1
-                dest_cat, dest_ident = "YO", "YO"
-            elif best_sim >= 0.52 and best_k:
-                dest_cat, dest_ident = best_k
-                dest_dir = BASE_RESULTADOS / dest_cat / dest_ident
-                stats['known_persons'] += 1
-            else:
-                dest_dir = BASE_RESULTADOS / "Personas Sin Nombre" / "Desconocidos"
-                dest_cat, dest_ident = "Personas Sin Nombre", "Desconocidos"
-                stats['desconocidos'] += 1
+                            if yo_sim >= 0.45:
+                                is_yo = True
 
-            dest_dir.mkdir(parents=True, exist_ok=True)
-            dest_path = dest_dir / fpath.name
-            shutil.copy2(str(fpath), str(dest_path))
+                            # Check against 407 identity centroids
+                            sims = np.dot(centroid_matrix, fn)
+                            top_idx = np.argmax(sims)
+                            top_sim = float(sims[top_idx])
+                            if top_sim > best_sim:
+                                best_sim = top_sim
+                                best_k = keys_list[top_idx]
 
-            apple_db[str(dest_path)] = {
-                'category': dest_cat,
-                'identity': dest_ident,
-                'original': str(fpath),
-                'score': round(best_sim, 3),
-                'faces_count': len(feature_vectors)
-            }
-            faces_cache[str(dest_path)] = cached_faces_info
-            stats['processed'] = idx
+                            cached_faces_info.append({
+                                'x': int(face_full[0]),
+                                'y': int(face_full[1]),
+                                'width': int(face_full[2]),
+                                'height': int(face_full[3]),
+                                'img_width': w,
+                                'img_height': h,
+                                'identity': 'YO' if yo_sim >= 0.45 else (best_k[1] if best_sim >= 0.52 and best_k else 'Desconocido'),
+                                'confidence': f"🏷️ Dataset ({max(yo_sim, best_sim)*100:.1f}%)" if (yo_sim >= 0.45 or best_sim >= 0.52) else "❓ Desconocido"
+                            })
+
+                        if is_yo:
+                            dest_dir = BASE_RESULTADOS / "YO" / "YO"
+                            stats['yo'] += 1
+                            dest_cat, dest_ident = "YO", "YO"
+                        elif best_sim >= 0.52 and best_k:
+                            dest_cat, dest_ident = best_k
+                            dest_dir = BASE_RESULTADOS / dest_cat / dest_ident
+                            stats['known_persons'] += 1
+                        else:
+                            dest_dir = BASE_RESULTADOS / "Personas Sin Nombre" / "Desconocidos"
+                            dest_cat, dest_ident = "Personas Sin Nombre", "Desconocidos"
+                            stats['desconocidos'] += 1
+
+                        dest_dir.mkdir(parents=True, exist_ok=True)
+                        dest_path = dest_dir / fpath.name
+                        shutil.copy2(str(fpath), str(dest_path))
+
+                        apple_db[str(dest_path)] = {
+                            'category': dest_cat,
+                            'identity': dest_ident,
+                            'original': str(fpath),
+                            'score': round(best_sim, 3),
+                            'faces_count': len(feature_vectors)
+                        }
+                        faces_cache[str(dest_path)] = cached_faces_info
 
         except Exception as e:
             stats['errors'] += 1
-            stats['processed'] = idx
 
-        # Periodic logging and save
-        if idx % 50 == 0 or idx == total:
+        stats['processed'] = idx
+
+        # Periodic logging and save every 25 images
+        if idx % 25 == 0 or idx == total:
             elapsed = time.time() - t0
             rate = idx / (elapsed + 1e-5)
             stats['rate'] = round(rate, 1)
@@ -306,6 +300,7 @@ def main():
 
             save_state()
             try:
+                PROGRESS_FILE.parent.mkdir(parents=True, exist_ok=True)
                 with open(PROGRESS_FILE, 'w', encoding='utf-8') as pf:
                     json.dump(stats, pf, indent=2, cls=NumpyEncoder)
             except Exception:

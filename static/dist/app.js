@@ -868,7 +868,22 @@ async function filterTimeline(year) {
                 face.identity !== 'Desconocido' &&
                 !face.identity.startsWith('IA (Pendiente)');
 
-            // ── Determine AI suggestion ────────────────────────
+            // ── Determine AI suggestion (Mutual Exclusion per Photo) ──
+            const otherAssignedInPhoto = new Set();
+            if (typeof currentFaces !== 'undefined' && Array.isArray(currentFaces)) {
+                currentFaces.forEach((f, idx) => {
+                    if (idx !== faceNum - 1) {
+                        const id = f.identity;
+                        if (id && id !== 'Desconocido' && !id.startsWith('? ') && !id.startsWith('IA ') && !id.startsWith('Falso_')) {
+                            otherAssignedInPhoto.add(id);
+                        }
+                        if (f.is_manual && id) {
+                            otherAssignedInPhoto.add(id);
+                        }
+                    }
+                });
+            }
+
             let aiPredictedIdObj = null;
             let hasAiSuggestion = false;
             let suggestedName = face.suggested_identity;
@@ -877,6 +892,10 @@ async function filterTimeline(year) {
             }
             if (!suggestedName && isAssignedToPerson && face.identity !== folderName && !face.is_manual) {
                 suggestedName = face.identity;
+            }
+            // A person cannot be in two different face boxes in the same photo
+            if (suggestedName && otherAssignedInPhoto.has(suggestedName)) {
+                suggestedName = null;
             }
             if (suggestedName && !isInvalidFolderName(suggestedName)) {
                 aiPredictedIdObj = identitiesList.find(id => id.identidad === suggestedName) || {categoria: categoryName || 'Familia', identidad: suggestedName};
@@ -3539,6 +3558,22 @@ async function runAnalysis() {
                 if (pconf) pconf.innerHTML = `<span style="font-size:10px; color:#ff9f0a; background:rgba(255,159,10,0.12); padding:2px 7px; border-radius:8px; font-weight:600;">✏️ Editado (Manual)</span>`;
                 if (pcardActions && currentFaces && currentFaces[faceNum - 1]) {
                     pcardActions.innerHTML = generateReassignHTML(currentFaces[faceNum - 1], faceNum, 'quickReassignFace', 'sidebar');
+                }
+
+                // Mutual exclusion: Re-render ALL other face action cards in this photo immediately
+                if (currentFaces && Array.isArray(currentFaces)) {
+                    currentFaces.forEach((f, idx) => {
+                        const fn = idx + 1;
+                        if (fn !== faceNum) {
+                            if (f.suggested_identity === idObj.identidad) {
+                                f.suggested_identity = null;
+                            }
+                            const otherActions = document.getElementById(`pcard-actions-${fn}`);
+                            if (otherActions) {
+                                otherActions.innerHTML = generateReassignHTML(f, fn, 'quickReassignFace', 'sidebar');
+                            }
+                        }
+                    });
                 }
 
                 if (currentFileObj) {

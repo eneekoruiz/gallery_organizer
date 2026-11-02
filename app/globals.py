@@ -9,6 +9,8 @@ BACKGROUND_TASKS_ENABLED = os.getenv('SMART_GALLERY_BACKGROUND_TASKS', '1') == '
 
 # Lock for thread-safe cache reads/writes
 cache_lock = threading.Lock()
+# Lock for OpenCV DNN FaceDetectorYN thread-safety
+detector_lock = threading.Lock()
 
 # Rutas Principales
 APP_DIR = Path(__file__).resolve().parent.parent

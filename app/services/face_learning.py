@@ -80,9 +80,10 @@ def update_confirmed_sample(identities, identity, sample_key, feature):
     samples = dict(record.get('confirmed_samples', {}))
     samples[sample_key] = feature
     sample_list = list(samples.values())
+    appearance_centers = [c for c in compute_appearance_centroids(sample_list) if float(np.dot(c, feature)) < 0.95][:3]
     result[identity] = {
-        'centroid': normalized_feature(np.mean(sample_list, axis=0)),
-        'centroids': compute_appearance_centroids(sample_list),
+        'centroid': feature,
+        'centroids': [feature] + appearance_centers,
         'confirmed_samples': samples,
         'provenance': HUMAN,
         'names': list(samples)

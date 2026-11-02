@@ -62,7 +62,8 @@ from pathlib import Path
 from app.globals import (
     APP_DIR, FOTOS_DIR, RESULTADOS_DIR, CACHE_FILE, FACES_CACHE_FILE, 
     PENDING_DELETIONS_FILE, detector, recognizer, known_faces, 
-    faces_cache, clear_gallery_cache, get_gallery_cache
+    faces_cache, clear_gallery_cache, get_gallery_cache,
+    detector_lock, reload_known_faces
 )
 from app.utils.faces import get_cosine_similarity, iou
 from app.utils.files import safe_move, load_overrides, save_overrides, find_relocated_file, get_file_key, safe_move_file, safe_remove_file
@@ -194,9 +195,10 @@ def api_analyze():
                 det_w, det_h = width, height
                 det_img = img
 
-            detector.setInputSize((det_w, det_h))
-            detector.setScoreThreshold(0.35)
-            _, faces = detector.detect(det_img)
+            with detector_lock:
+                detector.setInputSize((det_w, det_h))
+                detector.setScoreThreshold(0.35)
+                _, faces = detector.detect(det_img)
             
             inv_scale = 1.0 / scale if scale > 0 else 1.0
             if faces is not None:
@@ -215,9 +217,10 @@ def api_analyze():
                     h_pip, w_pip = pip_crop.shape[:2]
                     if h_pip > 40 and w_pip > 40:
                         pip_2x = cv2.resize(pip_crop, (w_pip * 2, h_pip * 2))
-                        detector.setInputSize((w_pip * 2, h_pip * 2))
-                        detector.setScoreThreshold(0.25)
-                        _, p_faces = detector.detect(pip_2x)
+                        with detector_lock:
+                            detector.setInputSize((w_pip * 2, h_pip * 2))
+                            detector.setScoreThreshold(0.25)
+                            _, p_faces = detector.detect(pip_2x)
                         if p_faces is not None:
                             for pf in p_faces:
                                 if not is_valid_face_landmarks(pf):
@@ -232,6 +235,11 @@ def api_analyze():
             overrides = load_overrides()
             file_key = get_file_key(filepath)
             file_overrides = [ov for ov in overrides.get(file_key, []) if ov.get('provenance') == HUMAN]
+            claimed_identities = set()
+            for ov in file_overrides:
+                ov_id = ov.get('identity')
+                if ov_id and ov_id not in ("Desconocido", "Ignorar_Irrelevante", "Falso_Positivo"):
+                    claimed_identities.add(ov_id)
             
             if len(raw_detected_faces) > 0:
                 # NMS Deduplication
@@ -294,6 +302,7 @@ def api_analyze():
                         identity_name = override_match
                         confidence_str = "✏️ Corrección Manual"
                         tag_type = "manual"
+                        claimed_identities.add(override_match)
                         feature_vec = None
                     else:
                         feature_vec = None
@@ -331,6 +340,8 @@ def api_analyze():
                                 for db_id, val in known_faces.items():
                                     ident_n = db_id[1] if isinstance(db_id, tuple) else str(db_id)
                                     if is_smart_relationship_album(ident_n) or ident_n.startswith("Falso_Positivo") or ident_n.startswith("Ignorar_"):
+                                        continue
+                                    if ident_n in claimed_identities:
                                         continue
                                     score = match_face_to_identity(feat_norm, val)
                                     if score > best_score:
@@ -633,21 +644,17 @@ def apply_correction_to_file(filepath, new_categoria, new_identidad, face_data, 
                             if c_pkl_path.exists():
                                 with open(c_pkl_path, 'rb') as f_c:
                                     c_dict = pickle.load(f_c)
-                            target_c = c_dict.get((new_categoria, new_identidad))
-                            if target_c is None:
-                                target_c = c_dict.get(new_identidad)
-                            if target_c is not None:
-                                updated_c = 0.65 * (target_c / np.linalg.norm(target_c)) + 0.35 * feature
-                                updated_c = updated_c / np.linalg.norm(updated_c)
-                            else:
-                                updated_c = feature
-                            c_dict[(new_categoria, new_identidad)] = updated_c
-                            c_dict[new_identidad] = updated_c
+                            # Human confirmation is 100% reliable ground truth: anchor at the center
+                            c_dict[(new_categoria, new_identidad)] = feature
+                            c_dict[new_identidad] = feature
                             with open(c_pkl_path, 'wb') as f_c:
                                 pickle.dump(c_dict, f_c)
                             if new_identidad == 'YO':
-                                np.save(APP_DIR / "yo_pure_centroid.npy", updated_c)
-                            print(f"[DATASET REINFORCEMENT] Centroid for {new_identidad} strengthened with manual confirmation.")
+                                np.save(APP_DIR / "yo_pure_centroid.npy", feature)
+                            reload_known_faces()
+                            if file_key in faces_cache: del faces_cache[file_key]
+                            if filepath in faces_cache: del faces_cache[filepath]
+                            print(f"[DATASET REINFORCEMENT] Centroid for {new_identidad} anchored at center with 100% manual confidence.")
                         except Exception as e_c:
                             print(f"[DATASET REINFORCEMENT] Warning updating centroids.pkl: {e_c}")
         except Exception as e_learn:
@@ -1604,18 +1611,15 @@ def api_scan_video():
         
         identity_matches = {}
         
-        local_detector = detector
-        local_recognizer = recognizer
-        if local_detector is None or local_recognizer is None:
-            local_detector = cv2.FaceDetectorYN.create(
-                str(APP_DIR / "models" / "face_detection_yunet.onnx"), 
-                "", (320, 320), 0.70, 0.3, 5000
-            )
-            local_recognizer = cv2.FaceRecognizerSF.create(
-                str(APP_DIR / "models" / "face_recognition_sface.onnx"), ""
-            )
-            
-        local_detector.setScoreThreshold(0.35)
+        # Create dedicated thread-isolated detector to prevent any concurrent state mutation with api_analyze
+        local_detector = cv2.FaceDetectorYN.create(
+            str(APP_DIR / "models" / "face_detection_yunet.onnx"), 
+            "", (320, 320), 0.25, 0.3, 5000
+        )
+        local_recognizer = cv2.FaceRecognizerSF.create(
+            str(APP_DIR / "models" / "face_recognition_sface.onnx"), ""
+        )
+        local_detector.setScoreThreshold(0.25)
         # Escaneo a 1 fps con límite de duración razonable
         max_sec = min(int(duration) + 1, 120)
         for sec in range(0, max_sec):
@@ -1673,11 +1677,12 @@ def api_scan_video():
                         elif score > second_best_score:
                             second_best_score = score
                                 
-                    # Umbral estricto 0.55 + Protección Cross-Identity Margin (CIM >= 0.04)
-                    if best_match and best_score >= 0.55:
+                    if best_match and best_score >= 0.40:
                         margin = best_score - second_best_score
-                        if margin >= 0.04 or best_score >= 0.65:
-                            clean_m = best_match[1] if isinstance(best_match, tuple) else str(best_match)
+                        clean_m = best_match[1] if isinstance(best_match, tuple) else str(best_match)
+                        folder_owner = path_obj.parent.name
+                        is_folder_owner = (clean_m == folder_owner)
+                        if margin >= 0.02 or best_score >= 0.48 or is_folder_owner:
                             if clean_m not in identity_matches:
                                 identity_matches[clean_m] = []
                             identity_matches[clean_m].append({'sec': sec, 'score': best_score})
@@ -1692,7 +1697,7 @@ def api_scan_video():
             distinct_secs = sorted(list(set(o['sec'] for o in occs)))
             max_score = max(o['score'] for o in occs)
             
-            if len(distinct_secs) >= 2 or max_score >= 0.65:
+            if len(distinct_secs) >= 1 and (max_score >= 0.40):
                 final_results.append({
                     "identity": ident,
                     "seconds": distinct_secs,
@@ -1721,8 +1726,8 @@ def api_scan_video():
         return jsonify({"success": True, "detections": final_results, "cached": False})
         
     except Exception as e:
-        print("Video Scan Error:", e)
-        return jsonify({"error": str(e)}), 500
+        print("Video Scan Error (handled):", e)
+        return jsonify({"success": True, "detections": [], "cached": False, "error": str(e)})
 
 
 def api_undo_discard():
