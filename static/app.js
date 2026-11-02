@@ -16,6 +16,50 @@ let currentFaces = [];
 let currentCat = null;
 let currentIdent = null;
 // ── Header Collapse & Grid Density Preferences ───────────────────────
+window.toggleSidebar = function(force) {
+    const sidebar = document.querySelector('.sidebar');
+    const backdrop = document.getElementById('sidebar-backdrop');
+    if (!sidebar) return;
+    const isCurrentlyOpen = sidebar.classList.contains('open');
+    const shouldOpen = (force !== undefined) ? !!force : !isCurrentlyOpen;
+    if (shouldOpen) {
+        sidebar.classList.add('open');
+        if (backdrop) backdrop.classList.add('active');
+        document.body.classList.add('sidebar-mobile-open');
+    } else {
+        sidebar.classList.remove('open');
+        if (backdrop) backdrop.classList.remove('active');
+        document.body.classList.remove('sidebar-mobile-open');
+    }
+};
+
+window.toggleLightboxPanel = function(force) {
+    const panel = document.getElementById('metadata-panel');
+    const pill = document.getElementById('mobile-lb-sheet-pill');
+    const btn = document.getElementById('btn-toggle-lb-panel');
+    if (!panel) return;
+    
+    const isMobile = window.innerWidth <= 820;
+    if (isMobile) {
+        const isCurrentlyExpanded = panel.classList.contains('mobile-expanded');
+        const shouldExpand = (force !== undefined) ? !!force : !isCurrentlyExpanded;
+        if (shouldExpand) {
+            panel.classList.add('mobile-expanded');
+            if (pill) pill.style.display = 'none';
+            if (btn) btn.classList.add('active');
+        } else {
+            panel.classList.remove('mobile-expanded');
+            if (pill) pill.style.display = 'flex';
+            if (btn) btn.classList.remove('active');
+        }
+    } else {
+        const isHidden = panel.style.display === 'none';
+        const shouldShow = (force !== undefined) ? !!force : isHidden;
+        panel.style.display = shouldShow ? 'flex' : 'none';
+        if (btn) btn.classList.toggle('active', shouldShow);
+    }
+};
+
 window.toggleHeaderCollapse = function() {
     const header = document.getElementById('main-gallery-header');
     if (!header) return;
@@ -1817,6 +1861,9 @@ async function filterTimeline(year) {
                         identEl.style.background = 'rgba(10,132,255,0.2)';
                         identEl.style.color = '#fff';
                         renderGrid(cat, ident);
+                        if (window.innerWidth <= 820 && typeof toggleSidebar === 'function') {
+                            toggleSidebar(false);
+                        }
                     };
                     identsList.appendChild(identEl);
                 }
@@ -2202,6 +2249,10 @@ async function filterTimeline(year) {
             if (lb) {
                 lb.classList.add('hidden');
                 lb.style.display = 'none';
+            }
+            if (window.innerWidth <= 820) {
+                const panel = document.getElementById('metadata-panel');
+                if (panel) panel.classList.remove('mobile-expanded');
             }
             const container = document.getElementById('lb-media-container');
             if (container) container.innerHTML = '';
@@ -2974,6 +3025,12 @@ async function openLightbox(item) {
         lb.classList.remove('hidden');
         lb.style.display = 'flex';
     }
+    if (window.innerWidth <= 820) {
+        const panel = document.getElementById('metadata-panel');
+        if (panel) panel.classList.remove('mobile-expanded');
+        const pill = document.getElementById('mobile-lb-sheet-pill');
+        if (pill) pill.style.display = 'flex';
+    }
 
     // Show triage tab only for Revision/unknown items
     const triageTab = document.getElementById('tab-triage');
@@ -3120,6 +3177,13 @@ async function runAnalysis() {
             if (!currentFileObj || currentFileObj.path !== currentRunPath) return; cardsContainer.innerHTML = '';
             
             currentFaces = data.faces || [];
+            const detectedCount = currentFaces.length;
+            const mobileCountEl = document.getElementById('mobile-faces-count');
+            if (mobileCountEl) mobileCountEl.textContent = detectedCount;
+            const mobilePill = document.getElementById('mobile-lb-sheet-pill');
+            if (mobilePill) mobilePill.innerHTML = `▲ 👥 Caras (<span id="mobile-faces-count">${detectedCount}</span>)`;
+            const topBtnLabel = document.querySelector('#btn-toggle-lb-panel .lb-btn-label');
+            if (topBtnLabel) topBtnLabel.textContent = `Caras (${detectedCount})`;
             if (currentFileObj && (currentFileObj.is_dudoso || currentFileObj.status === 'Dudoso' || (currentFileObj.source && currentFileObj.source.includes('Por Confirmar')))) {
                 const dudosoBanner = document.createElement('div');
                 dudosoBanner.id = 'lightbox-dudoso-banner';

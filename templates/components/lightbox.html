@@ -35,6 +35,11 @@
 
         <!-- RIGHT: Actions -->
         <div style="display:flex; align-items:center; gap:6px; flex-shrink:0;">
+            <!-- Caras Mobile Toggle -->
+            <button id="btn-toggle-lb-panel" class="lb-faces-btn" onclick="toggleLightboxPanel()" title="Ver u ocultar caras">
+                <span>👥</span>
+                <span class="lb-btn-label">Caras</span>
+            </button>
             <!-- Prev/Next -->
             <div style="display:flex; gap:2px; background:rgba(255,255,255,0.06); border-radius:20px; padding:3px; border:1px solid rgba(255,255,255,0.1);">
                 <button onclick="navigateLightbox(-1)" title="Anterior" style="width:28px; height:28px; border-radius:14px; border:none; background:transparent; color:#fff; cursor:pointer; font-size:16px; display:flex; align-items:center; justify-content:center; transition:background 0.15s;" onmouseover="this.style.background='rgba(255,255,255,0.15)'" onmouseout="this.style.background='transparent'">&#x2039;</button>
@@ -84,10 +89,19 @@
         <!-- Media viewer -->
         <div class="viewer-wrapper" id="viewer-wrapper">
             <div id="lb-media-container" class="lb-media-container"></div>
+            <button id="mobile-lb-sheet-pill" class="mobile-lb-sheet-pill" onclick="toggleLightboxPanel(true)" title="Ver Caras y Detalles">▲ 👥 Caras (<span id="mobile-faces-count">0</span>)</button>
         </div>
 
         <!-- RIGHT PANEL -->
-        <aside class="metadata-panel" id="metadata-panel" style="width:320px; background:rgba(14,15,20,0.97); border-left:1px solid rgba(255,255,255,0.08); display:flex; flex-direction:column; overflow:hidden;">
+        <aside class="metadata-panel" id="metadata-panel">
+            <!-- Mobile Sheet Drag Handle & Close Bar -->
+            <div class="mobile-sheet-bar" onclick="toggleLightboxPanel(false)">
+                <div class="mobile-sheet-handle"></div>
+                <div class="mobile-sheet-header-title">
+                    <span>👥 Caras y Detalles</span>
+                    <button class="mobile-sheet-close-btn" onclick="event.stopPropagation(); toggleLightboxPanel(false);">✕</button>
+                </div>
+            </div>
             <!-- Panel tabs -->
             <div style="display:flex; border-bottom:1px solid rgba(255,255,255,0.08); flex-shrink:0;">
                 <button id="tab-people" onclick="switchLbTab('people')" style="flex:1; padding:12px 6px; border:none; background:transparent; color:#fff; font-size:12px; font-weight:600; cursor:pointer; border-bottom:2px solid #0a84ff; transition:all 0.2s;">&#128100; Personas</button>
