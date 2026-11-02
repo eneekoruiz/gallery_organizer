@@ -81,3 +81,18 @@ def api_triage_status_route():
         except Exception as e:
             return jsonify({'status': 'reading', 'error': str(e)})
     return jsonify({'status': 'idle'})
+
+@api_tools_bp.route('/icloud/start', methods=['POST'])
+def api_icloud_start_route():
+    from app.services.icloud_sync_service import start_icloud_sync
+    return jsonify(start_icloud_sync())
+
+@api_tools_bp.route('/icloud/stop', methods=['POST'])
+def api_icloud_stop_route():
+    from app.services.icloud_sync_service import stop_icloud_sync
+    return jsonify(stop_icloud_sync())
+
+@api_tools_bp.route('/icloud/status')
+def api_icloud_status_route():
+    from app.services.icloud_sync_service import get_icloud_sync_status
+    return jsonify(get_icloud_sync_status())

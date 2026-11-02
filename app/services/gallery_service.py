@@ -510,6 +510,45 @@ def get_gallery():
         elif 'mascotas sin' in ident.lower() or (len(pet_members) >= 2 and not has_yo):
             add_to_gallery('Mascotas', 'Mascotas sin mí', item)
 
+    # --- VIRTUAL ICLOUD PHOTOS INTEGRATION (apple_db.json) ---
+    try:
+        from app.services.apple_service import load_apple_db
+        apple_db = load_apple_db()
+        for p_str, info in apple_db.items():
+            if not info or info.get('deleted_locally'):
+                continue
+            if info.get('cloud_source') == 'icloud' or 'icloud photos' in str(p_str).lower():
+                fname = os.path.basename(p_str)
+                cat = info.get('category', '📋 Revisión / Por Organizar')
+                ident = info.get('identity', '❓ Desconocidos (Por Identificar)')
+                k_check = (cat, ident, p_str)
+                if k_check in added_paths:
+                    continue
+                faces_in_file = info.get('faces', [])
+                num_f = info.get('num_faces', len(faces_in_file))
+                ids_in_file = [f.get('identity') for f in faces_in_file if f.get('identity')]
+                item_apple = {
+                    "path": p_str,
+                    "name": fname,
+                    "status": info.get('status', 'Clasificado'),
+                    "source": "iCloud Photos (Virtual)",
+                    "is_dataset": False,
+                    "is_manual": False,
+                    "type": "video" if fname.lower().endswith(('.mp4', '.mov', '.avi')) else "image",
+                    "num_faces": num_f,
+                    "has_yo": ('YO' in ids_in_file),
+                    "identities": list(set(ids_in_file)),
+                    "mtime": info.get('mtime', 0),
+                    "is_apple": True,
+                    "device_origin": "apple",
+                    "is_virtual": True,
+                    "dehydrated": True,
+                    "faces": faces_in_file
+                }
+                add_to_gallery(cat, ident, item_apple)
+    except Exception as e_app:
+        print(f"[WARN] Error integrating apple_db virtual photos: {e_app}")
+
     set_gallery_cache(gallery)
     result = dict(gallery)
     set_gallery_cache(result)

@@ -140,6 +140,15 @@ def api_analyze():
                             f['confidence'] = "100.0% (Manual)"
                             f['provenance'] = HUMAN
                             f['is_manual'] = True
+            # Enforce mutual exclusion: a person cannot be in multiple face boxes
+            claimed_ids = {f['identity'] for f in filtered_cached if f.get('identity') and f.get('identity') not in ("Desconocido", "Falso_Positivo", "Ignorar_Irrelevante", "Persona (Sin rostro / Filtro)") and not str(f.get('identity')).startswith(('? ', 'IA '))}
+            for f in filtered_cached:
+                if f.get('suggested_identity') in claimed_ids:
+                    f['suggested_identity'] = None
+                    f['suggested_score'] = 0.0
+                    if f.get('tag_type') == 'ai_suggestion':
+                        f['confidence'] = "Pendiente"
+                        f['tag_type'] = "pending"
             return jsonify({"faces": filtered_cached})
         
     try:
@@ -548,6 +557,16 @@ def api_analyze():
             # Si la foto está en la carpeta de una Mascota, limpiar falsos positivos humanos de baja confianza
             if folder_owner.startswith("M.") or cat_name == "Mascotas":
                 faces_data = [f for f in faces_data if f.get("is_pet") or (f.get("tag_type") in ["manual", "dataset"] and not f.get("identity", "").startswith("C."))]
+
+            # Enforce strict photo mutual exclusion
+            claimed_ids = {f['identity'] for f in faces_data if f.get('identity') and f.get('identity') not in ("Desconocido", "Falso_Positivo", "Ignorar_Irrelevante", "Persona (Sin rostro / Filtro)") and not str(f.get('identity')).startswith(('? ', 'IA '))}
+            for f in faces_data:
+                if f.get('suggested_identity') in claimed_ids:
+                    f['suggested_identity'] = None
+                    f['suggested_score'] = 0.0
+                    if f.get('tag_type') == 'ai_suggestion':
+                        f['confidence'] = "Pendiente"
+                        f['tag_type'] = "pending"
 
             # Guardar en faces_cache
             with cache_lock:
@@ -1620,6 +1639,7 @@ def api_scan_video():
             str(APP_DIR / "models" / "face_recognition_sface.onnx"), ""
         )
         local_detector.setScoreThreshold(0.25)
+        from app.globals import detector_lock
         # Escaneo a 1 fps con límite de duración razonable
         max_sec = min(int(duration) + 1, 120)
         for sec in range(0, max_sec):
@@ -1634,15 +1654,18 @@ def api_scan_video():
             max_dim = 1024
             if max(w, h) > max_dim:
                 scale = max_dim / max(w, h)
-                det_w = max(160, int(w * scale))
-                det_h = max(160, int(h * scale))
-                det_frame = cv2.resize(frame, (det_w, det_h))
-            else:
-                det_w, det_h = w, h
-                det_frame = frame
+            # Ensure width and height are strictly multiples of 32 for OpenCV 5 DNN graph engine stability
+            det_w = max(160, (int(w * scale) // 32) * 32)
+            det_h = max(160, (int(h * scale) // 32) * 32)
+            det_frame = cv2.resize(frame, (det_w, det_h))
 
-            local_detector.setInputSize((det_w, det_h))
-            _, faces = local_detector.detect(det_frame)
+            faces = None
+            with detector_lock:
+                try:
+                    local_detector.setInputSize((det_w, det_h))
+                    _, faces = local_detector.detect(det_frame)
+                except Exception:
+                    faces = None
             
             if faces is not None:
                 inv_scale = 1.0 / scale if scale > 0 else 1.0
@@ -1652,14 +1675,21 @@ def api_scan_video():
                     fh = f[3] * inv_scale
                     if fw < 50 or fh < 50:
                         continue
-                    if len(f) > 14 and f[14] < 0.40:
+                    if len(f) > 14 and f[14] < 0.35:
                         continue
                         
                     orig_f = f.copy()
                     orig_f[:4] *= inv_scale
                     orig_f[4:14] *= inv_scale
-                    aligned = local_recognizer.alignCrop(frame, orig_f)
-                    feature = local_recognizer.feature(aligned)
+                    
+                    feature = None
+                    try:
+                        aligned = local_recognizer.alignCrop(frame, orig_f)
+                        if aligned is not None and aligned.size > 0:
+                            with detector_lock:
+                                feature = local_recognizer.feature(aligned)
+                    except Exception:
+                        feature = None
                     if feature is None: continue
                     
                     best_score = 0.0
