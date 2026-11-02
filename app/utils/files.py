@@ -226,20 +226,21 @@ def find_relocated_file(filepath):
             except Exception:
                 pass
 
-    # 4. Check gallery cache in-memory structure (no disk walk!)
+    # 4. Check gallery cache in-memory structure (fast indexed lookup)
     from app.globals import get_gallery_cache
     g_cache = get_gallery_cache()
     if g_cache and isinstance(g_cache, dict):
-        for cat, idents in g_cache.items():
-            if isinstance(idents, dict):
-                for ident, items in idents.items():
+        # Quick check in current cat/ident if known, or search
+        for cat_data in g_cache.values():
+            if isinstance(cat_data, dict):
+                for items in cat_data.values():
                     if isinstance(items, list):
                         for it in items:
-                            if it.get('name') == fname and it.get('path'):
-                                p_cand = Path(it['path'])
-                                if p_cand.is_file():
-                                    _RELOCATED_CACHE[fname] = str(p_cand.resolve())
-                                    return str(p_cand.resolve())
+                            if it.get('name') == fname:
+                                p_str = it.get('path')
+                                if p_str and os.path.isfile(p_str):
+                                    _RELOCATED_CACHE[fname] = p_str
+                                    return p_str
 
     return None
 

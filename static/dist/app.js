@@ -1880,6 +1880,12 @@ async function filterTimeline(year) {
                     skeleton.style.opacity = '0';
                     setTimeout(() => skeleton.remove(), 400);
                 };
+                thumb.onerror = () => {
+                    thumb.src = window.INLINE_PERSON_SVG;
+                    thumb.style.opacity = '1';
+                    skeleton.style.opacity = '0';
+                    setTimeout(() => skeleton.remove(), 200);
+                };
                 thumb.style.transition = 'opacity 0.3s ease';
                 thumb.style.width = '100%';
                 thumb.style.height = '100%';
@@ -2774,14 +2780,22 @@ async function openLightbox(item) {
     }).catch(() => {});
         
     if (!isCurrentVideo) {
-        if (mediaEl.complete) {
+        let analysisStarted = false;
+        const startAnalysisOnce = () => {
+            if (analysisStarted) return;
+            analysisStarted = true;
             if (typeof resizeContainerToImage === 'function') resizeContainerToImage();
             runAnalysis();
+        };
+
+        if (mediaEl.complete) {
+            startAnalysisOnce();
         } else {
-            mediaEl.onload = () => {
-                if (typeof resizeContainerToImage === 'function') resizeContainerToImage();
-                runAnalysis();
+            mediaEl.onload = startAnalysisOnce;
+            mediaEl.onerror = () => {
+                startAnalysisOnce();
             };
+            setTimeout(startAnalysisOnce, 2000);
         }
     } else {
         if (cardsContainer) {

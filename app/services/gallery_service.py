@@ -78,14 +78,10 @@ def get_gallery():
     if gallery_cache is not None and request.args.get('force') != 'true':
         return jsonify(gallery_cache)
 
-    # Prevent duplicate concurrent full-disk scans
-    if not _GALLERY_SCAN_LOCK.acquire(blocking=False):
-        # Another thread is already scanning; wait for it and return its result
-        with _GALLERY_SCAN_LOCK:
-            pass  # wait for the scanning thread to release
-        cached = get_gallery_cache()
-        if cached is not None:
-            return jsonify(cached)
+    # If cached and not forced, return cached instantly
+    gallery_cache = get_gallery_cache()
+    if gallery_cache is not None and request.args.get('force') != 'true':
+        return jsonify(gallery_cache)
 
     gallery = {}
     valid_exts = {".jpg", ".jpeg", ".png", ".mp4", ".mov", ".avi"}
@@ -525,10 +521,6 @@ def get_gallery():
     set_gallery_cache(gallery)
     result = dict(gallery)
     set_gallery_cache(result)
-    try:
-        _GALLERY_SCAN_LOCK.release()
-    except RuntimeError:
-        pass  # lock was never acquired (cache hit path)
     return jsonify(result)
 
 

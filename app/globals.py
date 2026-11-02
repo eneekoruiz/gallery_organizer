@@ -174,27 +174,32 @@ def wait_for_boot(timeout=30):
 
 def set_gallery_cache(val):
     global _GALLERY_CACHE
-    with cache_lock:
-        _GALLERY_CACHE = val
-        try:
-            with open(GALLERY_CACHE_FILE, 'w', encoding='utf-8') as f:
-                json.dump(val, f)
-        except Exception as e:
-            print(f'[CACHE] Error persisting gallery cache: {e}')
+    _GALLERY_CACHE = val
+    if val is not None:
+        def _bg_dump(data):
+            try:
+                import tempfile
+                with tempfile.NamedTemporaryFile('w', dir=GALLERY_CACHE_FILE.parent, delete=False, encoding='utf-8') as tf:
+                    json.dump(data, tf)
+                    tname = tf.name
+                os.replace(tname, GALLERY_CACHE_FILE)
+            except Exception as e:
+                try:
+                    if 'tname' in locals() and os.path.exists(tname): os.remove(tname)
+                except Exception: pass
+        threading.Thread(target=_bg_dump, args=(val,), daemon=True).start()
 
 def get_gallery_cache():
-    with cache_lock:
-        return _GALLERY_CACHE
+    return _GALLERY_CACHE
 
 def clear_gallery_cache():
     global _GALLERY_CACHE
-    with cache_lock:
-        _GALLERY_CACHE = None
-        try:
-            if GALLERY_CACHE_FILE.exists():
-                GALLERY_CACHE_FILE.unlink()
-        except Exception as e:
-            print(f'[CACHE] Error clearing gallery cache file: {e}')
+    _GALLERY_CACHE = None
+    try:
+        if GALLERY_CACHE_FILE.exists():
+            GALLERY_CACHE_FILE.unlink()
+    except Exception:
+        pass
 
 _GALLERY_SCAN_PROGRESS = 0.0
 
