@@ -127,6 +127,18 @@ def api_analyze():
                     is_valid_cache = False; break
         if is_valid_cache:
             filtered_cached = [f for f in cached if f.get('identity') not in ["Falso_Positivo", "Ignorar_Irrelevante"]]
+            overrides = load_overrides()
+            ov_list = overrides.get(file_key, [])
+            if ov_list:
+                for f in filtered_cached:
+                    f_box = [safe_float(f.get('x')), safe_float(f.get('y')), safe_float(f.get('width')), safe_float(f.get('height'))]
+                    for ov in ov_list:
+                        ov_box = [safe_float(ov.get('x')), safe_float(ov.get('y')), safe_float(ov.get('width')), safe_float(ov.get('height'))]
+                        if iou(f_box, ov_box) > 0.4:
+                            f['identity'] = ov['identity']
+                            f['confidence'] = "100.0% (Manual)"
+                            f['provenance'] = HUMAN
+                            f['is_manual'] = True
             return jsonify({"faces": filtered_cached})
         
     try:
@@ -613,6 +625,31 @@ def apply_correction_to_file(filepath, new_categoria, new_identidad, face_data, 
                                 os.remove(temp_name)
                         known_faces.clear()
                         known_faces.update(updated_faces)
+
+                        # Update centroids.pkl directly with confirmed human evidence
+                        c_pkl_path = APP_DIR / "centroids.pkl"
+                        try:
+                            c_dict = {}
+                            if c_pkl_path.exists():
+                                with open(c_pkl_path, 'rb') as f_c:
+                                    c_dict = pickle.load(f_c)
+                            target_c = c_dict.get((new_categoria, new_identidad))
+                            if target_c is None:
+                                target_c = c_dict.get(new_identidad)
+                            if target_c is not None:
+                                updated_c = 0.65 * (target_c / np.linalg.norm(target_c)) + 0.35 * feature
+                                updated_c = updated_c / np.linalg.norm(updated_c)
+                            else:
+                                updated_c = feature
+                            c_dict[(new_categoria, new_identidad)] = updated_c
+                            c_dict[new_identidad] = updated_c
+                            with open(c_pkl_path, 'wb') as f_c:
+                                pickle.dump(c_dict, f_c)
+                            if new_identidad == 'YO':
+                                np.save(APP_DIR / "yo_pure_centroid.npy", updated_c)
+                            print(f"[DATASET REINFORCEMENT] Centroid for {new_identidad} strengthened with manual confirmation.")
+                        except Exception as e_c:
+                            print(f"[DATASET REINFORCEMENT] Warning updating centroids.pkl: {e_c}")
         except Exception as e_learn:
             print(f"[CORRECT] Notice: Face model refinement skipped for {new_identidad} ({e_learn}); continuing clean move.")
 

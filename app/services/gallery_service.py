@@ -144,9 +144,6 @@ def get_gallery():
         if RESULTADOS_DIR.exists():
             gather_files(RESULTADOS_DIR, False)
 
-    icloud_dir = Path(r"C:\Users\User\Pictures\iCloud Photos\Photos")
-    if icloud_dir.exists():
-        gather_files(icloud_dir, False)
 
     total_files = len(all_file_targets)
     processed = 0
@@ -199,11 +196,6 @@ def get_gallery():
                 ident = subfolder
                 if folder == "YO" or subfolder == "YO":
                     cat, ident = "YO", "YO"
-            elif "icloud photos" in abs_p_l or base_dir.name == "Photos":
-                if path_obj.name.lower() in classified_filenames:
-                    continue
-                cat = "📋 Revisión / Por Organizar"
-                ident = "🍎 Nuevas desde iCloud"
             elif "para revisar" in abs_p_l or "para organizar" in folder_l or "pendiente" in folder_l or "para organizar" in subfolder_l:
                 cat = "📋 Revisión / Por Organizar"
                 ident = "⏳ Pendientes de Organizar"
@@ -778,15 +770,25 @@ def api_person_avatar():
     if not cat or not ident:
         return "Missing params", 400
 
-    # 0. Check pre-cached avatar on disk (instant < 1ms response)
+    clean_ident = ident.replace('👤', '').strip()
     ident_clean = re.sub(r'[^a-zA-Z0-9_\-]', '_', str(ident))
+    clean_ident_clean = re.sub(r'[^a-zA-Z0-9_\-]', '_', str(clean_ident))
     cat_clean = re.sub(r'[^a-zA-Z0-9_\-]', '_', str(cat))
+
     for folder_dir in [THUMBNAILS_DIR, APP_DIR / "cache" / "thumbnails"]:
-        avatar_cache_file = folder_dir / f"av_{cat_clean}_{ident_clean}.webp"
-        if avatar_cache_file.exists() and avatar_cache_file.stat().st_size > 100:
-            res = send_file(str(avatar_cache_file), mimetype='image/webp')
-            res.headers['Cache-Control'] = 'public, max-age=604800, immutable'
-            return res
+        for c_cand, i_cand in [
+            (cat_clean, ident_clean),
+            (cat_clean, clean_ident_clean),
+            ("Personas_Sin_Nombre", ident_clean),
+            ("Personas_Sin_Nombre", clean_ident_clean),
+            ("Conocidos", clean_ident_clean),
+            ("Familia", clean_ident_clean)
+        ]:
+            avatar_cache_file = folder_dir / f"av_{c_cand}_{i_cand}.webp"
+            if avatar_cache_file.exists() and avatar_cache_file.stat().st_size > 200:
+                res = send_file(str(avatar_cache_file), mimetype='image/webp')
+                res.headers['Cache-Control'] = 'public, max-age=604800, immutable'
+                return res
 
     default_svg = '''<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 24 24" fill="#666"><circle cx="12" cy="8" r="4"/><path d="M12 14c-6.1 0-8 4-8 4v2h16v-2s-1.9-4-8-4z"/></svg>'''
 
@@ -794,17 +796,40 @@ def api_person_avatar():
     
     items = []
     g_cache = get_gallery_cache()
-    if g_cache and cat in g_cache and ident in g_cache[cat]:
-        items = g_cache[cat][ident]
+    if g_cache:
+        if cat in g_cache and ident in g_cache[cat]:
+            items = g_cache[cat][ident]
+        elif cat in g_cache and clean_ident in g_cache[cat]:
+            items = g_cache[cat][clean_ident]
+        elif "Personas Sin Nombre" in g_cache and clean_ident in g_cache["Personas Sin Nombre"]:
+            items = g_cache["Personas Sin Nombre"][clean_ident]
         
     candidate_paths = [it.get('path') for it in items if it.get('path') and Path(it.get('path')).suffix.lower() in valid_exts and os.path.exists(it.get('path'))]
     
     if not candidate_paths:
-        for base_dir in [RESULTADOS_DIR / cat / ident, FOTOS_DIR / cat / ident]:
+        search_dirs = [
+            RESULTADOS_DIR / cat / ident,
+            RESULTADOS_DIR / cat / clean_ident,
+            FOTOS_DIR / cat / ident,
+            FOTOS_DIR / cat / clean_ident,
+            RESULTADOS_DIR / "Personas Sin Nombre" / ident,
+            RESULTADOS_DIR / "Personas Sin Nombre" / clean_ident,
+            FOTOS_DIR / "Personas Sin Nombre" / ident,
+            FOTOS_DIR / "Personas Sin Nombre" / clean_ident,
+            RESULTADOS_DIR / "Revision_Interactiva" / ident,
+            RESULTADOS_DIR / "Revision_Interactiva" / clean_ident,
+            RESULTADOS_DIR / "Conocidos" / ident,
+            RESULTADOS_DIR / "Conocidos" / clean_ident,
+            RESULTADOS_DIR / "Familia" / ident,
+            RESULTADOS_DIR / "Familia" / clean_ident,
+        ]
+        for base_dir in search_dirs:
             if base_dir.exists():
                 for p in base_dir.iterdir():
                     if p.suffix.lower() in valid_exts and p.is_file():
                         candidate_paths.append(str(p))
+                if candidate_paths:
+                    break
 
     if not candidate_paths:
         video_exts = {".mp4", ".mov", ".avi"}

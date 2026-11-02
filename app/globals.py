@@ -162,6 +162,27 @@ def _load_heavy_caches():
 
     _BOOT_READY.set()
 
+def reload_known_faces():
+    """Reload known_faces in-place from sface_cache_v7.pkl and centroids.pkl."""
+    global known_faces
+    if CACHE_FILE.exists():
+        try:
+            with open(CACHE_FILE, 'rb') as f:
+                cache_data = pickle.load(f)
+                if isinstance(cache_data, dict):
+                    known_faces.clear()
+                    known_faces.update(cache_data)
+                    from app.services.face_learning import compute_appearance_centroids
+                    for rec in known_faces.values():
+                        if isinstance(rec, dict) and 'centroids' not in rec:
+                            samples = list(rec.get('confirmed_samples', {}).values())
+                            if samples:
+                                rec['centroids'] = compute_appearance_centroids(samples)
+                            elif rec.get('centroid') is not None:
+                                rec['centroids'] = [rec['centroid']]
+        except Exception as e:
+            print(f"[RELOAD] Error reloading known_faces: {e}")
+
 # Start deferred loading immediately
 if BACKGROUND_TASKS_ENABLED:
     threading.Thread(target=_load_heavy_caches, daemon=True, name="CacheLoader").start()
