@@ -329,8 +329,8 @@ def _run_icloud_worker(batch_size=None):
                     assigned_cat = "📋 Revisión / Por Organizar"
                     assigned_ident = "📷 Fotos Sin Rostro"
 
-            # 4. Guardar en apple_db y faces_cache
-            apple_db[abs_p] = {
+            # 4. Guardar en apple_db con supervisión IA activa en tiempo real (100% de fotos)
+            entry = {
                 "category": assigned_cat,
                 "identity": assigned_ident,
                 "cloud_source": "icloud",
@@ -341,13 +341,24 @@ def _run_icloud_worker(batch_size=None):
                 "faces": detected_faces,
                 "mtime": os.path.getmtime(abs_p) if os.path.exists(abs_p) else time.time()
             }
+            try:
+                from app.services.supervisor_service import supervise_and_adapt_decision
+                mod, _ = supervise_and_adapt_decision(abs_p, entry, centroids)
+                if mod:
+                    assigned_cat = entry["category"]
+                    assigned_ident = entry["identity"]
+                    photo_status = entry["status"]
+            except Exception:
+                pass
+
+            apple_db[abs_p] = entry
             if detected_faces:
                 faces_cache[abs_p] = detected_faces
 
             # 5. Deshidratar inmediatamente para dejar 0 KB en disco
             _dehydrate_cloud_file(abs_p)
 
-            # 6. Crear acceso directo virtual en Resultados
+            # 6. Crear acceso directo virtual en Resultados con la categoría supervisada
             _create_windows_url_shortcut(abs_p, assigned_cat, assigned_ident)
 
             # 7. Actualizar telemetría en memoria
