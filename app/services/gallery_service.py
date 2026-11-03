@@ -879,7 +879,8 @@ def api_stats():
         "android_total": len(android_total_files),
         "android_clasificadas": len(android_classified_files),
         "breakdown": breakdown_sorted,
-        "assistant": assistant_data
+        "assistant": assistant_data,
+        "supervisor": __import__('app.services.supervisor_service', fromlist=['get_supervisor_status']).get_supervisor_status()
     })
 
 def find_avatar_image(target_dir):

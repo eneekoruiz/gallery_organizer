@@ -1692,30 +1692,29 @@ def api_scan_video():
                         feature = None
                     if feature is None: continue
                     
-                    best_score = 0.0
-                    second_best_score = 0.0
-                    best_match = None
+                    # Track top scores per distinct person identity to avoid duplicate tuple/str keys collapsing margins
+                    identity_scores = {}
                     for db_id, data_dict in known_faces.items():
                         ident_n = db_id[1] if isinstance(db_id, tuple) else str(db_id)
                         if is_smart_relationship_album(ident_n) or ident_n.startswith("Falso_Positivo") or ident_n.startswith("Ignorar_"):
                             continue
                         score = match_face_to_identity(feature[0], data_dict)
-                        if score > best_score:
-                            second_best_score = best_score
-                            best_score = score
-                            best_match = db_id
-                        elif score > second_best_score:
-                            second_best_score = score
-                                
-                    if best_match and best_score >= 0.40:
-                        margin = best_score - second_best_score
-                        clean_m = best_match[1] if isinstance(best_match, tuple) else str(best_match)
-                        folder_owner = path_obj.parent.name
-                        is_folder_owner = (clean_m == folder_owner)
-                        if margin >= 0.02 or best_score >= 0.48 or is_folder_owner:
-                            if clean_m not in identity_matches:
-                                identity_matches[clean_m] = []
-                            identity_matches[clean_m].append({'sec': sec, 'score': best_score})
+                        if ident_n not in identity_scores or score > identity_scores[ident_n]:
+                            identity_scores[ident_n] = score
+
+                    sorted_matches = sorted(identity_scores.items(), key=lambda x: x[1], reverse=True)
+                    if sorted_matches:
+                        best_match, best_score = sorted_matches[0]
+                        second_best_score = sorted_matches[1][1] if len(sorted_matches) > 1 else 0.0
+                        if best_score >= 0.40:
+                            margin = best_score - second_best_score
+                            clean_m = best_match
+                            folder_owner = path_obj.parent.name
+                            is_folder_owner = (clean_m == folder_owner)
+                            if margin >= 0.02 or best_score >= 0.48 or is_folder_owner:
+                                if clean_m not in identity_matches:
+                                    identity_matches[clean_m] = []
+                                identity_matches[clean_m].append({'sec': sec, 'score': best_score})
                         
         cap.release()
         

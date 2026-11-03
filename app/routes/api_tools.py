@@ -96,3 +96,16 @@ def api_icloud_stop_route():
 def api_icloud_status_route():
     from app.services.icloud_sync_service import get_icloud_sync_status
     return jsonify(get_icloud_sync_status())
+
+
+@api_tools_bp.route('/supervisor/status')
+def api_supervisor_status_route():
+    from app.services.supervisor_service import get_supervisor_status
+    return jsonify(get_supervisor_status())
+
+@api_tools_bp.route('/supervisor/audit_now', methods=['POST'])
+def api_supervisor_audit_now_route():
+    from app.services.supervisor_service import audit_recent_decisions
+    data = request.json or {}
+    n = data.get('n', 30)
+    return jsonify(audit_recent_decisions(n=n))
