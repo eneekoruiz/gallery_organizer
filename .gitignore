@@ -4,6 +4,8 @@ __pycache__/
 *.pkl*
 *.npy
 *.db
+*.db-wal
+*.db-shm
 *.sqlite
 *.sqlite3
 .env*
