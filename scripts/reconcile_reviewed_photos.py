@@ -7,6 +7,7 @@ import os
 import pickle
 import shutil
 import tempfile
+import time
 from collections import Counter
 from pathlib import Path
 
@@ -95,13 +96,24 @@ def apply_manual_labels(faces, overrides):
     return unmatched
 
 
+def replace_with_retry(source, destination):
+    for attempt in range(20):
+        try:
+            os.replace(source, destination)
+            return
+        except PermissionError:
+            if attempt == 19:
+                raise
+            time.sleep(.1)
+
+
 def atomic_pickle(path, value):
     temp_path = None
     try:
         with tempfile.NamedTemporaryFile('wb', dir=path.parent, delete=False) as file:
             temp_path = Path(file.name)
             pickle.dump(value, file, protocol=pickle.HIGHEST_PROTOCOL)
-        os.replace(temp_path, path)
+        replace_with_retry(temp_path, path)
     finally:
         if temp_path is not None:
             temp_path.unlink(missing_ok=True)
@@ -172,7 +184,7 @@ def main():
         temp.write_text(json.dumps(dict(status=state, total=len(paths), processed=sum(counts.values()),
                                        counts=dict(counts), recovered_samples=recovered, current=current),
                                    ensure_ascii=False), encoding='utf-8')
-        os.replace(temp, job / 'status.json')
+        replace_with_retry(temp, job / 'status.json')
 
     status('running')
     with journal.open('a', encoding='utf-8', buffering=1) as log:

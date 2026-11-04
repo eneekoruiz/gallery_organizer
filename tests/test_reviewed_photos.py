@@ -7,10 +7,33 @@ from unittest.mock import patch, Mock
 
 import numpy as np
 
-from scripts.reconcile_reviewed_photos import recover_confirmed_samples, classify_faces, destinations, apply_manual_labels, main
+from scripts.reconcile_reviewed_photos import recover_confirmed_samples, classify_faces, destinations, apply_manual_labels, atomic_pickle, main
 
 
 class ReviewedPhotosTests(unittest.TestCase):
+    def test_windows_reader_lock_is_retried_and_permanent_failure_preserves_data(self):
+        import scripts.reconcile_reviewed_photos as audit
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / 'state.pkl'
+            real_replace = audit.os.replace
+            attempts = []
+
+            def temporarily_locked(source, destination):
+                attempts.append(1)
+                if len(attempts) == 1:
+                    raise PermissionError('Reader is still open')
+                real_replace(source, destination)
+
+            with patch.object(audit.os, 'replace', side_effect=temporarily_locked), patch.object(audit.time, 'sleep'):
+                atomic_pickle(path, {'saved': True})
+            self.assertEqual(len(attempts), 2)
+            previous = path.read_bytes()
+            with patch.object(audit.os, 'replace', side_effect=PermissionError('Permanent')), patch.object(audit.time, 'sleep'):
+                with self.assertRaises(PermissionError):
+                    atomic_pickle(path, {'saved': False})
+            self.assertEqual(path.read_bytes(), previous)
+            self.assertEqual(list(Path(temp).iterdir()), [path])
+
     def setUp(self):
         self.vector = np.eye(128, dtype=np.float32)[0]
         self.other = np.eye(128, dtype=np.float32)[1]
