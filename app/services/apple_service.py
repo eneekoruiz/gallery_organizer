@@ -3,9 +3,12 @@ import json
 import re
 from pathlib import Path
 import threading
+import tempfile
 
-APPLE_DB_FILE = Path(r"C:\Users\User\Desktop\ENEKO\smart_gallery_app\apple_db.json")
-ICLOUD_PHOTOS_DIR = Path(r"C:\Users\User\Pictures\iCloud Photos\Photos")
+APPLE_DB_FILE = Path(__file__).resolve().parents[2] / "apple_db.json"
+ICLOUD_PHOTOS_DIR = Path(os.environ.get(
+    "GALLERY_ICLOUD_PHOTOS_DIR", Path.home() / "Pictures" / "iCloud Photos" / "Photos"
+))
 
 _apple_db = {}
 _apple_db_lock = threading.Lock()
@@ -17,7 +20,7 @@ _wa_re = re.compile(r'^(img|vid|audi?o?|ptv)[-_]?(19|20)\d{6}[-_]?wa\d+', re.I)
 _screenshot_re = re.compile(r'^(screenshot|screen|captura)[-_]?(19|20)?', re.I)
 _snapchat_re = re.compile(r'^snapchat[-_]?\d+', re.I)
 
-def load_apple_db(force_reload=False):
+def load_apple_db(force_reload=False, *, strict=False):
     global _apple_db
     with _apple_db_lock:
         if _apple_db and not force_reload:
@@ -25,8 +28,13 @@ def load_apple_db(force_reload=False):
         if APPLE_DB_FILE.exists():
             try:
                 with open(APPLE_DB_FILE, 'r', encoding='utf-8') as f:
-                    _apple_db = json.load(f)
-            except:
+                    data = json.load(f)
+                if not isinstance(data, dict):
+                    raise ValueError("El índice iCloud no contiene un objeto JSON")
+                _apple_db = data
+            except (OSError, ValueError):
+                if strict:
+                    raise
                 _apple_db = {}
         else:
             _apple_db = {}
@@ -34,8 +42,18 @@ def load_apple_db(force_reload=False):
 
 def save_apple_db():
     with _apple_db_lock:
-        with open(APPLE_DB_FILE, 'w', encoding='utf-8') as f:
-            json.dump(_apple_db, f, indent=4)
+        temp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w", encoding="utf-8", dir=APPLE_DB_FILE.parent, delete=False
+            ) as file:
+                temp_path = Path(file.name)
+                json.dump(_apple_db, file, separators=(",", ":"))
+            os.replace(temp_path, APPLE_DB_FILE)
+        finally:
+            if temp_path is not None:
+                temp_path.unlink(missing_ok=True)
+
 
 def detect_device_origin(path_str):
     if not path_str:

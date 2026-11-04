@@ -89,3 +89,25 @@ def update_confirmed_sample(identities, identity, sample_key, feature):
         'names': list(samples)
     }
     return result
+
+
+def rank_known_identities(feature, centroids, profiles):
+    """Rank distinct people, using confirmed appearance profiles where available."""
+    scores = {}
+    for key, fallback in centroids.items():
+        if not isinstance(key, tuple) or len(key) != 2 or "Persona Nueva" in key[1]:
+            continue
+        identity = key[1]
+        profile = profiles.get(identity)
+        samples = [fallback]
+        if isinstance(profile, dict) and profile.get("provenance") == HUMAN:
+            samples = profile.get("centroids") or [profile.get("centroid")]
+        score = -1.0
+        for sample in samples:
+            try:
+                score = max(score, float(np.dot(feature, normalized_feature(sample))))
+            except (TypeError, ValueError):
+                continue
+        if score > scores.get(identity, (-1.0, None))[0]:
+            scores[identity] = (score, key)
+    return sorted(scores.values(), key=lambda item: item[0], reverse=True)

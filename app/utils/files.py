@@ -14,7 +14,7 @@ from app.globals import (
     DHASH_CACHE_FILE, _DHASH_CACHE, THUMBNAILS_DIR
 )
 
-def generate_thumbnail(original_path, max_size=300):
+def generate_thumbnail(original_path, max_size=300, *, decoded_image=None):
     try:
         if not original_path: return None
         # 1. NormalizaciÃ³n canÃ³nica del path para GARANTIZAR 100% de aciertos de cachÃ©
@@ -28,18 +28,27 @@ def generate_thumbnail(original_path, max_size=300):
         path_str = str(original_path)
         is_video = path_str.lower().endswith((".mp4", ".mov", ".avi"))
         
-        if is_video:
-            cap = cv2.VideoCapture(path_str)
-            fc = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            if fc > 10: cap.set(cv2.CAP_PROP_POS_FRAMES, int(fc * 0.1))
-            ret, frame = cap.read()
-            cap.release()
-            if not ret or frame is None: return None
+        if decoded_image is not None or is_video:
+            frame = decoded_image
+            if frame is None:
+                cap = cv2.VideoCapture(path_str)
+                try:
+                    fc = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                    if fc > 10:
+                        cap.set(cv2.CAP_PROP_POS_FRAMES, int(fc * 0.1))
+                    ret, frame = cap.read()
+                finally:
+                    cap.release()
+                if not ret or frame is None:
+                    return None
             h, w = frame.shape[:2]
             if max(h, w) > max_size:
                 scale = max_size / max(h, w)
-                frame = cv2.resize(frame, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
-            cv2.imwrite(str(thumb_path), frame, [cv2.IMWRITE_WEBP_QUALITY, 70])
+                frame = cv2.resize(frame, (max(1, int(w * scale)), max(1, int(h * scale))), interpolation=cv2.INTER_AREA)
+            ok, webp = cv2.imencode(".webp", frame, [cv2.IMWRITE_WEBP_QUALITY, 70])
+            if not ok:
+                return None
+            thumb_path.write_bytes(webp.tobytes())
             return str(thumb_path)
             
         # 2. DecodificaciÃ³n acelerada PIL draft para imÃ¡genes (10x mÃ¡s rÃ¡pida)
@@ -320,7 +329,7 @@ def safe_move(src, dst):
     src_str = str(src)
     dst_str = str(dst)
     
-    if src_str.startswith('gdrive://') or getattr(g, 'STORAGE_MODE', 'local') == 'gdrive':
+    if src_str.startswith('gdrive://'):
         try:
             adapter = get_adapter('gdrive', {'gdrive_folder_id': getattr(g, 'CONFIG_CACHE', {}).get('gdrive_folder_id', '1Qr6KXPxcgdlzbSHVyDOg4cBb4GReSAfD')})
             adapter.move_file(src_str, dst_str)
@@ -330,25 +339,6 @@ def safe_move(src, dst):
         return safe_move_file(src_str, dst_str)
 
 def get_content_fingerprint(filepath):
-    """
-    Genera una huella digital Ãºnica basada en el tamaÃ±o del archivo y primeros 64KB.
-    Conecta instantÃ¡neamente (0ms) fotos idÃ©nticas en Local y Google Drive.
-    """
-    try:
-        path_str = str(filepath)
-        filename = Path(path_str).name
-        
-        if path_str.startswith('gdrive://'):
-            return f"gdrive_{filename}"
-            
-        if os.path.exists(path_str):
-            size = os.path.getsize(path_str)
-            with open(path_str, 'rb') as f:
-                header = f.read(65536)
-            h = hashlib.md5(header).hexdigest()
-            return f"{filename}_{size}_{h[:12]}"
-    except Exception:
-        pass
-    return str(filepath)
-
-
+    """Return the SHA-256 of the complete file, independent of its name."""
+    from app.services.content_analysis_service import content_sha256
+    return content_sha256(filepath)

@@ -11,6 +11,7 @@ def create_app(config=None):
     app.config.from_mapping(
         START_BACKGROUND_TASKS=os.getenv('SMART_GALLERY_BACKGROUND_TASKS', '1') == '1',
         AUTO_CLASSIFY=False,
+        AUTO_START_ICLOUD=os.getenv("SMART_GALLERY_AUTO_START_ICLOUD", "0") == "1",
     )
     if config:
         app.config.update(config)
@@ -102,5 +103,9 @@ def create_app(config=None):
     if background_enabled and app.config['AUTO_CLASSIFY']:
         start_bg_auto_correction()
     
+    if background_enabled and app.config["AUTO_START_ICLOUD"]:
+        from app.services.icloud_sync_service import start_icloud_sync
+        start_icloud_sync()
+
     return app
 

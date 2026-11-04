@@ -3,7 +3,6 @@ import json
 import time
 import pickle
 import numpy as np
-from pathlib import Path
 from app.globals import APP_DIR, set_gallery_cache
 from app.services.apple_service import load_apple_db, save_apple_db
 
@@ -22,7 +21,7 @@ _SUPERVISOR_STATE = {
     "recent_interventions": []
 }
 
-def get_supervisor_status():
+def _load_supervisor_state():
     if SUPERVISOR_LOG_FILE.exists():
         try:
             with open(SUPERVISOR_LOG_FILE, "r", encoding="utf-8") as f:
@@ -30,9 +29,15 @@ def get_supervisor_status():
                 _SUPERVISOR_STATE.update(saved)
         except Exception:
             pass
+
+
+_load_supervisor_state()
+
+
+def get_supervisor_status():
     return dict(_SUPERVISOR_STATE)
 
-def _save_supervisor_state():
+def save_supervisor_state():
     try:
         SUPERVISOR_LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
         with open(SUPERVISOR_LOG_FILE, "w", encoding="utf-8") as f:
@@ -40,7 +45,7 @@ def _save_supervisor_state():
     except Exception:
         pass
 
-def supervise_and_adapt_decision(path_str, info, centroids):
+def supervise_and_adapt_decision(path_str, info, centroids, *, learn=True):
     """
     Supervisa cada foto individualmente en tiempo real (100% de cobertura).
     - Degrada asignaciones de margen estrecho a 'Dudoso'.
@@ -63,17 +68,19 @@ def supervise_and_adapt_decision(path_str, info, centroids):
     if cat in ("Conocidos", "Familia", "YO") and status != "Dudoso":
         for f in faces:
             feat = f.get("feature")
-            if feat and len(feat) == 128:
+            if not f.get("is_manual") and feat is not None and len(feat) == 128:
                 f_vec = np.array(feat, dtype=np.float32)
                 f_norm = f_vec / (np.linalg.norm(f_vec) + 1e-10)
 
                 # Calcular distancias a centroides conocidos
-                scores = []
+                scores_by_identity = {}
                 for k_id, k_vec in known_centroids.items():
                     k_norm = k_vec.flatten() / (np.linalg.norm(k_vec) + 1e-10)
                     sim = float(np.dot(f_norm, k_norm))
-                    scores.append((sim, k_id))
-                scores.sort(key=lambda x: x[0], reverse=True)
+                    identity = k_id[1] if isinstance(k_id, tuple) else str(k_id)
+                    if identity not in scores_by_identity or sim > scores_by_identity[identity][0]:
+                        scores_by_identity[identity] = (sim, k_id)
+                scores = sorted(scores_by_identity.values(), key=lambda x: x[0], reverse=True)
 
                 if len(scores) >= 2:
                     top1_sim, top1_id = scores[0]
@@ -84,6 +91,8 @@ def supervise_and_adapt_decision(path_str, info, centroids):
                     clean_top2 = top2_id[1] if isinstance(top2_id, tuple) else str(top2_id)
 
                     # Si la similitud está en zona gris (<0.64) y el margen es estrecho (<0.04)
+                    if clean_top1 != ident or f.get("identity") != ident:
+                        continue
                     if 0.58 <= top1_sim < 0.64 and margin < 0.04:
                         info["category"] = "📋 Revisión / Por Organizar"
                         info["identity"] = clean_top1
@@ -102,7 +111,7 @@ def supervise_and_adapt_decision(path_str, info, centroids):
                     
                     # 2. Refuerzo adaptativo del centroide (Online Continuous Learning)
                     # Si la detección es inequívoca (>0.75 y margen >0.10)
-                    elif top1_sim >= 0.75 and margin >= 0.10 and len(faces) == 1:
+                    elif learn and top1_sim >= 0.75 and margin >= 0.10 and len(faces) == 1:
                         target_key = top1_id
                         cur_centroid = known_centroids.get(target_key)
                         if cur_centroid is not None:
@@ -114,10 +123,10 @@ def supervise_and_adapt_decision(path_str, info, centroids):
                             _SUPERVISOR_STATE["learning_adaptations"] += 1
 
     # 3. Regla Anti-fragmentación de Persona Nueva (fusión con similitud >=0.54)
-    if "Persona Nueva" in ident:
+    if "Persona Nueva" in ident and len(faces) == 1:
         for f in faces:
             feat = f.get("feature")
-            if feat and len(feat) == 128:
+            if not f.get("is_manual") and feat is not None and len(feat) == 128:
                 f_vec = np.array(feat, dtype=np.float32)
                 f_norm = f_vec / (np.linalg.norm(f_vec) + 1e-10)
 
@@ -126,9 +135,11 @@ def supervise_and_adapt_decision(path_str, info, centroids):
                     if np_name != ident:
                         np_norm = np_vec.flatten() / (np.linalg.norm(np_vec) + 1e-10)
                         sim = float(np.dot(f_norm, np_norm))
-                        if sim >= 0.54:
+                        if sim >= 0.54 and ident.rpartition("#")[2].isdigit() and np_name.rpartition("#")[2].isdigit():
                             target_name = min(ident, np_name, key=lambda x: int(x.split("#")[-1]) if "#" in x else 9999)
-                            source_name = ident if target_name != ident else np_name
+                            if target_name == ident:
+                                continue
+                            source_name = ident
                             
                             info["identity"] = target_name
                             f["identity"] = target_name
@@ -143,7 +154,7 @@ def supervise_and_adapt_decision(path_str, info, centroids):
                             break
 
     _SUPERVISOR_STATE["total_decisions_audited"] += 1
-    _SUPERVISOR_STATE["approved_count"] += 1
+    _SUPERVISOR_STATE["approved_count"] += int(not interventions)
     if interventions:
         _SUPERVISOR_STATE["recent_interventions"] = (interventions + _SUPERVISOR_STATE["recent_interventions"])[:20]
     _SUPERVISOR_STATE["last_audit_time"] = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -176,7 +187,7 @@ def audit_all_photos(limit=None):
         items = items[-limit:]
 
     for path_str, info in items:
-        mod, interv = supervise_and_adapt_decision(path_str, info, centroids)
+        mod, interv = supervise_and_adapt_decision(path_str, info, centroids, learn=False)
         total_audited += 1
         if mod:
             total_modified += 1
@@ -185,14 +196,9 @@ def audit_all_photos(limit=None):
 
     if total_modified > 0:
         save_apple_db()
-        try:
-            with open(CENTROIDS_FILE, "wb") as cf:
-                pickle.dump(centroids, cf)
-        except Exception:
-            pass
         set_gallery_cache(None)
 
-    _save_supervisor_state()
+    save_supervisor_state()
     return {
         "status": "success",
         "total_audited": total_audited,

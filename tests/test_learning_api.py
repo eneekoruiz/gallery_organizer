@@ -18,11 +18,12 @@ class LearningApiTests(unittest.TestCase):
             cv2.imwrite(str(image), np.zeros((100, 100, 3), dtype=np.uint8))
             identities = {}
             overrides = {}
-            with patch.multiple(service, FOTOS_DIR=root, RESULTADOS_DIR=root,
+            with patch.multiple(service, APP_DIR=root, FOTOS_DIR=root, RESULTADOS_DIR=root,
                                 CACHE_FILE=root/'centroids.pkl', FACES_CACHE_FILE=root/'faces.pkl',
                                 known_faces=identities, faces_cache={}, detector=object(), recognizer=object()), \
                  patch.object(service, 'find_relocated_file', return_value=str(image)), \
                  patch.object(service, 'load_overrides', return_value=overrides), \
+                 patch.object(service, 'reload_known_faces'), \
                  patch.object(service, 'save_overrides'), \
                  patch.object(service, 'clear_gallery_cache'), \
                  patch.object(service, 'aligned_feature', return_value=np.ones(128)/np.sqrt(128)), \

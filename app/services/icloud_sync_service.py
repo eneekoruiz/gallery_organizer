@@ -1,23 +1,27 @@
 import os
-import gc
+import hashlib
 import re
 import time
 import json
 import pickle
 import threading
+import tempfile
 import subprocess
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from io import BytesIO
 from pathlib import Path
 import cv2
 import numpy as np
 
-from app.globals import APP_DIR, THUMBNAILS_DIR, set_gallery_cache
+from app.globals import APP_DIR, CACHE_FILE, RESULTADOS_DIR, cache_lock, set_gallery_cache
+from app.services.face_learning import rank_known_identities
+from app.services.content_analysis_service import content_sha256, model_version, load_analysis, save_analysis
 from app.services.apple_service import load_apple_db, save_apple_db, ICLOUD_PHOTOS_DIR
 from app.utils.files import generate_thumbnail
+from app.services.supervisor_service import save_supervisor_state, supervise_and_adapt_decision
 
 CENTROIDS_FILE = APP_DIR / "centroids.pkl"
-FACES_CACHE_FILE = APP_DIR / "faces_cache_v2.pkl"
 PROGRESS_FILE = APP_DIR / "scratch" / "apple_progress.json"
-RESULTADOS_DIR = Path(r"C:\Users\User\Desktop\Galeria Eneko NO ABRIR\Resultados")
 
 _SYNC_LOCK = threading.Lock()
 _SYNC_THREAD = None
@@ -29,6 +33,7 @@ _SYNC_STATE = {
     "already_processed": 0,
     "pending_in_cloud": 0,
     "processed_this_run": 0,
+    "reused_analysis": 0,
     "known_assigned": 0,
     "dudosos_assigned": 0,
     "sin_rostro_assigned": 0,
@@ -64,8 +69,9 @@ def stop_icloud_sync():
     if _SYNC_THREAD and _SYNC_THREAD.is_alive():
         _SYNC_THREAD.join(timeout=3.0)
     with _SYNC_LOCK:
-        _SYNC_STATE["running"] = False
-        _SYNC_STATE["status"] = "stopped"
+        if not (_SYNC_THREAD and _SYNC_THREAD.is_alive()):
+            _SYNC_STATE["running"] = False
+            _SYNC_STATE["status"] = "stopped"
         _save_progress_file()
     return get_icloud_sync_status()
 
@@ -85,8 +91,8 @@ def _create_windows_url_shortcut(target_path, cat, ident):
 def _dehydrate_cloud_file(filepath):
     """Marca el archivo como desanclado / liberar espacio (0 KB en disco local)."""
     try:
-        subprocess.run(["attrib", "+U", "-P", str(filepath)], capture_output=True, timeout=5)
-        return True
+        result = subprocess.run(["attrib", "+U", "-P", str(filepath)], capture_output=True, timeout=5)
+        return result.returncode == 0
     except Exception:
         return False
 
@@ -100,6 +106,67 @@ def _ensure_icloud_client_running():
                 time.sleep(2.5)
     except Exception:
         pass
+
+def _read_icloud_media(path):
+    before = os.stat(path)
+    revision = (before.st_size, before.st_mtime_ns)
+    if Path(path).suffix.lower() in {".mp4", ".mov", ".avi"}:
+        sha256 = content_sha256(path)
+        cap = cv2.VideoCapture(path, cv2.CAP_FFMPEG, [
+            cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 25000,
+            cv2.CAP_PROP_READ_TIMEOUT_MSEC, 12000,
+        ])
+        try:
+            ok, frame = cap.read()
+            after = os.stat(path)
+            if revision != (after.st_size, after.st_mtime_ns):
+                raise OSError(f"File changed while reading: {path}")
+            return (frame, sha256, revision) if ok and frame is not None else None
+        finally:
+            cap.release()
+
+    data = np.fromfile(path, dtype=np.uint8)
+    after = os.stat(path)
+    if revision != (after.st_size, after.st_mtime_ns):
+        raise OSError(f"File changed while reading: {path}")
+    sha256 = hashlib.sha256(data).hexdigest()
+    image = cv2.imdecode(data, cv2.IMREAD_COLOR) if data.size else None
+    if image is None:
+        from PIL import Image, ImageOps
+        with Image.open(BytesIO(data.tobytes())) as photo:
+            image = cv2.cvtColor(np.asarray(ImageOps.exif_transpose(photo).convert("RGB")), cv2.COLOR_RGB2BGR)
+    return (image, sha256, revision) if image is not None else None
+
+
+def _prefetch_icloud_media(paths, stop, workers=4):
+    """Keep a small window of reads in flight while one consumer classifies."""
+    paths = iter(paths)
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="iCloudRead") as executor:
+        pending = {}
+
+        def submit_next():
+            if not stop.is_set() and (path := next(paths, None)) is not None:
+                pending[executor.submit(_read_icloud_media, path)] = path
+
+        for _ in range(workers):
+            submit_next()
+        try:
+            while pending and not stop.is_set():
+                ready, _ = wait(pending, timeout=0.5, return_when=FIRST_COMPLETED)
+                for future in ready:
+                    if stop.is_set():
+                        return
+                    path = pending.pop(future)
+                    try:
+                        image = future.result()
+                    except (OSError, ValueError, cv2.error):
+                        image = None
+                    yield path, image
+                    submit_next()
+        finally:
+            for future in pending:
+                future.cancel()
+
 
 def _run_icloud_worker(batch_size=None):
     _ensure_icloud_client_running()
@@ -118,27 +185,59 @@ def _run_icloud_worker(batch_size=None):
             _save_progress_file()
         return
 
-    # Cargar centroides de personas conocidas
+    analysis_profile = "icloud-first-frame-v2:" + model_version(APP_DIR)
     centroids = {}
-    if CENTROIDS_FILE.exists():
-        try:
-            with open(CENTROIDS_FILE, "rb") as f:
-                centroids = pickle.load(f)
-        except Exception:
-            centroids = {}
+    new_centroids = {}
+    centroid_mtime = None
+    profile_mtime = None
+    confirmed_profiles = {}
 
-    # Cargar cache de caras
-    faces_cache = {}
-    if FACES_CACHE_FILE.exists():
+    def refresh_centroids():
+        nonlocal centroid_mtime, centroids, profile_mtime, confirmed_profiles
         try:
-            with open(FACES_CACHE_FILE, "rb") as f:
-                faces_cache = pickle.load(f)
-        except Exception:
-            faces_cache = {}
+            mtime = CENTROIDS_FILE.stat().st_mtime_ns
+        except FileNotFoundError:
+            return
+        if mtime != centroid_mtime:
+            with CENTROIDS_FILE.open("rb") as file:
+                centroids = pickle.load(file)
+            centroids.update(new_centroids)
+            centroid_mtime = mtime
+        current_profile_mtime = CACHE_FILE.stat().st_mtime_ns if CACHE_FILE.exists() else None
+        if current_profile_mtime is not None and current_profile_mtime != profile_mtime:
+            with CACHE_FILE.open("rb") as file:
+                confirmed_profiles = pickle.load(file)
+            if not isinstance(confirmed_profiles, dict):
+                raise ValueError("Invalid confirmed identity profiles")
+            profile_mtime = current_profile_mtime
 
-    # Cargar base de datos Apple
-    apple_db = load_apple_db()
-    existing_basenames = {os.path.basename(p).lower() for p in apple_db}
+    def save_new_centroids():
+        if not new_centroids:
+            return
+        with cache_lock:
+            refresh_centroids()
+            temp_path = None
+            try:
+                with tempfile.NamedTemporaryFile(dir=CENTROIDS_FILE.parent, delete=False) as file:
+                    temp_path = Path(file.name)
+                    pickle.dump(centroids, file)
+                os.replace(temp_path, CENTROIDS_FILE)
+                new_centroids.clear()
+            finally:
+                if temp_path is not None:
+                    temp_path.unlink(missing_ok=True)
+
+    try:
+        with cache_lock:
+            refresh_centroids()
+    except (OSError, EOFError, pickle.UnpicklingError) as error:
+        with _SYNC_LOCK:
+            _SYNC_STATE.update(running=False, status="error", last_error=f"Centroides: {error}")
+            _save_progress_file()
+        return
+
+    apple_db = load_apple_db(strict=True)
+    indexed_paths = {os.path.normcase(os.path.normpath(path)): entry for path, entry in apple_db.items()}
 
     # Escanear archivos en iCloud Photos
     if not ICLOUD_PHOTOS_DIR.exists():
@@ -151,7 +250,9 @@ def _run_icloud_worker(batch_size=None):
 
     valid_exts = {".jpg", ".jpeg", ".png", ".webp", ".mp4", ".mov"}
     try:
-        all_icloud = [f for f in os.listdir(ICLOUD_PHOTOS_DIR) if os.path.splitext(f)[1].lower() in valid_exts]
+        with os.scandir(ICLOUD_PHOTOS_DIR) as entries:
+            all_icloud = {entry.name: entry for entry in entries
+                          if os.path.splitext(entry.name)[1].lower() in valid_exts}
     except Exception as e:
         with _SYNC_LOCK:
             _SYNC_STATE["last_error"] = f"Error listando iCloud: {e}"
@@ -160,8 +261,39 @@ def _run_icloud_worker(batch_size=None):
             _save_progress_file()
         return
 
-    # Filtrar solo las pendientes
-    pending_files = [f for f in all_icloud if f.lower() not in existing_basenames]
+    # Legacy records retain their mappings; changed files are queued again.
+    pending_files = []
+    for name, source in all_icloud.items():
+        previous = indexed_paths.get(os.path.normcase(os.path.normpath(source.path)))
+        if previous is None:
+            pending_files.append(name)
+            continue
+        try:
+            info = source.stat(follow_symlinks=False)
+        except OSError:
+            pending_files.append(name)
+            continue
+        changed = (previous.get("mtime_ns") != info.st_mtime_ns
+                   if "mtime_ns" in previous else previous.get("mtime") != info.st_mtime)
+        if (changed or previous.get("size", info.st_size) != info.st_size
+                or previous.get("analysis_profile", analysis_profile) != analysis_profile):
+            pending_files.append(name)
+    def read_priority(name):
+        if Path(name).suffix.lower() in {".mp4", ".mov", ".avi"}:
+            return (2, 0)
+        try:
+            info = all_icloud[name].stat(follow_symlinks=False)
+        except OSError:
+            return (1, float("inf"))
+        # Offline, recall on open, or recall on data access.
+        recall = getattr(info, "st_file_attributes", 0) & 0x441000
+        return (int(bool(recall)), info.st_size)
+
+    pending_files.sort(key=read_priority)
+    total_pending = len(pending_files)
+    already_processed = len(all_icloud) - total_pending
+    if batch_size is not None:
+        pending_files = pending_files[:batch_size]
 
     # Identificar el número más alto de 'Persona Nueva #...'
     highest_new_person = 0
@@ -179,8 +311,8 @@ def _run_icloud_worker(batch_size=None):
 
     with _SYNC_LOCK:
         _SYNC_STATE["total_icloud"] = len(all_icloud)
-        _SYNC_STATE["already_processed"] = len(existing_basenames)
-        _SYNC_STATE["pending_in_cloud"] = len(pending_files)
+        _SYNC_STATE["already_processed"] = already_processed
+        _SYNC_STATE["pending_in_cloud"] = total_pending
         _SYNC_STATE["status"] = "running"
         _SYNC_STATE["started_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
         _save_progress_file()
@@ -188,82 +320,78 @@ def _run_icloud_worker(batch_size=None):
     processed_counter = 0
     screenshot_re = re.compile(r'^(screenshot|screen|captura)[-_]?(19|20)?', re.I)
 
-    for fname in pending_files:
-        if _STOP_REQUESTED.is_set():
-            break
-
-        abs_p = str(ICLOUD_PHOTOS_DIR / fname)
+    paths = (str(ICLOUD_PHOTOS_DIR / name) for name in pending_files)
+    for abs_p, media in _prefetch_icloud_media(paths, _STOP_REQUESTED):
+        fname = os.path.basename(abs_p)
         with _SYNC_LOCK:
             _SYNC_STATE["current_file"] = fname
 
-        is_vid = fname.lower().endswith(('.mp4', '.mov', '.avi'))
-        try:
-            if is_vid:
-                cap = cv2.VideoCapture(abs_p)
-                ret, frame = cap.read()
-                cap.release()
-                img = frame if (ret and frame is not None) else None
-            else:
-                img = cv2.imread(abs_p)
-                if img is None:
-                    time.sleep(1.2)
-                    img = cv2.imread(abs_p)
-                if img is None:
-                    from PIL import Image
-                    with Image.open(abs_p) as pil_img:
-                        img = cv2.cvtColor(np.array(pil_img.convert("RGB")), cv2.COLOR_RGB2BGR)
-        except Exception:
-            img = None
-
-        if img is None:
+        if media is None:
+            with _SYNC_LOCK:
+                _SYNC_STATE["last_error"] = f"No se pudo leer {fname}"
             continue
 
         try:
+            img, sha256, revision = media
             h, w = img.shape[:2]
             
             # 2. Generar miniatura WebP (~20-25 KB) para carga instantánea
-            generate_thumbnail(abs_p, max_size=320)
+            preview = generate_thumbnail(abs_p, max_size=320, decoded_image=img)
 
-            # 3. Detección y reconocimiento facial
-            det.setInputSize((w, h))
-            _, raw_faces = det.detect(img)
-            
+            # Reuse detections and embeddings; classify with the current identity profiles.
+            cached_analysis = load_analysis(abs_p, sha256, analysis_profile)
+            analysis_reused = cached_analysis is not None
+            if cached_analysis is None:
+                scale = min(1.0, 1024 / max(w, h))
+                det_w = max(160, int(w * scale) // 32 * 32)
+                det_h = max(160, int(h * scale) // 32 * 32)
+                det.setInputSize((det_w, det_h))
+                _, raw_faces = det.detect(cv2.resize(img, (det_w, det_h)))
+                extracted = []
+                if raw_faces is not None:
+                    raw_faces[:, :14:2] *= w / det_w
+                    raw_faces[:, 1:14:2] *= h / det_h
+                    for face in raw_faces:
+                        if len(face) < 15:
+                            continue
+                        feat = rec.feature(rec.alignCrop(img, face)).flatten()
+                        extracted.append({"landmarks": face.tolist(), "feature": feat.tolist()})
+                cached_analysis = {"faces": extracted}
+                save_analysis(sha256, analysis_profile, cached_analysis)
+            extracted = cached_analysis["faces"]
+
             detected_faces = []
             assigned_cat = "📋 Revisión / Por Organizar"
             assigned_ident = "📷 Fotos Sin Rostro"
             photo_status = "Clasificado"
 
-            if raw_faces is not None and len(raw_faces) > 0:
+            if extracted:
+                with cache_lock:
+                    refresh_centroids()
+                    profiles = dict(confirmed_profiles)
                 best_photo_match_sim = -1.0
                 best_photo_match_tuple = None
 
-                for face in raw_faces:
-                    # Validar landmarks
-                    if len(face) < 14: continue
+                for cached_face in extracted:
+                    face = np.asarray(cached_face["landmarks"], dtype=np.float32)
                     box = [float(face[0]), float(face[1]), float(face[2]), float(face[3])]
-                    aligned = rec.alignCrop(img, face)
-                    feat = rec.feature(aligned).flatten()
+                    feat = np.asarray(cached_face["feature"], dtype=np.float32)
                     norm_feat = feat / (np.linalg.norm(feat) + 1e-10)
 
-                    # Comparar con centroides conocidos
-                    best_sim = -1.0
-                    best_ident_tup = None
-                    for id_tup, c_vec in centroids.items():
-                        norm_c = c_vec.flatten() / (np.linalg.norm(c_vec) + 1e-10)
-                        sim = float(np.dot(norm_feat, norm_c))
-                        if sim > best_sim:
-                            best_sim = sim
-                            best_ident_tup = id_tup
+                    ranked = rank_known_identities(norm_feat, centroids, profiles)
+                    best_sim, best_ident_tup = ranked[0] if ranked else (-1.0, None)
+                    margin = best_sim - ranked[1][0] if len(ranked) > 1 else float("inf")
 
                     face_identity = "Desconocido"
                     face_confidence = 0.0
 
-                    if best_ident_tup and best_sim >= 0.58:
+                    if best_ident_tup and best_sim >= 0.65 and margin >= 0.08:
                         face_identity = best_ident_tup[1]
                         face_confidence = round(best_sim * 100, 1)
                         if best_sim > best_photo_match_sim:
                             best_photo_match_sim = best_sim
                             best_photo_match_tuple = best_ident_tup
+                            photo_status = "Clasificado"
                     elif best_ident_tup and best_sim >= 0.46:
                         face_identity = f"IA (Pendiente): {best_ident_tup[1]}"
                         face_confidence = round(best_sim * 100, 1)
@@ -293,7 +421,9 @@ def _run_icloud_worker(batch_size=None):
                             # Crear nueva Persona Nueva
                             highest_new_person += 1
                             new_name = f"Persona Nueva #{highest_new_person}"
-                            centroids[("📋 Revisión / Por Organizar", new_name)] = norm_feat
+                            new_key = ("📋 Revisión / Por Organizar", new_name)
+                            new_centroids[new_key] = norm_feat
+                            centroids[new_key] = norm_feat
                             face_identity = new_name
                             face_confidence = 100.0
                             if best_photo_match_sim < 0:
@@ -331,32 +461,33 @@ def _run_icloud_worker(batch_size=None):
 
             # 4. Guardar en apple_db con supervisión IA activa en tiempo real (100% de fotos)
             entry = {
+                "content_sha256": sha256,
+                "analysis_profile": analysis_profile,
                 "category": assigned_cat,
                 "identity": assigned_ident,
                 "cloud_source": "icloud",
                 "is_virtual": True,
-                "dehydrated": True,
+                "dehydrated": False,
                 "status": photo_status,
                 "num_faces": len(detected_faces),
                 "faces": detected_faces,
-                "mtime": os.path.getmtime(abs_p) if os.path.exists(abs_p) else time.time()
+                "size": revision[0],
+                "mtime_ns": revision[1],
+                "mtime": revision[1] / 1e9
             }
-            try:
-                from app.services.supervisor_service import supervise_and_adapt_decision
-                mod, _ = supervise_and_adapt_decision(abs_p, entry, centroids)
-                if mod:
-                    assigned_cat = entry["category"]
-                    assigned_ident = entry["identity"]
-                    photo_status = entry["status"]
-            except Exception:
-                pass
+            supervise_and_adapt_decision(abs_p, entry, centroids, learn=False)
+            assigned_cat = entry["category"]
+            assigned_ident = entry["identity"]
+            photo_status = entry["status"]
 
+            current = os.stat(abs_p)
+            if revision != (current.st_size, current.st_mtime_ns):
+                raise OSError(f"File changed during classification: {abs_p}")
             apple_db[abs_p] = entry
-            if detected_faces:
-                faces_cache[abs_p] = detected_faces
 
             # 5. Deshidratar inmediatamente para dejar 0 KB en disco
-            _dehydrate_cloud_file(abs_p)
+            if preview:
+                entry["dehydrated"] = _dehydrate_cloud_file(abs_p)
 
             # 6. Crear acceso directo virtual en Resultados con la categoría supervisada
             _create_windows_url_shortcut(abs_p, assigned_cat, assigned_ident)
@@ -365,15 +496,16 @@ def _run_icloud_worker(batch_size=None):
             processed_counter += 1
             elapsed = time.time() - t_start
             rate = processed_counter / max(1.0, elapsed)
-            remaining = len(pending_files) - processed_counter
+            remaining = total_pending - processed_counter
             eta = (remaining / max(0.01, rate)) / 60.0
 
             with _SYNC_LOCK:
                 _SYNC_STATE["processed_this_run"] = processed_counter
-                _SYNC_STATE["already_processed"] = len(existing_basenames) + processed_counter
+                _SYNC_STATE["reused_analysis"] += int(analysis_reused)
+                _SYNC_STATE["already_processed"] = already_processed + processed_counter
                 _SYNC_STATE["pending_in_cloud"] = remaining
                 _SYNC_STATE["current_identity"] = f"{assigned_cat} / {assigned_ident}"
-                _SYNC_STATE["dehydrated_count"] += 1
+                _SYNC_STATE["dehydrated_count"] += int(entry["dehydrated"])
                 if assigned_cat not in ("📋 Revisión / Por Organizar", "Publicaciones_Instagram"):
                     _SYNC_STATE["known_assigned"] += 1
                 elif "Persona Nueva" in assigned_ident:
@@ -389,61 +521,58 @@ def _run_icloud_worker(batch_size=None):
 
             # Guardado periódico a disco cada 10 fotos y auditoría de decisiones por el Supervisor IA
             if processed_counter % 10 == 0:
+                save_new_centroids()
                 save_apple_db()
-                try:
-                    with open(CENTROIDS_FILE, "wb") as cf:
-                        pickle.dump(centroids, cf)
-                    with open(FACES_CACHE_FILE, "wb") as ff:
-                        pickle.dump(faces_cache, ff)
-                except Exception:
-                    pass
                 _save_progress_file()
                 set_gallery_cache(None) # Invalidar para que aparezcan en tiempo real
-                gc.collect()
 
-                # Auditoría periódica cada 20 fotos
-                if processed_counter % 20 == 0:
-                    try:
-                        from app.services.supervisor_service import audit_recent_decisions
-                        audit_recent_decisions(n=30)
-                    except Exception as e_sup:
-                        pass
+                save_supervisor_state()
 
-            # Pausa suave de 50ms para mantener uso de CPU < 8%
-            time.sleep(0.05)
 
         except Exception as e:
             with _SYNC_LOCK:
                 _SYNC_STATE["last_error"] = f"Error en {fname}: {e}"
 
     # Guardado final
+    save_new_centroids()
     save_apple_db()
-    try:
-        with open(CENTROIDS_FILE, "wb") as cf:
-            pickle.dump(centroids, cf)
-        with open(FACES_CACHE_FILE, "wb") as ff:
-            pickle.dump(faces_cache, ff)
-    except Exception:
-        pass
+    save_supervisor_state()
     
     set_gallery_cache(None)
     with _SYNC_LOCK:
         _SYNC_STATE["running"] = False
-        _SYNC_STATE["status"] = "completed" if not _STOP_REQUESTED.is_set() else "stopped"
+        _SYNC_STATE["status"] = "stopped" if _STOP_REQUESTED.is_set() else (
+            "incomplete" if processed_counter < total_pending else "completed"
+        )
         _save_progress_file()
+
+def _run_icloud_sync(batch_size):
+    try:
+        _run_icloud_worker(batch_size)
+    except Exception as error:
+        with _SYNC_LOCK:
+            _SYNC_STATE.update(running=False, status="error", last_error=str(error))
+            _save_progress_file()
+
 
 def start_icloud_sync(batch_size=None):
     global _SYNC_THREAD, _STOP_REQUESTED
     with _SYNC_LOCK:
-        if _SYNC_STATE["running"] and _SYNC_THREAD and _SYNC_THREAD.is_alive():
+        if _SYNC_THREAD and _SYNC_THREAD.is_alive():
             return {"status": "already_running", "state": dict(_SYNC_STATE)}
         
         _STOP_REQUESTED.clear()
         _SYNC_STATE["running"] = True
+        for key in ("processed_this_run", "reused_analysis", "known_assigned", "dudosos_assigned",
+                    "new_persons_assigned", "sin_rostro_assigned", "dehydrated_count",
+                    "rate_per_sec", "elapsed_sec", "eta_minutes"):
+            _SYNC_STATE[key] = 0
+        _SYNC_STATE["current_file"] = None
+        _SYNC_STATE["current_identity"] = None
         _SYNC_STATE["status"] = "starting"
         _SYNC_STATE["last_error"] = None
         _save_progress_file()
 
-    _SYNC_THREAD = threading.Thread(target=_run_icloud_worker, args=(batch_size,), daemon=True, name="iCloudVirtualSyncWorker")
-    _SYNC_THREAD.start()
+        _SYNC_THREAD = threading.Thread(target=_run_icloud_sync, args=(batch_size,), daemon=True, name="iCloudVirtualSyncWorker")
+        _SYNC_THREAD.start()
     return {"status": "started", "state": get_icloud_sync_status()}

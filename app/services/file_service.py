@@ -1,3 +1,4 @@
+from app.services.content_analysis_service import content_sha256, find_content_duplicates
 from app.globals import cache_lock
 from flask import Blueprint, jsonify, request
 import os
@@ -96,17 +97,10 @@ def api_purge_exact_duplicates():
                     stat = p.stat()
                     size = stat.st_size
                     mtime = stat.st_mtime
-                    h_val = None
-                    
-                    if p_str in cache_data and cache_data[p_str]['size'] == size and cache_data[p_str]['mtime'] == mtime:
-                        h_val = cache_data[p_str]['hash']
-                    else:
-                        with open(p, 'rb') as f:
-                            chunk = f.read(1024 * 1024)
-                        h_val = hashlib.md5(chunk + str(size).encode()).hexdigest()
-                        cache_data[p_str] = {'size': size, 'mtime': mtime, 'hash': h_val}
-                        cache_updated = True
-                        
+                    h_val = content_sha256(p)
+                    cache_data[p_str] = {"size": size, "mtime": mtime, "hash": h_val, "algorithm": "sha256"}
+                    cache_updated = True
+
                     if h_val not in hash_map: hash_map[h_val] = []
                     hash_map[h_val].append(p)
                 except: pass
@@ -130,8 +124,8 @@ def api_purge_exact_duplicates():
             sorted_paths = sorted(paths, key=score_path, reverse=True)
             for rem in sorted_paths[1:]:
                 try:
-                    safe_remove_file(rem)
-                    purged_count += 1
+                    if content_sha256(sorted_paths[0]) == content_sha256(rem) and safe_remove_file(rem):
+                        purged_count += 1
                 except: pass
                 
     clear_gallery_cache()
@@ -244,6 +238,14 @@ def api_duplicates_scan():
                             hashes[h_val].append({'path': fpath_str, 'size': data.get('size', 0), 'name': Path(fpath_str).name})
                 except Exception: pass
 
+        for digest, paths in find_content_duplicates().items():
+            existing = {item["path"] for item in hashes.get(digest, [])}
+            for path in paths:
+                if path not in existing and os.path.isfile(path):
+                    hashes.setdefault(digest, []).append({
+                        "path": path, "size": os.path.getsize(path), "name": Path(path).name
+                    })
+
         groups = []
         total_waste_bytes = 0
         for h_val, file_list in hashes.items():
@@ -297,16 +299,13 @@ def api_duplicates_clean():
                         if size < 5000: continue
                         
                         fpath_str = str(fp)
-                        h_val = None
-                        if fpath_str in cache_data and cache_data[fpath_str]['size'] == size and cache_data[fpath_str]['mtime'] == mtime:
-                            h_val = cache_data[fpath_str]['hash']
-                        else:
-                            with open(fp, 'rb') as fh:
-                                chunk = fh.read(1024 * 1024)
-                            h_val = hashlib.md5(chunk + str(size).encode()).hexdigest()
-                            cache_data[fpath_str] = {'size': size, 'mtime': mtime, 'hash': h_val}
-                            cache_updated = True
-                            
+                        old_hash = cache_data.get(fpath_str, {}).get("hash")
+                        h_val = content_sha256(fp)
+                        if old_hash == target_hash:
+                            target_hash = h_val
+                        cache_data[fpath_str] = {"size": size, "mtime": mtime, "hash": h_val, "algorithm": "sha256"}
+                        cache_updated = True
+
                         if h_val not in hashes: hashes[h_val] = []
                         hashes[h_val].append(fp)
                     except Exception: pass
@@ -323,8 +322,9 @@ def api_duplicates_clean():
                 if clean_all or h_val == target_hash:
                     for dup_p in file_list[1:]:
                         try:
-                            freed_bytes += dup_p.stat().st_size
-                            safe_remove_file(dup_p)
+                            size = dup_p.stat().st_size
+                            if content_sha256(file_list[0]) == content_sha256(dup_p) and safe_remove_file(dup_p):
+                                freed_bytes += size
                         except Exception as de:
                             print("Error deleting duplicate:", de)
                             

@@ -1,3 +1,5 @@
+import hashlib
+from app.services.content_analysis_service import model_version, load_analysis, save_analysis
 from app.services.face_learning import HUMAN, face_rectangle, aligned_feature, normalized_feature, confirmed_centroid
 from app.utils.files import get_file_key
 from app.services.quote_service import is_text_quote_image, scan_and_categorize_quotes
@@ -110,47 +112,11 @@ def api_analyze():
     path_obj = Path(filepath)
     is_video = path_obj.suffix.lower() in [".mp4", ".mov", ".avi"]
     faces_data = []
+    sha256 = None
+    analysis_reused = False
     
-    force_reanalyze = data.get('force', False) or is_video or (data.get('timestamp') is not None)
     
-    file_key = get_file_key(filepath)
-    # 1. Validación estricta de faces_cache para respuestas instantáneas (<5ms)
-    if not force_reanalyze and (file_key in faces_cache or filepath in faces_cache):
-        cached = faces_cache.get(file_key) or faces_cache.get(filepath)
-        is_valid_cache = isinstance(cached, list) and len(cached) > 0
-        if is_valid_cache:
-            for f in cached:
-                if 'x' not in f or 'y' not in f or 'width' not in f or 'height' not in f:
-                    is_valid_cache = False; break
-                if safe_float(f.get('width')) < 15 or safe_float(f.get('height')) < 15:
-                    is_valid_cache = False; break
-                if 'img_width' not in f or 'img_height' not in f:
-                    is_valid_cache = False; break
-        if is_valid_cache:
-            filtered_cached = [f for f in cached if f.get('identity') not in ["Falso_Positivo", "Ignorar_Irrelevante"]]
-            overrides = load_overrides()
-            ov_list = overrides.get(file_key, [])
-            if ov_list:
-                for f in filtered_cached:
-                    f_box = [safe_float(f.get('x')), safe_float(f.get('y')), safe_float(f.get('width')), safe_float(f.get('height'))]
-                    for ov in ov_list:
-                        ov_box = [safe_float(ov.get('x')), safe_float(ov.get('y')), safe_float(ov.get('width')), safe_float(ov.get('height'))]
-                        if iou(f_box, ov_box) > 0.4:
-                            f['identity'] = ov['identity']
-                            f['confidence'] = "100.0% (Manual)"
-                            f['provenance'] = HUMAN
-                            f['is_manual'] = True
-            # Enforce mutual exclusion: a person cannot be in multiple face boxes
-            claimed_ids = {f['identity'] for f in filtered_cached if f.get('identity') and f.get('identity') not in ("Desconocido", "Falso_Positivo", "Ignorar_Irrelevante", "Persona (Sin rostro / Filtro)") and not str(f.get('identity')).startswith(('? ', 'IA '))}
-            for f in filtered_cached:
-                if f.get('suggested_identity') in claimed_ids:
-                    f['suggested_identity'] = None
-                    f['suggested_score'] = 0.0
-                    if f.get('tag_type') == 'ai_suggestion':
-                        f['confidence'] = "Pendiente"
-                        f['tag_type'] = "pending"
-            return jsonify({"faces": filtered_cached})
-        
+    # Recompute labels and overrides on each request. Content detections are reusable.
     try:
         timestamp_in = data.get('timestamp')
         timestamp = 0.0
@@ -192,54 +158,67 @@ def api_analyze():
             height, width, _ = img.shape
             raw_detected_faces = []
             
-            # Optimización de Escala YuNet (máx 1024px para respuesta ultra-rápida en ~150ms)
-            max_dim = 1024
-            scale = 1.0
-            if max(width, height) > max_dim:
-                scale = max_dim / max(width, height)
-                det_w = max(160, int(width * scale))
-                det_h = max(160, int(height * scale))
-                det_img = cv2.resize(img, (det_w, det_h))
+            sha256 = None if is_video else hashlib.sha256(file_bytes).hexdigest()
+            analysis_profile = None if is_video else "interactive-faces-v3:" + model_version(APP_DIR)
+            cached_analysis = None
+            if sha256:
+                cached_analysis = load_analysis(filepath, sha256, analysis_profile)
+                if data.get("force", False):
+                    cached_analysis = None
+            analysis_reused = cached_analysis is not None
+            feature_cache = cached_analysis.get("features", {}) if cached_analysis else {}
+            if cached_analysis is not None:
+                raw_detected_faces = cached_analysis["faces"]
             else:
-                det_w, det_h = width, height
-                det_img = img
+                # Optimización de Escala YuNet (máx 1024px para respuesta ultra-rápida en ~150ms)
+                max_dim = 1024
+                scale = 1.0
+                if max(width, height) > max_dim:
+                    scale = max_dim / max(width, height)
+                    det_w = max(160, int(width * scale) // 32 * 32)
+                    det_h = max(160, int(height * scale) // 32 * 32)
+                    det_img = cv2.resize(img, (det_w, det_h))
+                else:
+                    det_w, det_h = max(160, width // 32 * 32), max(160, height // 32 * 32)
+                    det_img = cv2.resize(img, (det_w, det_h))
 
-            with detector_lock:
-                detector.setInputSize((det_w, det_h))
-                detector.setScoreThreshold(0.35)
-                _, faces = detector.detect(det_img)
+                with detector_lock:
+                    detector.setInputSize((det_w, det_h))
+                    detector.setScoreThreshold(0.35)
+                    _, faces = detector.detect(det_img)
             
-            inv_scale = 1.0 / scale if scale > 0 else 1.0
-            if faces is not None:
-                for f in faces:
-                    if not is_valid_face_landmarks(f):
-                        continue
-                    scaled_f = f.copy().astype(np.float32)
-                    scaled_f[:4] *= inv_scale
-                    scaled_f[4:14] *= inv_scale
-                    raw_detected_faces.append(scaled_f.tolist())
+                inv_scale = 1.0 / scale if scale > 0 else 1.0
+                if faces is not None:
+                    for f in faces:
+                        if not is_valid_face_landmarks(f):
+                            continue
+                        scaled_f = f.copy().astype(np.float32)
+                        scaled_f[:14:2] *= width / det_w
+                        scaled_f[1:14:2] *= height / det_h
+                        raw_detected_faces.append(scaled_f.tolist())
                 
-            # Pase 2: Videollamada PiP inferior si la imagen es vertical
-            if height / max(1, width) > 1.6 and len(raw_detected_faces) < 2:
-                try:
-                    pip_crop = img[int(height * 0.65):, :int(width * 0.50)]
-                    h_pip, w_pip = pip_crop.shape[:2]
-                    if h_pip > 40 and w_pip > 40:
-                        pip_2x = cv2.resize(pip_crop, (w_pip * 2, h_pip * 2))
-                        with detector_lock:
-                            detector.setInputSize((w_pip * 2, h_pip * 2))
-                            detector.setScoreThreshold(0.25)
-                            _, p_faces = detector.detect(pip_2x)
-                        if p_faces is not None:
-                            for pf in p_faces:
-                                if not is_valid_face_landmarks(pf):
-                                    continue
-                                fx = int(pf[0] / 2)
-                                fy = int(height * 0.65) + int(pf[1] / 2)
-                                fw = int(pf[2] / 2)
-                                fh = int(pf[3] / 2)
-                                raw_detected_faces.append([fx, fy, fw, fh] + list(pf[4:]))
-                except Exception: pass
+                # Pase 2: Videollamada PiP inferior si la imagen es vertical
+                if height / max(1, width) > 1.6 and len(raw_detected_faces) < 2:
+                    try:
+                        pip_crop = img[int(height * 0.65):, :int(width * 0.50)]
+                        h_pip, w_pip = pip_crop.shape[:2]
+                        if h_pip > 40 and w_pip > 40:
+                            pip_w, pip_h = max(160, w_pip * 2 // 32 * 32), max(160, h_pip * 2 // 32 * 32)
+                            pip_2x = cv2.resize(pip_crop, (pip_w, pip_h))
+                            with detector_lock:
+                                detector.setInputSize((pip_w, pip_h))
+                                detector.setScoreThreshold(0.25)
+                                _, p_faces = detector.detect(pip_2x)
+                            if p_faces is not None:
+                                for pf in p_faces:
+                                    if not is_valid_face_landmarks(pf):
+                                        continue
+                                    pf[:14:2] *= w_pip / pip_w
+                                    pf[1:14:2] *= h_pip / pip_h
+                                    pf[1] += int(height * 0.65)
+                                    pf[5:14:2] += int(height * 0.65)
+                                    raw_detected_faces.append(pf.tolist())
+                    except Exception: pass
             
             overrides = load_overrides()
             file_key = get_file_key(filepath)
@@ -316,23 +295,29 @@ def api_analyze():
                     else:
                         feature_vec = None
                         try:
-                            # Recorte y alineación SFace con landmarks faciales
-                            aligned = None
-                            if len(face) >= 14:
-                                try:
-                                    face_arr = np.array(face, dtype=np.float32)
-                                    aligned = recognizer.alignCrop(img, face_arr)
-                                except Exception:
-                                    aligned = None
-                            if aligned is None:
-                                crop = img[y:y+h, x:x+w]
-                                if crop.shape[0] > 10 and crop.shape[1] > 10:
-                                    aligned = cv2.resize(crop, (112, 112))
-                            if aligned is not None:
-                                feature_arr = recognizer.feature(aligned)
-                                if feature_arr is not None and len(feature_arr) > 0:
-                                    feature_vec = feature_arr[0]
+                            feature_key = json.dumps([float(value) for value in face], separators=(",", ":"))
+                            if feature_key in feature_cache:
+                                feature_vec = np.asarray(feature_cache[feature_key], dtype=np.float32)
+                            else:
+                                # Recorte y alineación SFace con landmarks faciales
+                                aligned = None
+                                if len(face) >= 14:
+                                    try:
+                                        face_arr = np.array(face, dtype=np.float32)
+                                        aligned = recognizer.alignCrop(img, face_arr)
+                                    except Exception:
+                                        aligned = None
+                                if aligned is None:
+                                    crop = img[y:y+h, x:x+w]
+                                    if crop.shape[0] > 10 and crop.shape[1] > 10:
+                                        aligned = cv2.resize(crop, (112, 112))
+                                if aligned is not None:
+                                    feature_arr = recognizer.feature(aligned)
+                                    if feature_arr is not None and len(feature_arr) > 0:
+                                        feature_vec = feature_arr[0]
                                     
+                                if feature_vec is not None:
+                                    feature_cache[feature_key] = feature_vec.tolist()
                             if feature_vec is not None:
                                 feat_norm = feature_vec / (np.linalg.norm(feature_vec) + 1e-10)
                                 # Master Anchor Protection for YO
@@ -568,11 +553,15 @@ def api_analyze():
                         f['confidence'] = "Pendiente"
                         f['tag_type'] = "pending"
 
+            if sha256:
+                save_analysis(sha256, analysis_profile,
+                              {"faces": raw_detected_faces, "features": feature_cache})
+
             # Guardar en faces_cache
             with cache_lock:
                 faces_cache[get_file_key(filepath)] = faces_data
                 
-        return jsonify({"faces": faces_data})
+        return jsonify({"faces": faces_data, "content_sha256": sha256, "analysis_reused": analysis_reused})
     except Exception as e:
         print(f"[API_ANALYZE] Error analizando {filepath}: {e}")
         return jsonify({"error": str(e)}), 500

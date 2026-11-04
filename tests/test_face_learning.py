@@ -5,11 +5,27 @@ from unittest.mock import Mock
 
 import numpy as np
 from app.services.face_learning import (
-    HUMAN, aligned_feature, face_rectangle, normalized_feature, update_confirmed_sample,
+    HUMAN, aligned_feature, face_rectangle, normalized_feature, rank_known_identities, update_confirmed_sample,
 )
 
 
 class LearningTests(unittest.TestCase):
+    def test_icloud_ranks_people_using_only_confirmed_appearance_profiles(self):
+        first, second, other = np.eye(128, dtype=np.float32)[:3]
+        centroids = {
+            ("Familia", "Ana"): first,
+            ("Conocidos", "Ana"): first,
+            "Ana": first,
+            ("Conocidos", "Bea"): other,
+            ("Revision", "Persona Nueva #1"): second,
+        }
+        profiles = {
+            "Ana": {"provenance": HUMAN, "centroids": [first, second]},
+            "Bea": {"provenance": "auto", "centroids": [second]},
+        }
+        ranked = rank_known_identities(second, centroids, profiles)
+        self.assertEqual([(score, key[1]) for score, key in ranked], [(1.0, "Ana"), (0.0, "Bea")])
+
     def test_box_coordinates_are_preserved(self):
         self.assertEqual(list(face_rectangle({'box': [240, 180, 80, 90]}).values()),
                          [240, 180, 80, 90])
