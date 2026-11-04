@@ -3,7 +3,7 @@ import os
 import shutil
 import gc
 import time
-from app.utils.globals import PENDING_DELETIONS_FILE
+from app.globals import PENDING_DELETIONS_FILE
 
 def process_pending_deletions():
     if not PENDING_DELETIONS_FILE.exists(): return

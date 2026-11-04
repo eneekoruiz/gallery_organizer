@@ -48,7 +48,13 @@ def save_apple_db():
                 mode="w", encoding="utf-8", dir=APPLE_DB_FILE.parent, delete=False
             ) as file:
                 temp_path = Path(file.name)
-                json.dump(_apple_db, file, separators=(",", ":"))
+                # Encode records in C without allocating a second copy of the whole index.
+                file.write("{")
+                for index, (path, info) in enumerate(_apple_db.items()):
+                    if index:
+                        file.write(",")
+                    file.write(json.dumps(path) + ":" + json.dumps(info, separators=(",", ":")))
+                file.write("}")
             os.replace(temp_path, APPLE_DB_FILE)
         finally:
             if temp_path is not None:

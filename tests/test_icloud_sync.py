@@ -9,6 +9,23 @@ from app.services import apple_service, icloud_sync_service
 
 
 class ICloudSyncTests(unittest.TestCase):
+    def test_checkpoint_roundtrip_and_encoding_failure_preserve_previous_index(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'apple_db.json'
+            entries = {'C:\\Fotos\\familia "sí".jpg': {'faces': [{'feature': [.1, .2], 'identity': 'Ána'}]}}
+            with patch.multiple(apple_service, APPLE_DB_FILE=path, _apple_db=entries):
+                apple_service.save_apple_db()
+                self.assertEqual(json.loads(path.read_text(encoding='utf-8')), entries)
+                previous = path.read_bytes()
+                entries['invalid'] = {'feature': object()}
+                with self.assertRaises(TypeError):
+                    apple_service.save_apple_db()
+                self.assertEqual(path.read_bytes(), previous)
+                self.assertEqual(list(Path(folder).iterdir()), [path])
+            with patch.multiple(apple_service, APPLE_DB_FILE=path, _apple_db={}):
+                apple_service.save_apple_db()
+                self.assertEqual(json.loads(path.read_text(encoding='utf-8')), {})
+
     def test_checkpoint_preserves_previous_index_when_write_fails(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "apple_db.json"
