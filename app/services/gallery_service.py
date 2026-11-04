@@ -1,5 +1,6 @@
 from app.utils.files import get_file_key
 from app.services.apple_service import detect_device_origin
+from app.services.group_album_service import group_albums, is_group_album, trusted_identities
 from flask import Blueprint, jsonify, request, Response, send_file
 import os
 import json
@@ -148,12 +149,6 @@ def get_gallery():
     total_files = len(all_file_targets)
     processed = 0
 
-    SMART_ALBUM_IDENTS = {
-        'familia conmigo', 'familia sin mi', 'familia sin mí',
-        'familiares conmigo', 'familiares sin mi', 'familiares sin mí',
-        'conocidos conmigo', 'conocidos sin mi', 'conocidos sin mí',
-        'mascotas conmigo',
-    }
     KNOWN_CATEGORIES = {"Conocidos", "Familia", "YO", "Profesores", "Lugares", "Eventos", "Mascotas", "Objetos", "Recuerdos", "Publicaciones_Instagram"}
     ident_to_cat_map = {id_info["identidad"]: id_info["categoria"] for id_info in get_all_identities()}
     classified_filenames = set()
@@ -184,7 +179,7 @@ def get_gallery():
                 is_dudoso = folder_dudoso
             
             ident = subfolder
-            is_smart_album_folder = ident.lower() in SMART_ALBUM_IDENTS
+            is_smart_album_folder = is_group_album(ident)
             folder_l = folder.lower()
             subfolder_l = subfolder.lower()
             ext = os.path.splitext(path_obj.name)[1].lower()
@@ -423,92 +418,26 @@ def get_gallery():
                 clean_other_id = sanitize_display_name(other_id)
                 add_to_gallery(other_cat, clean_other_id, item)
         
-        known_ids_in_file = set()
-        for f_entry in faces_in_file:
-            other_id = f_entry.get('identity')
-            if other_id and not other_id.startswith('Desconocid') and not other_id.startswith('Falso_Positivo') and not other_id.startswith('Ignorar'):
-                if other_id.lower() not in {
-                    'familia conmigo', 'familia sin mi', 'familia sin mí',
-                    'familiares conmigo', 'familiares sin mí',
-                    'conocidos conmigo', 'conocidos sin mi', 'conocidos sin mí',
-                    'mascotas conmigo', 'mascotas sin mi', 'mascotas sin mí',
-                }:
-                    known_ids_in_file.add(other_id)
-        
-        # Include original folder owner if valid persona
-        if cat in ['Familia', 'Familiares'] and ident.lower() not in ['familia conmigo', 'familia sin mi', 'familia sin mí']:
-            known_ids_in_file.add(ident)
-        elif cat == 'Conocidos' and ident.lower() not in ['conocidos conmigo', 'conocidos sin mi', 'conocidos sin mí']:
-            known_ids_in_file.add(ident)
-        elif cat == 'Mascotas' and ident.lower() not in ['mascotas conmigo', 'mascotas sin mi', 'mascotas sin mí']:
-            known_ids_in_file.add(ident)
-        elif cat == 'YO' or ident == 'YO':
-            known_ids_in_file.add('YO')
+        for group_cat, group_ident in group_albums(faces_in_file, ident_to_cat_map):
+            add_to_gallery(group_cat, group_ident, item)
 
-        has_yo = ('YO' in known_ids_in_file) or (ident == 'YO') or ('eneko' in ident.lower() and ident != 'Galeria Eneko NO ABRIR')
-        
-        # Count distinct family, acquaintance and pet entities in this photo
-        fam_members = {x for x in known_ids_in_file if (x != 'YO' and (x.startswith('F. ') or ident_to_cat_map.get(x) in ['Familia', 'Familiares']))}
-        con_members = {x for x in known_ids_in_file if (x != 'YO' and (x.startswith('C. ') or ident_to_cat_map.get(x) == 'Conocidos'))}
-        pet_members = {x for x in known_ids_in_file if (x != 'YO' and (x.startswith('M. ') or ident_to_cat_map.get(x) == 'Mascotas' or x in ['Perro', 'Gato', 'Ney', 'Sua']))}
-
-        # 1. Smart album: Familia conmigo (YO + 1 o más familiares) / Familia sin mí (2 o más familiares juntos SIN YO)
-        if len(fam_members) >= 1 and has_yo:
-            add_to_gallery('Familia', 'Familia conmigo', item)
-        elif len(fam_members) >= 2 and not has_yo:
-            add_to_gallery('Familia', 'Familia sin mí', item)
-
-        # 2. Smart album: Conocidos conmigo (YO + 1 o más conocidos) / Conocidos sin mí (2 o más conocidos juntos SIN YO y sin familia)
-        if len(con_members) >= 1 and len(fam_members) == 0 and has_yo:
-            add_to_gallery('Conocidos', 'Conocidos conmigo', item)
-        elif len(con_members) >= 2 and len(fam_members) == 0 and not has_yo:
-            add_to_gallery('Conocidos', 'Conocidos sin mí', item)
-
-        # 3. Smart album: Mascotas conmigo (YO + 1 o más mascotas) / Mascotas sin mí (2 o más mascotas sin YO)
-        if len(pet_members) >= 1 and has_yo:
-            add_to_gallery('Mascotas', 'Mascotas conmigo', item)
-        elif len(pet_members) >= 2 and not has_yo:
-            add_to_gallery('Mascotas', 'Mascotas sin mí', item)
-        
-    # Second pass: process items stashed from smart album folders
+    # Existing group folders need the same face evidence as dynamically added groups.
     for (cat, ident, filename), item in seen_files.items():
         if cat != '__smart_album__':
             continue
-
-        faces_in_file = faces_cache.get(item['path'], [])
         file_k = get_file_key(item['path'])
-        if file_k in overrides:
-            faces_in_file = overrides[file_k]
-
-        known_ids = set()
-        for f_entry in faces_in_file:
-            other_id = f_entry.get('identity')
-            if other_id and not other_id.startswith('Desconocid') and not other_id.startswith('Falso_Positivo') and not other_id.startswith('Ignorar'):
-                if other_id.lower() not in {
-                    'familia conmigo', 'familia sin mi', 'familia sin mí',
-                    'familiares conmigo', 'familiares sin mí',
-                    'conocidos conmigo', 'conocidos sin mi', 'conocidos sin mí',
-                    'mascotas conmigo', 'mascotas sin mi', 'mascotas sin mí',
-                }:
-                    known_ids.add(other_id)
-
-        has_yo = ('YO' in known_ids)
-        fam_members = {x for x in known_ids if (x != 'YO' and (x.startswith('F. ') or ident_to_cat_map.get(x) in ['Familia', 'Familiares']))}
-        con_members = {x for x in known_ids if (x != 'YO' and (x.startswith('C. ') or ident_to_cat_map.get(x) == 'Conocidos'))}
-        pet_members = {x for x in known_ids if (x != 'YO' and (x.startswith('M. ') or ident_to_cat_map.get(x) == 'Mascotas' or x in ['Perro', 'Gato', 'Ney', 'Sua']))}
-
-        if 'familia conmigo' in ident.lower() or (len(fam_members) >= 1 and has_yo):
-            add_to_gallery('Familia', 'Familia conmigo', item)
-        elif 'familia sin' in ident.lower() or (len(fam_members) >= 2 and not has_yo):
-            add_to_gallery('Familia', 'Familia sin mí', item)
-        elif 'conocidos conmigo' in ident.lower() or (len(con_members) >= 1 and len(fam_members) == 0 and has_yo):
-            add_to_gallery('Conocidos', 'Conocidos conmigo', item)
-        elif 'conocidos sin' in ident.lower() or (len(con_members) >= 2 and len(fam_members) == 0 and not has_yo):
-            add_to_gallery('Conocidos', 'Conocidos sin mí', item)
-        elif 'mascotas conmigo' in ident.lower() or (len(pet_members) >= 1 and has_yo):
-            add_to_gallery('Mascotas', 'Mascotas conmigo', item)
-        elif 'mascotas sin' in ident.lower() or (len(pet_members) >= 2 and not has_yo):
-            add_to_gallery('Mascotas', 'Mascotas sin mí', item)
+        faces_in_file = overrides.get(file_k) or faces_cache.get(file_k) or faces_cache.get(item['path'], [])
+        albums = group_albums(faces_in_file, ident_to_cat_map)
+        identities, unresolved = trusted_identities(faces_in_file, ident_to_cat_map)
+        for group_cat, group_ident in albums:
+            add_to_gallery(group_cat, group_ident, item)
+        for identity in identities:
+            category = ident_to_cat_map.get(identity) or ('YO' if identity == 'YO' else
+                       'Familia' if identity.startswith('F. ') else
+                       'Mascotas' if identity.startswith('M. ') or identity in {'Perro', 'Gato', 'Ney', 'Sua'} else 'Conocidos')
+            add_to_gallery(category, identity, item)
+        if unresolved or not identities:
+            add_to_gallery('📋 Revisión / Por Organizar', '⚠️ Grupos por confirmar', item)
 
     # --- VIRTUAL ICLOUD PHOTOS INTEGRATION (apple_db.json) ---
     try:
@@ -545,7 +474,13 @@ def get_gallery():
                     "dehydrated": True,
                     "faces": faces_in_file
                 }
-                add_to_gallery(cat, ident, item_apple)
+                if not is_group_album(ident):
+                    add_to_gallery(cat, ident, item_apple)
+                albums = group_albums(faces_in_file, ident_to_cat_map)
+                for group_cat, group_ident in albums:
+                    add_to_gallery(group_cat, group_ident, item_apple)
+                if is_group_album(ident) and not albums:
+                    add_to_gallery('📋 Revisión / Por Organizar', '⚠️ Grupos por confirmar', item_apple)
     except Exception as e_app:
         print(f"[WARN] Error integrating apple_db virtual photos: {e_app}")
 

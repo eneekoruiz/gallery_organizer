@@ -2,6 +2,7 @@ import os
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -94,35 +95,40 @@ class TestGalleryOrganization(unittest.TestCase):
             sample_img = source_dir / "test_face.jpg"
             sample_img.write_bytes(b"FACE_IMG_DATA")
 
-            flask_app = create_app()
-            client = flask_app.test_client()
+            with patch('app.services.apple_service.rename_apple_group'), \
+                 patch.object(fs, 'CACHE_FILE', self.root / 'test_faces.pkl'), \
+                 patch.object(fs, 'known_faces', {}):
+                flask_app = create_app()
+                client = flask_app.test_client()
 
-            # Call rename_group with virtual UI category '📋 Revisión / Por Organizar'
-            res = client.post('/api/rename_group',
-                              data=json.dumps({
-                                  "cat": "📋 Revisión / Por Organizar",
-                                  "ident": "Persona Nueva #99",
-                                  "new_name": "YO",
-                                  "new_cat": "YO"
-                              }),
-                              content_type='application/json')
+                # Call rename_group with virtual UI category '📋 Revisión / Por Organizar'
+                res = client.post('/api/rename_group',
+                                  data=json.dumps({
+                                      "cat": "📋 Revisión / Por Organizar",
+                                      "ident": "Persona Nueva #99",
+                                      "new_name": "YO",
+                                      "new_cat": "YO"
+                                  }),
+                                  content_type='application/json')
 
-            self.assertEqual(res.status_code, 200, f"Error: {res.get_json()}")
-            data = res.get_json()
-            self.assertTrue(data.get("success"))
-            self.assertEqual(data.get("count"), 1)
+                self.assertEqual(res.status_code, 200, f"Error: {res.get_json()}")
+                data = res.get_json()
+                self.assertTrue(data.get("success"))
+                self.assertEqual(data.get("count"), 1)
 
-            target_file = temp_res / "YO" / "YO" / "test_face.jpg"
-            self.assertTrue(target_file.exists())
-            self.assertEqual(target_file.read_bytes(), b"FACE_IMG_DATA")
-            self.assertFalse(source_dir.exists())
+                target_file = temp_res / "YO" / "YO" / "test_face.jpg"
+                self.assertTrue(target_file.exists())
+                self.assertEqual(target_file.read_bytes(), b"FACE_IMG_DATA")
+                self.assertFalse(source_dir.exists())
         finally:
             g.RESULTADOS_DIR = old_res
             g.FOTOS_DIR = old_fotos
             fs.RESULTADOS_DIR = old_fs_res
             fs.FOTOS_DIR = old_fs_fotos
 
-    def test_person_dudosos_included_in_person_album(self):
+    @patch('app.services.apple_service.load_apple_db', return_value={})
+    @patch('app.services.gallery_service.get_all_identities', return_value=[])
+    def test_person_dudosos_included_in_person_album(self, _identities, _apple):
         import json
         import app.globals as g
         import app.services.gallery_service as gs
