@@ -202,7 +202,7 @@ def set_gallery_cache(val):
                 try:
                     if 'tname' in locals() and os.path.exists(tname): os.remove(tname)
                 except Exception: pass
-        threading.Thread(target=_bg_dump, args=(val,), daemon=True).start()
+        threading.Thread(target=_bg_dump, args=(val,), daemon=False).start()
 
 def get_gallery_cache():
     global _GALLERY_CACHE

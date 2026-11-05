@@ -60,6 +60,10 @@
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
                     <span>Ajustes</span>
                 </button>
+                <button id="nav-btn-pending" class="nav-tab-item" onclick="filterPendingVideos()" style="display:none; border:none; background:rgba(255,159,10,0.15); border:1px solid rgba(255,159,10,0.3); color:#ff9f0a; padding:5px 12px; border-radius:7px; font-size:12px; font-weight:700; cursor:pointer; align-items:center; gap:6px; transition:all 0.15s;" title="Ver vídeos pendientes de analizar">
+                    <span>🎬</span>
+                    <span id="pending-videos-count-badge">1.217 por analizar</span>
+                </button>
                 <button id="nav-btn-wakelock" class="nav-tab-item" onclick="toggleWakeLock()" style="border:none; background:rgba(48,209,88,0.12); color:#30d158; padding:5px 12px; border-radius:7px; font-size:12px; font-weight:600; cursor:pointer; display:flex; align-items:center; gap:6px; transition:all 0.15s;" title="Mantener pantalla del móvil siempre encendida">
                     <span id="wakelock-icon" style="font-size:13px;">💡</span>
                     <span id="wakelock-text">Pantalla Activa: ON</span>
@@ -330,6 +334,6 @@
         </div>
     </div>
     <!-- Load modules -->
-    <script src="{{ url_for('static', filename='dist/app.js') }}?v=20261105_perf_v6"></script>
+    <script src="{{ url_for('static', filename='dist/app.js') }}?v=20261105_perf_v8"></script>
 
 {% endblock %}

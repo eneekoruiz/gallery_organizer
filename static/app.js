@@ -3293,6 +3293,7 @@ async function filterTimeline(year) {
 
                 _galleryFirstLoadDone = true;
                 renderTree();
+                if (typeof checkPendingVideos === 'function') checkPendingVideos();
 
                 // 2. Previsualizacion instantanea para mosaico de inicio (~5KB)
                 if (isFirstLoad) {
@@ -4305,6 +4306,19 @@ async function filterTimeline(year) {
                 osBadge.title = isApple ? 'Foto de Apple iPhone / iCloud' : (item.device_origin === 'android' ? 'Foto de Dispositivo Android' : 'Foto de Cámara / Otro origen');
 
                 card.appendChild(osBadge);
+
+                // Centroid cover badge or pending video badge
+                if (item.is_centroid_cover || (item.name && item.name.startsWith('!00_')) || (item.path && item.path.includes('!00_CARA_CENTROIDE'))) {
+                    const coverBadge = document.createElement('span');
+                    coverBadge.style.cssText = 'position:absolute; bottom:8px; left:8px; background:linear-gradient(135deg, #ffd700, #ff9f0a); color:#000; font-weight:800; font-size:10px; padding:2px 7px; border-radius:6px; box-shadow:0 2px 8px rgba(0,0,0,0.5); z-index:10;';
+                    coverBadge.textContent = '🌟 Centroide';
+                    card.appendChild(coverBadge);
+                } else if (item.needs_face_analysis || item.status === 'Pendiente de Análisis') {
+                    const pendBadge = document.createElement('span');
+                    pendBadge.style.cssText = 'position:absolute; bottom:8px; left:8px; background:rgba(255,159,10,0.95); color:#fff; font-weight:700; font-size:10px; padding:2px 7px; border-radius:6px; box-shadow:0 2px 8px rgba(0,0,0,0.5); z-index:10;';
+                    pendBadge.textContent = '☁️ Por Analizar';
+                    card.appendChild(pendBadge);
+                }
 
 
 
@@ -5969,6 +5983,18 @@ async function openLightbox(item) {
     }
 
     const dlOrig = document.getElementById('btn-download-orig');
+
+    const analyzeBtn = document.getElementById('btn-lightbox-analyze-video');
+    if (analyzeBtn) {
+        if (isCurrentVideo && (item.needs_face_analysis || item.status === 'Pendiente de Análisis' || item.category === '📋 Revisión / Por Organizar')) {
+            analyzeBtn.style.display = 'inline-flex';
+            const txt = document.getElementById('btn-lightbox-analyze-text');
+            if (txt) txt.textContent = 'Analizar Vídeo';
+            analyzeBtn.disabled = false;
+        } else {
+            analyzeBtn.style.display = 'none';
+        }
+    }
 
     if (dlOrig) {
 
@@ -12558,3 +12584,78 @@ function startVideoIndexerPolling() {
 
 
 
+
+
+// ── Pending Video On-Demand & Navigation ──────────────────────
+async function checkPendingVideos() {
+    try {
+        const res = await fetch('/api/gallery/pending_status');
+        if (res.ok) {
+            const data = await res.json();
+            const badge = document.getElementById('nav-btn-pending');
+            const countEl = document.getElementById('pending-videos-count-badge');
+            if (data.pending_videos > 0) {
+                if (badge) badge.style.display = 'inline-flex';
+                if (countEl) countEl.textContent = `${data.pending_videos.toLocaleString()} por analizar`;
+            } else {
+                if (badge) badge.style.display = 'none';
+            }
+        }
+    } catch (e) {}
+}
+window.checkPendingVideos = checkPendingVideos;
+
+function filterPendingVideos() {
+    if (typeof selectFolder === 'function') {
+        selectFolder('📋 Revisión / Por Organizar', '🎬 Vídeos Sin Rostro');
+    } else if (typeof renderGrid === 'function') {
+        renderGrid('📋 Revisión / Por Organizar', '🎬 Vídeos Sin Rostro');
+    }
+}
+window.filterPendingVideos = filterPendingVideos;
+
+async function analyzeLightboxVideo() {
+    if (!currentFileObj || !currentFileObj.path) return;
+    const btn = document.getElementById('btn-lightbox-analyze-video');
+    const txt = document.getElementById('btn-lightbox-analyze-text');
+    if (btn) btn.disabled = true;
+    if (txt) txt.textContent = '⏳ Analizando...';
+    
+    if (typeof showToast === 'function') {
+        showToast("Extrayendo fotograma y reconociendo caras...", false);
+    }
+    try {
+        const res = await fetch('/api/media/analyze_video', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: currentFileObj.path })
+        });
+        const data = await res.json();
+        if (data.success) {
+            currentFileObj.needs_face_analysis = false;
+            currentFileObj.status = 'Analizado';
+            const count = (data.detections && Array.isArray(data.detections)) ? data.detections.length : 0;
+            if (typeof showToast === 'function') {
+                showToast(`✅ Vídeo analizado exitosamente (${count} caras)`, false);
+            }
+            if (btn) btn.style.display = 'none';
+            checkPendingVideos();
+            if (typeof loadFacesInLightbox === 'function') {
+                loadFacesInLightbox(currentFileObj);
+            }
+        } else {
+            if (typeof showToast === 'function') {
+                showToast("No se detectaron rostros en la muestra.", false);
+            }
+            if (txt) txt.textContent = 'Reintentar';
+            if (btn) btn.disabled = false;
+        }
+    } catch (err) {
+        if (typeof showToast === 'function') {
+            showToast("Error al analizar: " + err.message, true);
+        }
+        if (txt) txt.textContent = 'Reintentar';
+        if (btn) btn.disabled = false;
+    }
+}
+window.analyzeLightboxVideo = analyzeLightboxVideo;

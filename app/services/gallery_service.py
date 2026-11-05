@@ -75,14 +75,11 @@ def get_gallery():
             FOTOS_DIR = pathlib.Path(l_path) / 'Fotos'
             RESULTADOS_DIR = pathlib.Path(l_path) / 'Resultados'
     
+    from flask import has_request_context, has_app_context
+    force_reload = (request.args.get('force') == 'true') if has_request_context() else False
     gallery_cache = get_gallery_cache()
-    if gallery_cache is not None and request.args.get('force') != 'true':
-        return jsonify(gallery_cache)
-
-    # If cached and not forced, return cached instantly
-    gallery_cache = get_gallery_cache()
-    if gallery_cache is not None and request.args.get('force') != 'true':
-        return jsonify(gallery_cache)
+    if gallery_cache is not None and not force_reload:
+        return jsonify(gallery_cache) if has_app_context() else gallery_cache
 
     gallery = {}
     valid_exts = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif", ".mp4", ".mov", ".avi"}
@@ -366,7 +363,11 @@ def get_gallery():
         k = (cat, ident, item['path'])
         if k not in added_paths:
             added_paths.add(k)
-            gallery[cat][ident].append(item)
+            if item.get('name', '').startswith('!00_') or Path(item.get('path', '')).name.startswith('!00_'):
+                item['is_centroid_cover'] = True
+                gallery[cat][ident].insert(0, item)
+            else:
+                gallery[cat][ident].append(item)
 
     for (cat, ident, filename), item in seen_files.items():
         # Items from smart album folders skip person indexing
@@ -487,7 +488,10 @@ def get_gallery():
     set_gallery_cache(gallery)
     result = dict(gallery)
     set_gallery_cache(result)
-    return jsonify(result)
+    from flask import has_app_context
+    if has_app_context():
+        return jsonify(result)
+    return result
 
 
 def api_metadata():
@@ -823,6 +827,9 @@ def find_avatar_image(target_dir):
     if not target_dir: return None
     if isinstance(target_dir, str): target_dir = Path(target_dir)
     if not target_dir.exists(): return None
+    centroid_cover = target_dir / "!00_CARA_CENTROIDE.jpg" if target_dir.is_dir() else None
+    if centroid_cover and centroid_cover.exists():
+        return str(centroid_cover.resolve())
     if target_dir.is_file() and target_dir.suffix.lower() in valid_exts:
         return str(target_dir.resolve())
     if target_dir.is_dir():
