@@ -93,9 +93,12 @@ def update_confirmed_sample(identities, identity, sample_key, feature):
 
 def rank_known_identities(feature, centroids, profiles):
     """Rank distinct people, using confirmed appearance profiles where available."""
+    from app.services.group_album_service import is_group_album
     scores = {}
     for key, fallback in centroids.items():
-        if not isinstance(key, tuple) or len(key) != 2 or "Persona Nueva" in key[1]:
+        if (not isinstance(key, tuple) or len(key) != 2 or
+                key[0] not in {'Conocidos', 'Amigos', 'Familia', 'Familiares', 'YO', 'Profesores'} or
+                key[1].startswith(('Persona Nueva', 'Falso_Positivo', 'Ignorar', 'Excluido')) or is_group_album(key[1])):
             continue
         identity = key[1]
         profile = profiles.get(identity)

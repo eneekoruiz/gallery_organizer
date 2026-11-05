@@ -12,6 +12,14 @@ from app.services.face_learning import (
 
 
 class LearningTests(unittest.TestCase):
+    def test_non_person_albums_and_test_vectors_are_not_face_candidates(self):
+        first, other = np.eye(128, dtype=np.float32)[:2]
+        centroids = {('Conocidos', 'Ana'): first, ('Test', 'Test'): other,
+                     ('Familia', 'Familia conmigo'): other, ('Eventos', 'Fiesta'): other,
+                     ('Mascotas', 'Ney'): other, ('Conocidos', 'Falso_Positivo 1'): other}
+        ranked = rank_known_identities(other, centroids, {})
+        self.assertEqual([key[1] for score, key in ranked], ['Ana'])
+
     def test_reloading_partial_manual_profiles_preserves_other_reference_people(self):
         import app.globals as g
         first, second = np.eye(128, dtype=np.float32)[:2]
