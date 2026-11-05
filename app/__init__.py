@@ -36,6 +36,29 @@ def create_app(config=None):
     app.register_blueprint(api_sharing_bp)
     app.register_blueprint(api_events_bp)
     app.register_blueprint(api_config_bp)
+
+    import gzip
+    from flask import request
+
+    @app.after_request
+    def compress_response(response):
+        if getattr(response, 'direct_passthrough', False):
+            return response
+        accept_encoding = request.headers.get('Accept-Encoding', '')
+        if ('gzip' in accept_encoding and 
+            response.status_code == 200 and 
+            'Content-Encoding' not in response.headers and
+            response.mimetype in {'application/json', 'text/html', 'text/css', 'application/javascript'}):
+            try:
+                data = response.get_data()
+                if len(data) > 1024:
+                    compressed = gzip.compress(data, compresslevel=6)
+                    response.set_data(compressed)
+                    response.headers['Content-Encoding'] = 'gzip'
+                    response.headers['Content-Length'] = len(compressed)
+            except Exception:
+                pass
+        return response
     
     # Iniciar pre-generador de miniaturas en segundo plano (Modo Eco / No saturación)
     def start_bg_thumbnail_pregenerator():

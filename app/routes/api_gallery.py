@@ -9,7 +9,46 @@ def api_identities_route():
 
 @api_gallery_bp.route('/gallery')
 def get_gallery_route():
+    cat = request.args.get('cat') or request.args.get('category')
+    ident = request.args.get('ident') or request.args.get('identity')
+    if cat and ident:
+        from app.globals import get_gallery_cache
+        cache = get_gallery_cache()
+        if cache and cat in cache and ident in cache[cat]:
+            return jsonify({cat: {ident: cache[cat][ident]}})
+        return jsonify({cat: {ident: []}})
     return get_gallery()
+
+@api_gallery_bp.route('/gallery/preview')
+def get_gallery_preview_route():
+    from app.globals import get_gallery_cache
+    cache = get_gallery_cache()
+    if not cache:
+        from app.services.gallery_service import get_gallery
+        get_gallery()
+        cache = get_gallery_cache()
+    if not cache:
+        return jsonify({})
+    preview = {}
+    for cat, idents in cache.items():
+        if cat == '__smart_album__':
+            continue
+        total = 0
+        samples = []
+        for ident, items in idents.items():
+            if not isinstance(items, list):
+                continue
+            total += len(items)
+            for it in items:
+                if len(samples) < 4 and it.get('type') != 'video':
+                    samples.append(it.get('path'))
+        if total > 0:
+            preview[cat] = {
+                "total": total,
+                "idents_count": len(idents),
+                "samples": samples
+            }
+    return jsonify(preview)
 
 @api_gallery_bp.route('/gallery/refresh', methods=['GET', 'POST'])
 def refresh_gallery_route():
@@ -23,6 +62,10 @@ def get_gallery_structure_route():
     Ultra-lightweight (~5KB) for instant sidebar rendering."""
     from app.globals import get_gallery_cache
     cache = get_gallery_cache()
+    if cache is None:
+        from app.services.gallery_service import get_gallery
+        get_gallery()
+        cache = get_gallery_cache()
     if cache is None:
         return jsonify({})
     structure = {}
