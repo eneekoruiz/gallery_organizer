@@ -3245,9 +3245,20 @@ async function filterTimeline(year) {
                 }, 300);
 
             } else if (overlay) {
-
                 overlay.style.display = 'none';
+            }
 
+            // GUARDA-TIEMPO DE SEGURIDAD (WATCHDOG): Garantiza que NUNCA se bloquee la pantalla mas de 2s
+            if (isFirstLoad && overlay) {
+                setTimeout(() => {
+                    if (overlay && overlay.style.display !== 'none') {
+                        overlay.style.opacity = '0';
+                        setTimeout(() => {
+                            overlay.style.visibility = 'hidden';
+                            overlay.style.display = 'none';
+                        }, 200);
+                    }
+                }, 2000);
             }
 
 
@@ -3398,13 +3409,15 @@ async function filterTimeline(year) {
                 }
 
             } catch (err) {
-
                 if (progressInterval) clearInterval(progressInterval);
-
-                if (isFirstLoad && statusText) statusText.textContent = "Error cargando la fototeca.";
-
-                showToast("Error de conexión al cargar la biblioteca.", true);
-
+                if (isFirstLoad && overlay) {
+                    overlay.style.opacity = '0';
+                    setTimeout(() => {
+                        overlay.style.visibility = 'hidden';
+                        overlay.style.display = 'none';
+                    }, 200);
+                }
+                console.warn("Aviso en carga progresiva:", err);
             }
 
         }
