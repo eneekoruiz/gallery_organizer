@@ -9,7 +9,10 @@ def decode_image(data):
     encoded = np.frombuffer(data, dtype=np.uint8)
     if not encoded.size:
         return None
-    image = cv2.imdecode(encoded, cv2.IMREAD_COLOR)
+    try:
+        image = cv2.imdecode(encoded, cv2.IMREAD_COLOR)
+    except cv2.error:
+        image = None
     if image is not None:
         return image
     from PIL import Image, ImageOps, UnidentifiedImageError
