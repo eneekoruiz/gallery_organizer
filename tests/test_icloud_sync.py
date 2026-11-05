@@ -3,12 +3,21 @@ import tempfile
 import unittest
 from pathlib import Path
 from threading import Event
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from app.services import apple_service, icloud_sync_service
 
 
 class ICloudSyncTests(unittest.TestCase):
+    def test_hydrated_videos_are_read_before_cloud_videos_and_smaller_files_first(self):
+        def entry(name, size, flags):
+            return SimpleNamespace(name=name, stat=lambda **_: SimpleNamespace(st_size=size, st_file_attributes=flags))
+        entries = [entry('cloud.mov', 1, 0x400000), entry('large.mov', 1000, 0),
+                   entry('small.mov', 10, 0), entry('cloud.jpg', 1, 0x1000), entry('local.jpg', 100, 0)]
+        self.assertEqual([e.name for e in sorted(entries, key=icloud_sync_service._icloud_read_priority)],
+                         ['local.jpg', 'cloud.jpg', 'small.mov', 'large.mov', 'cloud.mov'])
+
     def test_checkpoint_roundtrip_and_encoding_failure_preserve_previous_index(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / 'apple_db.json'

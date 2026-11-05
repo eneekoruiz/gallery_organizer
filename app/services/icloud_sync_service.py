@@ -107,6 +107,16 @@ def _ensure_icloud_client_running():
     except Exception:
         pass
 
+def _icloud_read_priority(source):
+    video = Path(source.name).suffix.lower() in {'.mp4', '.mov', '.avi'}
+    try:
+        info = source.stat(follow_symlinks=False)
+    except OSError:
+        return (int(video) * 2 + 1, float('inf'))
+    recall = getattr(info, 'st_file_attributes', 0) & 0x441000
+    return (int(video) * 2 + int(bool(recall)), info.st_size)
+
+
 def _read_icloud_media(path):
     before = os.stat(path)
     revision = (before.st_size, before.st_mtime_ns)
@@ -278,18 +288,7 @@ def _run_icloud_worker(batch_size=None):
         if (changed or previous.get("size", info.st_size) != info.st_size
                 or previous.get("analysis_profile", analysis_profile) != analysis_profile):
             pending_files.append(name)
-    def read_priority(name):
-        if Path(name).suffix.lower() in {".mp4", ".mov", ".avi"}:
-            return (2, 0)
-        try:
-            info = all_icloud[name].stat(follow_symlinks=False)
-        except OSError:
-            return (1, float("inf"))
-        # Offline, recall on open, or recall on data access.
-        recall = getattr(info, "st_file_attributes", 0) & 0x441000
-        return (int(bool(recall)), info.st_size)
-
-    pending_files.sort(key=read_priority)
+    pending_files.sort(key=lambda name: _icloud_read_priority(all_icloud[name]))
     total_pending = len(pending_files)
     already_processed = len(all_icloud) - total_pending
     if batch_size is not None:
