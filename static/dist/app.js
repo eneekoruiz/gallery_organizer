@@ -68,6 +68,7 @@ window.toggleSidebar = function(force) {
 
 
 
+window.toggleMobileLightboxSheet = function(force) { return window.toggleLightboxPanel(force); };
 window.toggleLightboxPanel = function(force) {
 
     const panel = document.getElementById('metadata-panel');
@@ -6584,32 +6585,25 @@ async function runAnalysis() {
 
                         
 
-                        zoomLevel = 4.0; // Fixed zoom 400%
-
-                        panX = -(offX * renderScale) * zoomLevel;
-
-                        panY = -(offY * renderScale) * zoomLevel;
-
-                        
-
-                        applyZoomTransform();
-
+                        if (window.innerWidth > 820) {
+                            if (zoomLevel < 1.3) {
+                                zoomLevel = 1.3;
+                                panX = -(offX * renderScale) * zoomLevel;
+                                panY = -(offY * renderScale) * zoomLevel;
+                                applyZoomTransform();
+                            }
+                        }
                     }
-
                 }
-
             }
-
             
-
-            const card = document.getElementById(`person-card-${faceNum}`);
-
+            const card = document.getElementById("person-card-" + faceNum) || document.getElementById("pcard-" + faceNum);
             if (card) {
-
                 card.style.background = 'rgba(10, 132, 255, 0.2)';
-
                 card.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-
+            }
+            if (window.innerWidth <= 820 && typeof toggleMobileLightboxSheet === 'function') {
+                toggleMobileLightboxSheet(true);
             }
 
         }
@@ -6760,58 +6754,38 @@ async function runAnalysis() {
 
                 highlightFace(faceNum);
 
-                
-
-                // Zoom dinámico al hacer clic en la caja si no está zoomeado
-
-                if (zoomLevel === 1.0) {
-
-                    zoomLevel = 2.5;
-
-                    const percCenterX = (face.x + face.width / 2) / intrinsicWidth;
-
-                    const percCenterY = (face.y + face.height / 2) / intrinsicHeight;
-
-                    const container = document.getElementById('lb-media-container');
-
-                    const cw = container.offsetWidth;
-
-                    const ch = container.offsetHeight;
-
-                    panX = (cw / 2 - cw * percCenterX) * zoomLevel;
-
-                    panY = (ch / 2 - ch * percCenterY) * zoomLevel;
-
-                    applyZoomTransform();
-
-                }
-
-                
-
-                // Mostrar desplegable rápido directamente sobre la foto
-
-                let existingMenu = box.querySelector('.lb-box-popup');
-
-                if (existingMenu) {
-
-                    existingMenu.remove();
-
+                // En movil: abrir directamente la barra inferior nativa y hacer scroll a la cara (cero popups gigantes sobre la imagen)
+                if (window.innerWidth <= 820) {
+                    if (typeof toggleMobileLightboxSheet === 'function') {
+                        toggleMobileLightboxSheet(true);
+                    }
+                    const pcard = document.getElementById("pcard-" + faceNum) || document.getElementById("person-card-" + faceNum);
+                    if (pcard) {
+                        pcard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        pcard.style.transition = 'all 0.3s ease';
+                        pcard.style.background = 'rgba(10, 132, 255, 0.25)';
+                        pcard.style.borderColor = '#0a84ff';
+                        setTimeout(() => {
+                            pcard.style.background = '';
+                            pcard.style.borderColor = '';
+                        }, 1500);
+                    }
                     return;
-
                 }
 
-                
+                // En escritorio: contra-escalar el menu popup para que SIEMPRE mida 220px exactos independientemente del zoom
+                let existingMenu = box.querySelector('.lb-box-popup');
+                if (existingMenu) {
+                    existingMenu.remove();
+                    return;
+                }
 
                 document.querySelectorAll('.lb-box-popup').forEach(m => m.remove());
 
-                
-
+                const curZoom = zoomLevel || 1.0;
                 const popup = document.createElement('div');
-
                 popup.className = 'lb-box-popup';
-
-                popup.style.cssText = 'position:absolute; bottom:-65px; left:50%; transform:translateX(-50%); z-index:100; background:rgba(20,20,22,0.95); backdrop-filter:blur(20px); padding:8px; border-radius:12px; border:1px solid rgba(255,255,255,0.25); box-shadow:0 8px 30px rgba(0,0,0,0.6); display:flex; flex-direction:column; gap:6px; min-width:210px;';
-
+                popup.style.cssText = 'position:absolute; bottom:-65px; left:50%; transform:translateX(-50%) scale(' + (1 / curZoom) + '); transform-origin:top center; z-index:100; background:rgba(20,20,22,0.95); backdrop-filter:blur(20px); padding:8px; border-radius:12px; border:1px solid rgba(255,255,255,0.25); box-shadow:0 8px 30px rgba(0,0,0,0.6); display:flex; flex-direction:column; gap:6px; width:220px; max-width:240px; font-size:11px;';
                 
 
                 let pathParts1 = currentFileObj.path.split(/[\\/]/);
@@ -7717,11 +7691,11 @@ async function runAnalysis() {
             if(data.success) {
 
                 if (data.new_path && currentFileObj) {
-
                     currentFileObj.path = data.new_path;
-
+                    document.querySelectorAll('.lb-bounding-box').forEach(b => {
+                        b.dataset.path = data.new_path;
+                    });
                 }
-
                 
 
                 if (idObj.identidad === 'Falso_Positivo' || idObj.identidad === 'Ignorar_Irrelevante') {
@@ -12022,10 +11996,15 @@ window.confirmDudosoPhoto = async function(isConfirm) {
 
                 currentFileObj.source = 'Dataset + ✏️ Manual';
 
+                if (data.new_path && currentFileObj) {
+                    currentFileObj.path = data.new_path;
+                    document.querySelectorAll('.lb-bounding-box').forEach(b => {
+                        b.dataset.path = data.new_path;
+                    });
+                }
+                const dudosoBanner = document.getElementById('lb-dudoso-banner');
+                if (dudosoBanner) dudosoBanner.remove();
                 if (window.renderGrid) window.renderGrid(currentCat, currentIdent);
-
-                closeLightbox();
-
             }
 
         } catch(e) {

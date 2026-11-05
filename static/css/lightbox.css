@@ -286,3 +286,21 @@
         flex-shrink: 0 !important;
     }
 }
+
+
+/* --- Face Confirmation Popup (Compact Desktop & Mobile Bottom Sheet Cleanliness) --- */
+.lb-box-popup {
+    max-width: 240px !important;
+    width: 220px !important;
+    box-sizing: border-box !important;
+    pointer-events: auto !important;
+}
+
+@media (max-width: 820px) {
+    .lb-box-popup {
+        display: none !important;
+        visibility: hidden !important;
+        opacity: 0 !important;
+        pointer-events: none !important;
+    }
+}

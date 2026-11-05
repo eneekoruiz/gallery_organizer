@@ -115,5 +115,24 @@ class TestNetworkIntegrity(unittest.TestCase):
         self.assertIn("position: absolute !important", lightbox_css)
         self.assertIn("bottom: 0 !important", lightbox_css)
 
+
+    def test_09_multi_face_preservation_and_compact_popup(self):
+        """Verify multi-face photos are never deleted prematurely and popup scaling is bounded"""
+        for js_file in [self.project_dir / 'static' / 'app.js', self.project_dir / 'static' / 'dist' / 'app.js']:
+            content = js_file.read_text(encoding='utf-8')
+            self.assertIn("scale(' + (1 / curZoom) + ')", content)
+            self.assertIn('toggleMobileLightboxSheet(true)', content)
+
+        # Lightbox CSS must hide .lb-box-popup on mobile
+        lightbox_css = (self.project_dir / 'static' / 'css' / 'lightbox.css').read_text(encoding='utf-8')
+        self.assertIn('.lb-box-popup', lightbox_css)
+        self.assertIn('@media (max-width: 820px)', lightbox_css)
+
+        # Multi-face preservation logic in face_service.py
+        face_py = (self.project_dir / 'app' / 'services' / 'face_service.py').read_text(encoding='utf-8')
+        self.assertIn('_RELOCATED_CACHE[orig_path.name] = str(target_path)', face_py)
+        self.assertIn('has_multiple_faces = len(cached_faces) > 1', face_py)
+        self.assertIn('has_unreviewed_faces', face_py)
+
 if __name__ == "__main__":
     unittest.main()

@@ -768,26 +768,51 @@ def apply_correction_to_file(filepath, new_categoria, new_identidad, face_data, 
                         destination.flush()
                         os.fsync(destination.fileno())
 
-            # Eliminar copia antigua de la carpeta anterior si se reasigno a otra persona
+            # Registrar SIEMPRE la reubicacion en _RELOCATED_CACHE para que ninguna peticion posterior falle con 404
+            from app.utils.files import _RELOCATED_CACHE
+            _RELOCATED_CACHE[orig_path.name] = str(target_path)
+            _RELOCATED_CACHE[str(orig_path)] = str(target_path)
+            try:
+                _RELOCATED_CACHE[str(orig_path.resolve())] = str(target_path)
+            except Exception:
+                pass
+
+            # Eliminar copia antigua de la carpeta anterior SOLO si no quedan caras pendientes o si no es foto multigrupal
             if Path(target_path).exists() and Path(orig_path).exists() and Path(orig_path).resolve() != Path(target_path).resolve():
                 old_folder_name = orig_path.parent.name
                 old_parent_lower = str(orig_path.parent).lower().replace('\\', '/')
                 is_transient_folder = any(kw in old_parent_lower for kw in ('_dudoso', 'dudoso', 'revision', 'sin_nombre', 'para revisar', 'desconocid'))
                 cached_faces = faces_cache.get(file_key, []) or overrides.get(file_key, [])
+                has_multiple_faces = len(cached_faces) > 1
+                has_unreviewed_faces = any(
+                    (f.get('identity') in (None, '', 'Desconocido', 'Dudoso', 'Sin Identificar', 'Sin Nombre') or not f.get('is_manual'))
+                    for f in cached_faces if isinstance(f, dict)
+                )
                 old_person_still_present = any(
                     (f.get('identity') == old_folder_name or f.get('identity') == f'C. {old_folder_name}')
                     for f in cached_faces if isinstance(f, dict)
                 )
-                # En Resultados se mueve limpiamente; en Fotos se protege salvo que sea carpeta transitoria
-                if (not is_manual_source or is_transient_folder) and (is_transient_folder or not old_person_still_present):
+                
+                # REGLA DE ORO: Si una foto tiene multiples caras (ej: 8 caras), NO eliminar el archivo original
+                # de la carpeta mientras el usuario revisa o queden caras por confirmar
+                should_delete = False
+                if not has_multiple_faces or not has_unreviewed_faces:
+                    if is_transient_folder:
+                        should_delete = not has_unreviewed_faces
+                    elif not is_manual_source and not old_person_still_present:
+                        should_delete = True
+
+                if should_delete:
                     try:
                         safe_remove_file(orig_path)
                     except Exception as e:
                         print(f'[REASSIGN] Error eliminando copia antigua {orig_path}: {e}')
                         
-    # Update faces_cache key immediately (in-memory, fast)
-    if str(target_path) != filepath and get_file_key(filepath) in faces_cache:
-        faces_cache[get_file_key(target_path)] = faces_cache.pop(get_file_key(filepath))
+    # Update faces_cache key immediately (in-memory, fast): mantener AMBAS claves para que nunca se pierda
+    old_fkey = get_file_key(filepath)
+    new_fkey = get_file_key(target_path)
+    if str(target_path) != filepath and old_fkey in faces_cache:
+        faces_cache[new_fkey] = faces_cache[old_fkey]
 
     # All slow GC + cleanup runs in background so response is instant
     return str(target_path)

@@ -221,7 +221,7 @@ def find_relocated_file(filepath):
         return None
 
     # 2. Check fast memory cache
-    cached = _RELOCATED_CACHE.get(fname)
+    cached = _RELOCATED_CACHE.get(str(filepath)) or _RELOCATED_CACHE.get(fname)
     if cached and os.path.isfile(cached):
         return cached
 
