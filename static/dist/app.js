@@ -909,6 +909,8 @@ window.stopBgAutoClassify = function() { window.stopEngine(); };
 
 function _startEngineSSE() {
 
+    if (!_enginePanelOpen) return; // Solo conectar si el panel esta abierto
+
     if (_engineSSE) return; // Ya conectado
 
     try {
@@ -1156,8 +1158,6 @@ document.addEventListener('DOMContentLoaded', () => {
     setTimeout(() => {
 
         _pollEngineStatus();
-
-        _startEngineSSE();
 
     }, 1500);
 
@@ -6377,6 +6377,9 @@ async function runAnalysis() {
 
             let data;
 
+            const abortCtrl = new AbortController();
+            const abortTimer = setTimeout(() => abortCtrl.abort(), 12000);
+
             try {
 
                 const res = await fetch('/api/analyze', {
@@ -6385,17 +6388,20 @@ async function runAnalysis() {
 
                     headers: {'Content-Type': 'application/json'},
 
-                    body: JSON.stringify({ path: currentFileObj.path, timestamp: timestamp, force: false })
+                    body: JSON.stringify({ path: currentFileObj.path, timestamp: timestamp, force: false }),
+                    signal: abortCtrl.signal
 
                 });
+                clearTimeout(abortTimer);
 
                 data = await res.json();
 
             } catch (err) {
+                clearTimeout(abortTimer);
 
                 console.error(err);
 
-                cardsContainer.innerHTML = '<div style="padding:20px; text-align:center; color:#ff453a;">Error de conexión. Reintentando...</div>';
+                cardsContainer.innerHTML = '<div style="padding:20px; text-align:center; color:#ff9f0a;">Análisis en curso o tiempo de espera agotado.<br><button onclick="runAnalysis()" style="margin-top:10px; padding:6px 14px; background:rgba(10,132,255,0.2); border:1px solid #0a84ff; color:#0a84ff; border-radius:15px; cursor:pointer; font-weight:600;">🔄 Reintentar detección</button></div>';
 
                 return;
 
@@ -7438,7 +7444,7 @@ async function runAnalysis() {
 
                     if (data.success) {
 
-                        showToast('Recuadro guardado. Actualizando galería...');
+                        showToast('Recuadro guardado correctamente.');
 
                         if (data.new_path) {
 
@@ -7446,7 +7452,7 @@ async function runAnalysis() {
 
                         }
 
-                        loadGallery();
+                        // loadGallery() omitido para evitar congelar visor
 
                         // Mantener visor abierto en vídeo para seguir editando caras
 

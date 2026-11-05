@@ -2353,27 +2353,32 @@ def api_self_audit_status():
 
 
 def api_self_audit_stream():
-    """SSE endpoint: envía actualizaciones en vivo del motor cada 3 segundos."""
+    """SSE endpoint: envia actualizaciones en vivo del motor sin bloquear hilos infinitamente."""
     from flask import Response
     def _sse_gen():
-        while True:
-            is_alive = _ENGINE_THREAD is not None and _ENGINE_THREAD.is_alive()
-            payload = json.dumps({
-                "running": _ENGINE_STATE["running"] and is_alive,
-        "review_only": True,
-        "confirmed_identities": sum(v.get("provenance") == HUMAN and bool(v.get("confirmed_samples")) for v in known_faces.values()),
-        "total_suggested": _ENGINE_STATE.get("total_suggested", 0),
-                "phase": _ENGINE_STATE["phase"],
-                "cycle": _ENGINE_STATE["cycle"],
-                "total_scanned": _ENGINE_STATE["total_scanned"],
-                "total_fixed": _ENGINE_STATE["total_fixed"],
-                "total_moved_to_known": _ENGINE_STATE["total_moved_to_known"],
-                "total_moved_to_review": _ENGINE_STATE["total_moved_to_review"],
-                "last_scanned_file": _ENGINE_STATE["last_scanned_file"],
-                "last_actions": _ENGINE_STATE["last_actions"][-8:],
-            }, ensure_ascii=False)
-            yield f"data: {payload}\n\n"
-            time.sleep(3)
+        try:
+            for _ in range(12):  # Maximo 12 iteraciones (~36s) para reciclar hilos
+                is_alive = _ENGINE_THREAD is not None and _ENGINE_THREAD.is_alive()
+                payload = json.dumps({
+                    "running": _ENGINE_STATE["running"] and is_alive,
+                    "review_only": True,
+                    "confirmed_identities": sum(v.get("provenance") == HUMAN and bool(v.get("confirmed_samples")) for v in known_faces.values()),
+                    "total_suggested": _ENGINE_STATE.get("total_suggested", 0),
+                    "phase": _ENGINE_STATE["phase"],
+                    "cycle": _ENGINE_STATE["cycle"],
+                    "total_scanned": _ENGINE_STATE["total_scanned"],
+                    "total_fixed": _ENGINE_STATE["total_fixed"],
+                    "total_moved_to_known": _ENGINE_STATE["total_moved_to_known"],
+                    "total_moved_to_review": _ENGINE_STATE["total_moved_to_review"],
+                    "last_scanned_file": _ENGINE_STATE["last_scanned_file"],
+                    "last_actions": _ENGINE_STATE["last_actions"][-8:],
+                }, ensure_ascii=False)
+                yield f"data: {payload}\n\n"
+                if not (_ENGINE_STATE["running"] and is_alive):
+                    break
+                time.sleep(3)
+        except GeneratorExit:
+            pass
 
     return Response(_sse_gen(), mimetype="text/event-stream",
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})

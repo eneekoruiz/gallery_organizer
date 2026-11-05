@@ -217,14 +217,15 @@ def get_gallery_cache():
             pass
     return None
 
-def clear_gallery_cache():
+def clear_gallery_cache(unlink_file=False):
     global _GALLERY_CACHE
     _GALLERY_CACHE = None
-    try:
-        if GALLERY_CACHE_FILE.exists():
-            GALLERY_CACHE_FILE.unlink()
-    except Exception:
-        pass
+    if unlink_file:
+        try:
+            if GALLERY_CACHE_FILE.exists():
+                GALLERY_CACHE_FILE.unlink()
+        except Exception:
+            pass
 
 _GALLERY_SCAN_PROGRESS = 0.0
 
