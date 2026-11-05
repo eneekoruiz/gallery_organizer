@@ -123,7 +123,19 @@ def _read_icloud_media(path):
     before = os.stat(path)
     revision = (before.st_size, before.st_mtime_ns)
     if Path(path).suffix.lower() in {".mp4", ".mov", ".avi"}:
-        sha256 = content_sha256(path)
+        if before.st_size > 2 * 1024 * 1024:
+            h = hashlib.sha256()
+            h.update(f"v1_size:{before.st_size}".encode("utf-8"))
+            with open(path, "rb") as vf:
+                h.update(vf.read(262144))
+                try:
+                    vf.seek(-262144, os.SEEK_END)
+                    h.update(vf.read(262144))
+                except Exception:
+                    pass
+            sha256 = h.hexdigest()
+        else:
+            sha256 = content_sha256(path)
         cap = cv2.VideoCapture(path, cv2.CAP_FFMPEG, [
             cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 25000,
             cv2.CAP_PROP_READ_TIMEOUT_MSEC, 12000,
@@ -146,7 +158,7 @@ def _read_icloud_media(path):
     return (image, sha256, revision) if image is not None else None
 
 
-def _prefetch_icloud_media(paths, stop, workers=4):
+def _prefetch_icloud_media(paths, stop, workers=6):
     """Keep a small window of reads in flight while one consumer classifies."""
     paths = iter(paths)
     with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="iCloudRead") as executor:

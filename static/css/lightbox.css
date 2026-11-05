@@ -257,22 +257,32 @@
     }
 
     #lb-topbar {
-        padding: 8px 10px !important;
+        padding: 6px 8px !important;
         gap: 6px !important;
         overflow-x: auto !important;
         -webkit-overflow-scrolling: touch !important;
         scrollbar-width: none !important;
+        flex-wrap: nowrap !important;
     }
     #lb-topbar::-webkit-scrollbar {
         display: none !important;
     }
-    #lb-filename {
+    #lb-topbar > div:first-child {
+        flex: 0 0 auto !important;
         max-width: 110px !important;
-        font-size: 11.5px !important;
+        gap: 6px !important;
+    }
+    #lb-filename {
+        max-width: 65px !important;
+        font-size: 11px !important;
+    }
+    #lb-counter {
+        font-size: 10px !important;
     }
     #lb-topbar button, #lb-topbar a {
-        padding: 5px 9px !important;
-        font-size: 11.5px !important;
+        padding: 4px 8px !important;
+        font-size: 11px !important;
         white-space: nowrap !important;
+        flex-shrink: 0 !important;
     }
 }
