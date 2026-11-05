@@ -1,4 +1,5 @@
 import hashlib
+from app.utils.images import decode_image
 from app.services.content_analysis_service import model_version, load_analysis, save_analysis
 from app.services.face_learning import HUMAN, face_rectangle, aligned_feature, normalized_feature, confirmed_centroid
 from app.utils.files import get_file_key
@@ -152,7 +153,7 @@ def api_analyze():
                 return jsonify({"error": "No se pudo leer fotograma de vídeo"}), 500
         else:
             file_bytes = np.fromfile(str(filepath), dtype=np.uint8)
-            img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+            img = decode_image(file_bytes)
             
         if img is not None and detector is not None and recognizer is not None:
             height, width, _ = img.shape
@@ -597,7 +598,7 @@ def apply_correction_to_file(filepath, new_categoria, new_identidad, face_data, 
 
     if new_identidad not in ["Falso_Positivo", "Ignorar_Irrelevante"] and face_data:
         try:
-            image = cv2.imdecode(np.fromfile(str(orig_path), dtype=np.uint8), cv2.IMREAD_COLOR)
+            image = decode_image(np.fromfile(str(orig_path), dtype=np.uint8))
             if image is not None and detector is not None and recognizer is not None:
                 with cache_lock:
                     feature = None
@@ -854,7 +855,7 @@ def api_correct():
                     h_orig = safe_float(face_data.get('img_height'), 1.0)
                     if w_orig <= 1.0 or h_orig <= 1.0:
                         try:
-                            img_orig = cv2.imdecode(np.fromfile(str(orig_path), dtype=np.uint8), cv2.IMREAD_COLOR)
+                            img_orig = decode_image(np.fromfile(str(orig_path), dtype=np.uint8))
                             if img_orig is not None:
                                 h_orig, w_orig, _ = img_orig.shape
                         except: pass
@@ -874,7 +875,7 @@ def api_correct():
                                 dup_faces = faces_cache.get(str(other_file), [])
                                 if not dup_faces:
                                     try:
-                                        img_dup = cv2.imdecode(np.fromfile(str(other_file), dtype=np.uint8), cv2.IMREAD_COLOR)
+                                        img_dup = decode_image(np.fromfile(str(other_file), dtype=np.uint8))
                                         if img_dup is not None:
                                             h_d, w_d, _ = img_dup.shape
                                             detector.setInputSize((w_d, h_d))
@@ -911,7 +912,7 @@ def api_correct():
                                     w_dup = w_orig
                                     h_dup = h_orig
                                     try:
-                                        img_dup_meta = cv2.imdecode(np.fromfile(str(other_file), dtype=np.uint8), cv2.IMREAD_COLOR)
+                                        img_dup_meta = decode_image(np.fromfile(str(other_file), dtype=np.uint8))
                                         if img_dup_meta is not None:
                                             h_dup, w_dup, _ = img_dup_meta.shape
                                     except: pass
@@ -1208,7 +1209,7 @@ def api_relearn_cascade():
                     if img_file.suffix.lower() not in valid_exts: continue
                     try:
                         file_bytes = np.fromfile(str(img_file), dtype=np.uint8)
-                        img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+                        img = decode_image(file_bytes)
                         if img is None: continue
                         
                         h, w, _ = img.shape
@@ -1337,7 +1338,7 @@ def api_rebuild_clean_centroids():
                 if not Path(filepath).exists():
                     continue
                 file_bytes = np.fromfile(filepath, dtype=np.uint8)
-                img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+                img = decode_image(file_bytes)
                 if img is None: continue
                 
                 h, w, _ = img.shape
@@ -1450,7 +1451,7 @@ def api_detect_deep():
         
     try:
         file_bytes = np.fromfile(filepath, dtype=np.uint8)
-        img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+        img = decode_image(file_bytes)
         if img is None:
             return jsonify({"error": "Could not read image"}), 400
             
@@ -1956,7 +1957,7 @@ def _phase_scan_unknown():
             try:
                 import cv2
                 img_bytes = np.fromfile(fpath, dtype=np.uint8)
-                img = cv2.imdecode(img_bytes, cv2.IMREAD_COLOR)
+                img = decode_image(img_bytes)
                 if img is not None and detector is not None and recognizer is not None:
                     h, w = img.shape[:2]
                     detector.setInputSize((w, h))
@@ -2102,7 +2103,7 @@ def _phase_audit_known():
                 try:
                     import cv2
                     img_bytes = np.fromfile(fpath, dtype=np.uint8)
-                    img = cv2.imdecode(img_bytes, cv2.IMREAD_COLOR)
+                    img = decode_image(img_bytes)
                     if img is not None and detector is not None and recognizer is not None:
                         h, w = img.shape[:2]
                         detector.setInputSize((w, h))

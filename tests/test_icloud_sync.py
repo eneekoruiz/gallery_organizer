@@ -66,4 +66,6 @@ class ICloudSyncTests(unittest.TestCase):
                 self.assertEqual(next(media), ("ready", "ready"))
             finally:
                 release.set()
-            self.assertEqual(dict(media), {"slow": "slow", "broken": None})
+            with self.assertLogs(icloud_sync_service.__name__, level='WARNING') as logs:
+                self.assertEqual(dict(media), {"slow": "slow", "broken": None})
+            self.assertIn('offline', logs.output[0])

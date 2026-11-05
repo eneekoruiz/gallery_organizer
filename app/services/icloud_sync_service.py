@@ -1,5 +1,6 @@
 import os
 import hashlib
+import logging
 import re
 import time
 import json
@@ -8,7 +9,6 @@ import threading
 import tempfile
 import subprocess
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
-from io import BytesIO
 from pathlib import Path
 import cv2
 import numpy as np
@@ -18,6 +18,8 @@ from app.services.face_learning import rank_known_identities
 from app.services.content_analysis_service import content_sha256, model_version, load_analysis, save_analysis
 from app.services.apple_service import load_apple_db, save_apple_db, ICLOUD_PHOTOS_DIR
 from app.utils.files import generate_thumbnail
+from app.utils.images import decode_image
+from app.utils.power import keep_awake_on_ac
 from app.services.supervisor_service import save_supervisor_state, supervise_and_adapt_decision
 
 CENTROIDS_FILE = APP_DIR / "centroids.pkl"
@@ -140,11 +142,7 @@ def _read_icloud_media(path):
     if revision != (after.st_size, after.st_mtime_ns):
         raise OSError(f"File changed while reading: {path}")
     sha256 = hashlib.sha256(data).hexdigest()
-    image = cv2.imdecode(data, cv2.IMREAD_COLOR) if data.size else None
-    if image is None:
-        from PIL import Image, ImageOps
-        with Image.open(BytesIO(data.tobytes())) as photo:
-            image = cv2.cvtColor(np.asarray(ImageOps.exif_transpose(photo).convert("RGB")), cv2.COLOR_RGB2BGR)
+    image = decode_image(data)
     return (image, sha256, revision) if image is not None else None
 
 
@@ -169,7 +167,8 @@ def _prefetch_icloud_media(paths, stop, workers=4):
                     path = pending.pop(future)
                     try:
                         image = future.result()
-                    except (OSError, ValueError, cv2.error):
+                    except (OSError, ValueError, cv2.error) as error:
+                        logging.getLogger(__name__).warning('No se pudo leer %s: %s', path, error)
                         image = None
                     yield path, image
                     submit_next()
@@ -258,7 +257,7 @@ def _run_icloud_worker(batch_size=None):
             _save_progress_file()
         return
 
-    valid_exts = {".jpg", ".jpeg", ".png", ".webp", ".mp4", ".mov"}
+    valid_exts = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif", ".mp4", ".mov", ".avi"}
     try:
         with os.scandir(ICLOUD_PHOTOS_DIR) as entries:
             all_icloud = {entry.name: entry for entry in entries
@@ -547,7 +546,8 @@ def _run_icloud_worker(batch_size=None):
 
 def _run_icloud_sync(batch_size):
     try:
-        _run_icloud_worker(batch_size)
+        with keep_awake_on_ac():
+            _run_icloud_worker(batch_size)
     except Exception as error:
         with _SYNC_LOCK:
             _SYNC_STATE.update(running=False, status="error", last_error=str(error))

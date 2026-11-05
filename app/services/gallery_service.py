@@ -85,7 +85,7 @@ def get_gallery():
         return jsonify(gallery_cache)
 
     gallery = {}
-    valid_exts = {".jpg", ".jpeg", ".png", ".mp4", ".mov", ".avi"}
+    valid_exts = {".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif", ".mp4", ".mov", ".avi"}
     seen_files = {}
     
     overrides = load_overrides()

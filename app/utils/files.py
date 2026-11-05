@@ -5,6 +5,7 @@ import shutil
 import json
 import numpy as np
 import cv2
+from app.utils.images import decode_image
 import exifread
 import datetime
 from pathlib import Path
@@ -65,7 +66,7 @@ def generate_thumbnail(original_path, max_size=300, *, decoded_image=None):
         except Exception:
             # Fallback OpenCV si PIL falla
             file_bytes = np.fromfile(path_str, dtype=np.uint8)
-            img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+            img = decode_image(file_bytes)
             if img is None: return None
             h, w = img.shape[:2]
             if max(h, w) > max_size:
@@ -279,7 +280,7 @@ def calculate_sharpness(filepath):
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         else:
             file_bytes = np.fromfile(str(filepath), dtype=np.uint8)
-            img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+            img = decode_image(file_bytes)
             if img is None: return 0.0
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         return round(cv2.Laplacian(gray, cv2.CV_64F).var(), 1)
@@ -310,7 +311,7 @@ def calculate_dhash(filepath):
             if not ret or img is None: return None
         else:
             file_bytes = np.fromfile(str(filepath), dtype=np.uint8)
-            img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+            img = decode_image(file_bytes)
             if img is None: return None
             
         resized = cv2.resize(img, (9, 8), interpolation=cv2.INTER_AREA)
