@@ -187,6 +187,7 @@
 .gallery-grid {
     display: grid !important;
     grid-template-columns: repeat(auto-fill, minmax(var(--grid-col-min, 180px), 1fr)) !important;
+    grid-auto-rows: max-content !important;
     gap: 12px !important;
     padding: 16px 20px 80px 20px !important;
     overflow-y: auto !important;
@@ -198,8 +199,10 @@
 .media-card {
     position: relative !important;
     display: block !important;
+    aspect-ratio: 1 / 1 !important;
+    min-height: 0 !important;
     border-radius: 10px;
-    overflow: hidden;
+    overflow: hidden !important;
     background: #15161b;
     cursor: pointer;
     transition: transform var(--transition-normal), box-shadow var(--transition-normal), border-color 0.2s ease;
@@ -218,12 +221,12 @@
 
 .media-card img,
 .media-card video {
-    position: relative !important;
-    display: block !important;
+    position: absolute !important;
+    inset: 0 !important;
     width: 100% !important;
-    height: auto !important;
-    aspect-ratio: 1 / 1 !important;
+    height: 100% !important;
     object-fit: cover !important;
+    display: block !important;
     box-sizing: border-box !important;
 }
 
@@ -540,6 +543,7 @@
     .gallery-grid {
         display: grid !important;
         grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+        grid-auto-rows: max-content !important;
         gap: 8px !important;
         padding: 10px 10px 80px 10px !important;
         box-sizing: border-box !important;
@@ -547,6 +551,8 @@
 
     .media-card {
         width: 100% !important;
+        aspect-ratio: 1 / 1 !important;
+        min-height: 0 !important;
         display: block !important;
         position: relative !important;
         overflow: hidden !important;
@@ -555,11 +561,11 @@
 
     .media-card img,
     .media-card video {
-        position: relative !important;
+        position: absolute !important;
+        inset: 0 !important;
         display: block !important;
         width: 100% !important;
-        height: auto !important;
-        aspect-ratio: 1 / 1 !important;
+        height: 100% !important;
         object-fit: cover !important;
         box-sizing: border-box !important;
     }

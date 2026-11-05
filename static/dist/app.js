@@ -4343,10 +4343,12 @@ async function filterTimeline(year) {
 
 
 
-                // In-flow Image dictates card height (Zero-Overlap)
+                // Square Card & Zero-Overlap Guarantees
                 card.style.width = '100%';
                 card.style.display = 'block';
                 card.style.position = 'relative';
+                card.style.aspectRatio = '1 / 1';
+                card.style.overflow = 'hidden';
 
 
 
@@ -4396,12 +4398,13 @@ async function filterTimeline(year) {
 
                 thumb.style.transition = 'opacity 0.3s ease';
 
+                thumb.style.position = 'absolute';
+                thumb.style.inset = '0';
                 thumb.style.width = '100%';
-                thumb.style.height = 'auto';
+                thumb.style.height = '100%';
                 thumb.style.aspectRatio = '1 / 1';
                 thumb.style.objectFit = 'cover';
                 thumb.style.display = 'block';
-                thumb.style.position = 'relative';
 
                 card.appendChild(thumb);
 
