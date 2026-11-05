@@ -119,71 +119,63 @@ def _load_heavy_caches():
 
     # 4. AI Models already initialized eagerly at startup
 
-    # 5. Known faces cache
-    if CACHE_FILE.exists():
-        try:
-            with open(CACHE_FILE, 'rb') as f:
-                cache_data = pickle.load(f)
-                if isinstance(cache_data, list):
-                    kf = {}
-                    for item in cache_data:
-                        kf[item['identidad']] = {'centroid': item['feature'], 'names': []}
-                    known_faces.update(kf)
-                elif isinstance(cache_data, dict):
-                    known_faces.update(cache_data)
-                    from app.services.face_learning import compute_appearance_centroids
-                    for rec in known_faces.values():
-                        if isinstance(rec, dict) and 'centroids' not in rec:
-                            samples = list(rec.get('confirmed_samples', {}).values())
-                            if samples:
-                                rec['centroids'] = compute_appearance_centroids(samples)
-                            elif rec.get('centroid') is not None:
-                                rec['centroids'] = [rec['centroid']]
-        except Exception:
-            pass
-
-    # Fallback to centroids.pkl when CACHE_FILE is empty (connects 406 identity brain)
-    if not known_faces and (APP_DIR / "centroids.pkl").exists():
-        try:
-            with open(APP_DIR / "centroids.pkl", 'rb') as f:
-                c_data = pickle.load(f)
-                if isinstance(c_data, dict):
-                    from app.services.face_learning import normalized_feature
-                    for k, v in c_data.items():
-                        ident_name = k[1] if isinstance(k, tuple) else str(k)
-                        try:
-                            v_norm = normalized_feature(v)
-                            rec = {'centroid': v_norm, 'provenance': 'dataset_reference', 'names': [ident_name]}
-                            known_faces[k] = rec
-                            if ident_name not in known_faces:
-                                known_faces[ident_name] = rec
-                        except Exception:
-                            pass
-        except Exception as e:
-            print(f"[BOOT] Error loading centroids.pkl fallback: {e}")
+    # Merge reference identities with the latest human confirmations.
+    reload_known_faces()
 
     _BOOT_READY.set()
 
 def reload_known_faces():
-    """Reload known_faces in-place from sface_cache_v7.pkl and centroids.pkl."""
-    global known_faces
+    """Load all reference people; human profiles take precedence without upgrading legacy evidence."""
+    from app.services.face_learning import normalized_feature, compute_appearance_centroids
+    from app.services.group_album_service import is_group_album
+
+    references = {}
+    centroid_file = APP_DIR / 'centroids.pkl'
+    if centroid_file.exists():
+        try:
+            with centroid_file.open('rb') as file:
+                for key, value in pickle.load(file).items():
+                    if (not isinstance(key, tuple) or len(key) != 2 or
+                            key[0] not in {'Conocidos', 'Familia', 'Familiares', 'YO', 'Profesores'} or
+                            is_group_album(key[1])):
+                        continue
+                    try:
+                        feature = normalized_feature(value)
+                    except (TypeError, ValueError):
+                        continue
+                    record = references.setdefault(key[1], {'centroid': feature, 'centroids': [],
+                        'names': [], 'cat': key[0], 'provenance': 'dataset_reference'})
+                    record['centroids'].append(feature)
+        except Exception as error:
+            print(f'[RELOAD] Error loading reference centroids: {error}')
+    profiles = {}
     if CACHE_FILE.exists():
         try:
-            with open(CACHE_FILE, 'rb') as f:
-                cache_data = pickle.load(f)
-                if isinstance(cache_data, dict):
-                    known_faces.clear()
-                    known_faces.update(cache_data)
-                    from app.services.face_learning import compute_appearance_centroids
-                    for rec in known_faces.values():
-                        if isinstance(rec, dict) and 'centroids' not in rec:
-                            samples = list(rec.get('confirmed_samples', {}).values())
-                            if samples:
-                                rec['centroids'] = compute_appearance_centroids(samples)
-                            elif rec.get('centroid') is not None:
-                                rec['centroids'] = [rec['centroid']]
-        except Exception as e:
-            print(f"[RELOAD] Error reloading known_faces: {e}")
+            with CACHE_FILE.open('rb') as file:
+                profiles = pickle.load(file)
+            if isinstance(profiles, list):
+                profiles = {item['identidad']: {'centroid': item['feature'], 'names': []} for item in profiles}
+            if not isinstance(profiles, dict):
+                raise ValueError('Invalid face profiles')
+        except Exception as error:
+            print(f'[RELOAD] Error reloading known_faces: {error}')
+            return
+    for key, value in profiles.items():
+        identity = key[1] if isinstance(key, tuple) and len(key) == 2 else str(key)
+        if not isinstance(value, dict) or is_group_album(identity):
+            continue
+        record = dict(value)
+        if 'centroids' not in record:
+            samples = list(record.get('confirmed_samples', {}).values())
+            if samples:
+                record['centroids'] = compute_appearance_centroids(samples)
+            elif record.get('centroid') is not None:
+                record['centroids'] = [record['centroid']]
+        if identity in references:
+            record.setdefault('cat', references[identity]['cat'])
+        references[identity] = record
+    known_faces.clear()
+    known_faces.update(references)
 
 # Start deferred loading immediately
 if BACKGROUND_TASKS_ENABLED:

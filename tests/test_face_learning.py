@@ -1,7 +1,9 @@
 import ast
+import pickle
+import tempfile
 from pathlib import Path
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import numpy as np
 from app.services.face_learning import (
@@ -10,6 +12,28 @@ from app.services.face_learning import (
 
 
 class LearningTests(unittest.TestCase):
+    def test_reloading_partial_manual_profiles_preserves_other_reference_people(self):
+        import app.globals as g
+        first, second = np.eye(128, dtype=np.float32)[:2]
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            cache = root / 'profiles.pkl'
+            with cache.open('wb') as file:
+                pickle.dump({'Ana': {'centroid': second, 'provenance': HUMAN,
+                                     'confirmed_samples': {'manual': second}}}, file)
+            with (root / 'centroids.pkl').open('wb') as file:
+                pickle.dump({('Familia', 'Ana'): first, ('Conocidos', 'Bea'): first,
+                             ('Familia', 'Familia conmigo'): first,
+                             ('📋 Revisión / Por Organizar', 'Persona Nueva #1'): first,
+                             ('Conocidos', 'Invalid'): np.zeros(128)}, file)
+            with patch.multiple(g, APP_DIR=root, CACHE_FILE=cache, known_faces={}):
+                g.reload_known_faces()
+                self.assertEqual(set(g.known_faces), {'Ana', 'Bea'})
+                self.assertEqual(g.known_faces['Ana']['provenance'], HUMAN)
+                np.testing.assert_array_equal(g.known_faces['Ana']['centroid'], second)
+                self.assertNotEqual(g.known_faces['Bea'].get('provenance'), HUMAN)
+                self.assertEqual(g.known_faces['Bea']['cat'], 'Conocidos')
+
     def test_icloud_ranks_people_using_only_confirmed_appearance_profiles(self):
         first, second, other = np.eye(128, dtype=np.float32)[:3]
         centroids = {
