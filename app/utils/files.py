@@ -240,7 +240,6 @@ def find_relocated_file(filepath):
     from app.globals import get_gallery_cache
     g_cache = get_gallery_cache()
     if g_cache and isinstance(g_cache, dict):
-        # Quick check in current cat/ident if known, or search
         for cat_data in g_cache.values():
             if isinstance(cat_data, dict):
                 for items in cat_data.values():
@@ -250,7 +249,22 @@ def find_relocated_file(filepath):
                                 p_str = it.get('path')
                                 if p_str and os.path.isfile(p_str):
                                     _RELOCATED_CACHE[fname] = p_str
+                                    _RELOCATED_CACHE[str(filepath)] = p_str
                                     return p_str
+
+    # 5. Search by filename across RESULTADOS_DIR and FOTOS_DIR (handles reallocated/moved files)
+    from app.globals import RESULTADOS_DIR, FOTOS_DIR
+    for search_root in [RESULTADOS_DIR, FOTOS_DIR]:
+        if search_root and search_root.exists():
+            try:
+                for match in search_root.rglob(fname):
+                    if match.is_file():
+                        res_p = str(match.resolve())
+                        _RELOCATED_CACHE[fname] = res_p
+                        _RELOCATED_CACHE[str(filepath)] = res_p
+                        return res_p
+            except Exception:
+                pass
 
     return None
 

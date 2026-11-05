@@ -333,6 +333,10 @@ def get_gallery():
     ident_to_cat_map = {id_info["identidad"]: id_info["categoria"] for id_info in get_all_identities()}
     added_paths = set()
     def add_to_gallery(cat, ident, item):
+        if isinstance(ident, str):
+            ident = sanitize_display_name(ident)
+            if ident.startswith('? ') or ident.startswith('?'):
+                ident = ident.lstrip('?').strip()
         cat_l = str(cat).lower()
         ident_l = str(ident).lower()
         p_l = str(item.get('path', '')).lower()
@@ -436,7 +440,7 @@ def get_gallery():
             category = ident_to_cat_map.get(identity) or ('YO' if identity == 'YO' else
                        'Familia' if identity.startswith('F. ') else
                        'Mascotas' if identity.startswith('M. ') or identity in {'Perro', 'Gato', 'Ney', 'Sua'} else 'Conocidos')
-            add_to_gallery(category, identity, item)
+            add_to_gallery(category, sanitize_display_name(identity), item)
         if unresolved or not identities:
             add_to_gallery('📋 Revisión / Por Organizar', '⚠️ Grupos por confirmar', item)
 
@@ -850,7 +854,7 @@ def api_person_avatar():
     if not cat or not ident:
         return "Missing params", 400
 
-    clean_ident = ident.replace('👤', '').strip()
+    clean_ident = ident.replace('👤', '').lstrip('?').strip()
     ident_clean = re.sub(r'[^a-zA-Z0-9_\-]', '_', str(ident))
     clean_ident_clean = re.sub(r'[^a-zA-Z0-9_\-]', '_', str(clean_ident))
     cat_clean = re.sub(r'[^a-zA-Z0-9_\-]', '_', str(cat))
@@ -858,11 +862,7 @@ def api_person_avatar():
     for folder_dir in [THUMBNAILS_DIR, APP_DIR / "cache" / "thumbnails"]:
         for c_cand, i_cand in [
             (cat_clean, ident_clean),
-            (cat_clean, clean_ident_clean),
-            ("Personas_Sin_Nombre", ident_clean),
-            ("Personas_Sin_Nombre", clean_ident_clean),
-            ("Conocidos", clean_ident_clean),
-            ("Familia", clean_ident_clean)
+            (cat_clean, clean_ident_clean)
         ]:
             avatar_cache_file = folder_dir / f"av_{c_cand}_{i_cand}.webp"
             if avatar_cache_file.exists() and avatar_cache_file.stat().st_size > 200:

@@ -161,7 +161,9 @@ def reload_known_faces():
             print(f'[RELOAD] Error reloading known_faces: {error}')
             return
     for key, value in profiles.items():
-        identity = key[1] if isinstance(key, tuple) and len(key) == 2 else str(key)
+        raw_identity = key[1] if isinstance(key, tuple) and len(key) == 2 else str(key)
+        from app.utils.faces import sanitize_display_name
+        identity = sanitize_display_name(raw_identity)
         if not isinstance(value, dict) or is_group_album(identity):
             continue
         record = dict(value)

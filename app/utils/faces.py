@@ -4,6 +4,10 @@ from app.globals import FOTOS_DIR, RESULTADOS_DIR
 def sanitize_display_name(name):
     if not name: return ""
     clean = str(name).replace("_rejected", "").replace("_solitario", "").replace("_compania", "")
+    if clean.startswith("? "):
+        clean = clean[2:]
+    elif clean.startswith("?"):
+        clean = clean[1:].strip()
     return clean.strip()
 
 _IDENTITIES_CACHE = None

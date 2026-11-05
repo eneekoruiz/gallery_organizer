@@ -101,6 +101,40 @@ def match_face_to_identity(feat, val):
     return max(best_sim, 0.0)
 
 
+_CENTROIDS_CACHE_KEY = None
+_CENTROIDS_MATRIX = None
+_CENTROIDS_KEYS = []
+
+def get_vectorized_centroids():
+    global _CENTROIDS_CACHE_KEY, _CENTROIDS_MATRIX, _CENTROIDS_KEYS
+    kf_len = len(known_faces)
+    if _CENTROIDS_MATRIX is not None and _CENTROIDS_CACHE_KEY == kf_len and kf_len > 0:
+        return _CENTROIDS_MATRIX, _CENTROIDS_KEYS
+    
+    vecs = []
+    keys = []
+    for db_id, val in known_faces.items():
+        ident_n = db_id[1] if isinstance(db_id, tuple) else str(db_id)
+        if is_smart_relationship_album(ident_n) or ident_n.startswith("Falso_Positivo") or ident_n.startswith("Ignorar_"):
+            continue
+        centroids = get_identity_centroids(val)
+        for c in centroids:
+            arr = np.asarray(c, dtype=np.float32).flatten()
+            if arr.shape[0] == 128:
+                norm = np.linalg.norm(arr)
+                if norm > 1e-6:
+                    vecs.append(arr / norm)
+                    keys.append(db_id)
+    if vecs:
+        _CENTROIDS_MATRIX = np.vstack(vecs)
+        _CENTROIDS_KEYS = keys
+        _CENTROIDS_CACHE_KEY = kf_len
+    else:
+        _CENTROIDS_MATRIX = np.zeros((0, 128), dtype=np.float32)
+        _CENTROIDS_KEYS = []
+        _CENTROIDS_CACHE_KEY = 0
+    return _CENTROIDS_MATRIX, _CENTROIDS_KEYS
+
 def api_analyze():
     data = request.json or {}
     filepath = data.get('path')
@@ -115,6 +149,8 @@ def api_analyze():
     faces_data = []
     sha256 = None
     analysis_reused = False
+    
+
     
     
     # Recompute labels and overrides on each request. Content detections are reusable.
@@ -332,21 +368,23 @@ def api_analyze():
                                 second_best_score = 0.0
                                 second_best_match = None
                                 
-                                for db_id, val in known_faces.items():
-                                    ident_n = db_id[1] if isinstance(db_id, tuple) else str(db_id)
-                                    if is_smart_relationship_album(ident_n) or ident_n.startswith("Falso_Positivo") or ident_n.startswith("Ignorar_"):
-                                        continue
-                                    if ident_n in claimed_identities:
-                                        continue
-                                    score = match_face_to_identity(feat_norm, val)
-                                    if score > best_score:
-                                        second_best_score = best_score
-                                        second_best_match = best_match
-                                        best_score = score
-                                        best_match = db_id
-                                    elif score > second_best_score:
-                                        second_best_score = score
-                                        second_best_match = db_id
+                                c_mat, c_keys = get_vectorized_centroids()
+                                if c_mat.shape[0] > 0:
+                                    sims = np.dot(c_mat, feat_norm)
+                                    ident_scores = {}
+                                    for idx_c, s in enumerate(sims):
+                                        k = c_keys[idx_c]
+                                        ident_n = k[1] if isinstance(k, tuple) else str(k)
+                                        if ident_n in claimed_identities:
+                                            continue
+                                        if k not in ident_scores or s > ident_scores[k]:
+                                            ident_scores[k] = float(s)
+                                    
+                                    sorted_matches = sorted(ident_scores.items(), key=lambda itm: itm[1], reverse=True)
+                                    if len(sorted_matches) > 0 and sorted_matches[0][1] > 0:
+                                        best_match, best_score = sorted_matches[0]
+                                    if len(sorted_matches) > 1 and sorted_matches[1][1] > 0:
+                                        second_best_match, second_best_score = sorted_matches[1]
                                 
                                 # Safety rule: If face matches YO (>0.48), never misassign to another person!
                                 clean_bm = best_match[1] if isinstance(best_match, tuple) else str(best_match)
@@ -364,7 +402,7 @@ def api_analyze():
                                 current_folder = path_obj.parent.name
                                 owner_folder = path_obj.parent.parent.name if current_folder == "_Dudosos" else current_folder
                                 owner_entry = known_faces.get(owner_folder) or known_faces.get((path_obj.parent.parent.name, owner_folder)) or {}
-                                if not is_smart_relationship_album(owner_folder) and owner_folder not in ["_Dudosos", "Personas Sin Nombre", "Resultados", "Fotos", "Para Revisar", "Por Organizar"]:
+                                if clean_bm != "YO" and not is_smart_relationship_album(owner_folder) and owner_folder not in ["_Dudosos", "Personas Sin Nombre", "Resultados", "Fotos", "Para Revisar", "Por Organizar"]:
                                     owner_sim = match_face_to_identity(feat_norm, owner_entry)
                                     if owner_sim >= 0.35 and (best_score - owner_sim) < 0.15:
                                         best_match = owner_folder
@@ -544,8 +582,38 @@ def api_analyze():
             if folder_owner.startswith("M.") or cat_name == "Mascotas":
                 faces_data = [f for f in faces_data if f.get("is_pet") or (f.get("tag_type") in ["manual", "dataset"] and not f.get("identity", "").startswith("C."))]
 
-            # Enforce strict photo mutual exclusion
-            claimed_ids = {f['identity'] for f in faces_data if f.get('identity') and f.get('identity') not in ("Desconocido", "Falso_Positivo", "Ignorar_Irrelevante", "Persona (Sin rostro / Filtro)") and not str(f.get('identity')).startswith(('? ', 'IA '))}
+            # Enforce strict photo mutual exclusion for both assigned identities and suggestions
+            assigned_counts = {}
+            for f in faces_data:
+                raw_id = f.get('identity', '')
+                clean_id = raw_id[2:] if raw_id.startswith('? ') else raw_id
+                if clean_id and clean_id not in ("Desconocido", "Falso_Positivo", "Ignorar_Irrelevante", "Persona (Sin rostro / Filtro)", "Sin Nombre"):
+                    assigned_counts[clean_id] = assigned_counts.get(clean_id, 0) + 1
+
+            for target_id, count in assigned_counts.items():
+                if count > 1:
+                    dupes = [
+                        (idx, f) for idx, f in enumerate(faces_data) 
+                        if f.get('identity') == target_id or f.get('identity') == f"? {target_id}"
+                    ]
+                    def _rank_face(item):
+                        idx, f = item
+                        is_man = 1 if f.get('is_manual') else 0
+                        sc = f.get('suggested_score') or 0.0
+                        return (is_man, sc)
+                    dupes.sort(key=_rank_face, reverse=True)
+                    for idx, f in dupes[1:]:
+                        f['identity'] = "Desconocido"
+                        f['suggested_identity'] = None
+                        f['suggested_score'] = 0.0
+                        f['confidence'] = "Pendiente"
+                        f['tag_type'] = "pending"
+
+            claimed_ids = {
+                (f['identity'][2:] if f['identity'].startswith('? ') else f['identity'])
+                for f in faces_data 
+                if f.get('identity') and f.get('identity') not in ("Desconocido", "Falso_Positivo", "Ignorar_Irrelevante", "Persona (Sin rostro / Filtro)", "Sin Nombre")
+            }
             for f in faces_data:
                 if f.get('suggested_identity') in claimed_ids:
                     f['suggested_identity'] = None
@@ -596,7 +664,7 @@ def apply_correction_to_file(filepath, new_categoria, new_identidad, face_data, 
     if face_data:
         fx, fy, fw, fh = (face_data[k] for k in ('x', 'y', 'width', 'height'))
 
-    if new_identidad not in ["Falso_Positivo", "Ignorar_Irrelevante"] and face_data:
+    if new_identidad not in ["Falso_Positivo", "Ignorar_Irrelevante", "Desconocido"] and face_data:
         try:
             image = decode_image(np.fromfile(str(orig_path), dtype=np.uint8))
             if image is not None and detector is not None and recognizer is not None:
@@ -709,7 +777,10 @@ def apply_correction_to_file(filepath, new_categoria, new_identidad, face_data, 
             c_box = [safe_float(c_face.get('x')), safe_float(c_face.get('y')), safe_float(c_face.get('width')), safe_float(c_face.get('height'))]
             if iou(face_box, c_box) > 0.4:
                 c_face['identity'] = new_identidad
-                c_face['confidence'] = 1.0
+                c_face['confidence'] = 0.0 if new_identidad == 'Desconocido' else 1.0
+                if new_identidad == 'Desconocido':
+                    c_face['suggested_identity'] = None
+                    c_face['suggested_score'] = 0.0
                 c_face['is_manual'] = True
                 c_face['provenance'] = HUMAN
                 updated_cache = True
@@ -734,7 +805,7 @@ def apply_correction_to_file(filepath, new_categoria, new_identidad, face_data, 
         threading.Thread(target=_save_faces_cache, daemon=True).start()
 
     target_path = orig_path
-    if new_categoria != "Ignorar" and new_identidad not in ["Falso_Positivo", "Ignorar_Irrelevante"]:
+    if new_categoria != "Ignorar" and new_identidad not in ["Falso_Positivo", "Ignorar_Irrelevante", "Desconocido"]:
         if is_manual_source:
             target_dir = FOTOS_DIR / new_categoria / new_identidad
         else:

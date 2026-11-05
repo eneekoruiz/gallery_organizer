@@ -4081,12 +4081,10 @@ async function filterTimeline(year) {
                 grid.innerHTML = '';
 
                 grid.style.display = 'grid';
-
-                grid.style.gridTemplateColumns = 'repeat(auto-fill, minmax(var(--grid-col-min, 180px), 1fr))';
-
-                grid.style.gap = '12px';
-
-                grid.style.padding = '16px 20px 80px 20px';
+                const isMobileScreen = window.innerWidth <= 820;
+                grid.style.gridTemplateColumns = isMobileScreen ? 'repeat(2, minmax(0, 1fr))' : 'repeat(auto-fill, minmax(var(--grid-col-min, 180px), 1fr))';
+                grid.style.gap = isMobileScreen ? '8px' : '12px';
+                grid.style.padding = isMobileScreen ? '10px 10px 80px 10px' : '16px 20px 80px 20px';
 
                 _currentGridItems = items;
 
@@ -4345,28 +4343,19 @@ async function filterTimeline(year) {
 
 
 
-                // Masonry / Grid Aspect Box
-
-                if (item.orig_width && item.orig_height) {
-
-                    const rawAspect = (item.orig_height / item.orig_width) * 100;
-
-                    const aspect = Math.min(Math.max(rawAspect, 70), 135);
-
-                    card.style.paddingTop = `${aspect}%`;
-
-                } else {
-
-                    card.style.paddingTop = `100%`;
-
-                }
+                // In-flow Image dictates card height (Zero-Overlap)
+                card.style.width = '100%';
+                card.style.display = 'block';
+                card.style.position = 'relative';
 
 
 
                 const skeleton = document.createElement('div');
-
                 skeleton.className = 'masonry-skeleton';
-
+                skeleton.style.position = 'absolute';
+                skeleton.style.inset = '0';
+                skeleton.style.zIndex = '1';
+                skeleton.style.pointerEvents = 'none';
                 card.appendChild(skeleton);
 
 
@@ -4408,16 +4397,11 @@ async function filterTimeline(year) {
                 thumb.style.transition = 'opacity 0.3s ease';
 
                 thumb.style.width = '100%';
-
-                thumb.style.height = '100%';
-
+                thumb.style.height = 'auto';
+                thumb.style.aspectRatio = '1 / 1';
                 thumb.style.objectFit = 'cover';
-
-                thumb.style.position = 'absolute';
-
-                thumb.style.top = '0';
-
-                thumb.style.left = '0';
+                thumb.style.display = 'block';
+                thumb.style.position = 'relative';
 
                 card.appendChild(thumb);
 
