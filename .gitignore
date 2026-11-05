@@ -17,6 +17,7 @@ cache/
 backups/
 *.log
 *.tmp
+tmp*
 *.bak
 *.bak*
 .js_lint_mtime
