@@ -98,6 +98,14 @@ def _dehydrate_cloud_file(filepath):
     except Exception:
         return False
 
+def _hydrate_cloud_file(filepath):
+    """Marca el archivo para descarga bajo demanda de iCloud."""
+    try:
+        res = subprocess.run(["attrib", "-U", "+P", str(filepath)], capture_output=True, timeout=5)
+        return res.returncode == 0
+    except Exception:
+        return False
+
 def _ensure_icloud_client_running():
     try:
         res = subprocess.run(["powershell", "-NoProfile", "-Command", "Get-Process -Name 'iCloudPhotos' -ErrorAction SilentlyContinue"], capture_output=True, text=True, timeout=5)
@@ -122,23 +130,41 @@ def _icloud_read_priority(source):
 def _read_icloud_media(path):
     before = os.stat(path)
     revision = (before.st_size, before.st_mtime_ns)
+    attrs = getattr(before, 'st_file_attributes', 0)
+    
+    # Si es un archivo en la nube no descargado (0x400000 = RECALL_ON_DATA_ACCESS)
+    if attrs & 0x400000:
+        _hydrate_cloud_file(path)
+        try:
+            with open(path, "rb") as test_f:
+                test_f.read(1024)
+        except OSError:
+            # Todavia no esta listo en disco, continuar sin bloquear el servidor
+            return None
+
     if Path(path).suffix.lower() in {".mp4", ".mov", ".avi"}:
         if before.st_size > 2 * 1024 * 1024:
             h = hashlib.sha256()
             h.update(f"v1_size:{before.st_size}".encode("utf-8"))
-            with open(path, "rb") as vf:
-                h.update(vf.read(262144))
-                try:
-                    vf.seek(-262144, os.SEEK_END)
+            try:
+                with open(path, "rb") as vf:
                     h.update(vf.read(262144))
-                except Exception:
-                    pass
+                    try:
+                        vf.seek(-262144, os.SEEK_END)
+                        h.update(vf.read(262144))
+                    except Exception:
+                        pass
+            except OSError:
+                return None
             sha256 = h.hexdigest()
         else:
-            sha256 = content_sha256(path)
+            try:
+                sha256 = content_sha256(path)
+            except OSError:
+                return None
         cap = cv2.VideoCapture(path, cv2.CAP_FFMPEG, [
-            cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 25000,
-            cv2.CAP_PROP_READ_TIMEOUT_MSEC, 12000,
+            cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 4000,
+            cv2.CAP_PROP_READ_TIMEOUT_MSEC, 2000,
         ])
         try:
             ok, frame = cap.read()

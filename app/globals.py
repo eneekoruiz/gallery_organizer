@@ -189,8 +189,8 @@ def wait_for_boot(timeout=30):
 
 def set_gallery_cache(val):
     global _GALLERY_CACHE
-    _GALLERY_CACHE = val
     if val is not None:
+        _GALLERY_CACHE = val
         def _bg_dump(data):
             try:
                 import tempfile
@@ -205,7 +205,17 @@ def set_gallery_cache(val):
         threading.Thread(target=_bg_dump, args=(val,), daemon=True).start()
 
 def get_gallery_cache():
-    return _GALLERY_CACHE
+    global _GALLERY_CACHE
+    if _GALLERY_CACHE is not None:
+        return _GALLERY_CACHE
+    if GALLERY_CACHE_FILE.exists():
+        try:
+            with open(GALLERY_CACHE_FILE, 'r', encoding='utf-8') as f:
+                _GALLERY_CACHE = json.load(f)
+                return _GALLERY_CACHE
+        except Exception:
+            pass
+    return None
 
 def clear_gallery_cache():
     global _GALLERY_CACHE
