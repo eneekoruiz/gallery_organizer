@@ -143,7 +143,9 @@ def reload_known_faces():
                         feature = normalized_feature(value)
                     except (TypeError, ValueError):
                         continue
-                    record = references.setdefault(key[1], {'centroid': feature, 'centroids': [],
+                    from app.utils.faces import sanitize_display_name
+                    clean_id = sanitize_display_name(key[1])
+                    record = references.setdefault(clean_id, {'centroid': feature, 'centroids': [],
                         'names': [], 'cat': key[0], 'provenance': 'dataset_reference'})
                     record['centroids'].append(feature)
         except Exception as error:

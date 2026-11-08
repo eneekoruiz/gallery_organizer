@@ -1,3 +1,28 @@
+window.currentScreenshotAgeFilter = 'all';
+
+function isInvalidFolderName(name) {
+    if (!name) return true;
+    const lower = name.toLowerCase().trim();
+    const invalidExact = [
+        'fotos', 'resultados', 'galeria eneko no abrir',
+        'familia', 'conocidos', 'profesores', 'mascotas',
+        'yo', 'amigos', 'otros', 'desconocidos', 'desconocido'
+    ];
+    if (invalidExact.includes(lower)) return true;
+
+    const invalidSubstrings = [
+        'conmigo', 'sin mi', 'sin mí', 'grupales', 'con amigos',
+        'para revisar', 'revisar', 'dudosos', '_dudosos',
+        'personas sin nombre', 'limpieza inteligente',
+        'recuerdos', 'lugares', 'eventos', 'frases',
+        'por organizar', 'pendientes', 'masivos'
+    ];
+    if (invalidSubstrings.some(inv => lower.includes(inv))) return true;
+    if (name.startsWith('_') || name.startsWith('📋') || name.startsWith('⏳') || name.startsWith('!')) return true;
+    return false;
+}
+window.isInvalidFolderName = isInvalidFolderName;
+
 
 
 // =============================================================
@@ -146,6 +171,31 @@ window.toggleHeaderCollapse = function() {
     } catch (e) {}
 
 };
+
+window.toggleHeaderOptionsMenu = function(e) {
+    if (e) {
+        e.stopPropagation();
+        e.preventDefault();
+    }
+    const menu = document.getElementById('header-options-dropdown');
+    const btn = document.getElementById('btn-header-more');
+    if (!menu) return;
+    const isVisible = menu.style.display !== 'none';
+    menu.style.display = isVisible ? 'none' : 'block';
+    if (btn) {
+        if (!isVisible) btn.classList.add('active');
+        else btn.classList.remove('active');
+    }
+};
+
+document.addEventListener('click', function(e) {
+    const menu = document.getElementById('header-options-dropdown');
+    const btn = document.getElementById('btn-header-more');
+    if (menu && menu.style.display !== 'none' && !menu.contains(e.target) && (!btn || !btn.contains(e.target))) {
+        menu.style.display = 'none';
+        if (btn) btn.classList.remove('active');
+    }
+});
 
 
 
@@ -1784,36 +1834,29 @@ async function filterTimeline(year) {
 
 
             const isInvalidFolderName = (name) => {
-
                 if (!name) return true;
-
-                const lower = name.toLowerCase();
-
-                const invalidList = [
-
-                    'resultados', 'fotos', 'galeria eneko no abrir',
-
-                    'para revisar', 'revisar', 'dudosos', '_dudosos',
-
-                    'desconocidos', 'desconocido', 'personas sin nombre',
-
-                    'limpieza inteligente', 'recuerdos', 'lugares', 'eventos',
-
-                    'mascotas', 'frases', 'por organizar', 'pendientes'
-
+                const lower = name.toLowerCase().trim();
+                const invalidExact = [
+                    'fotos', 'resultados', 'galeria eneko no abrir',
+                    'familia', 'conocidos', 'profesores', 'mascotas',
+                    'yo', 'amigos', 'otros', 'desconocidos', 'desconocido',
+                    'photos', 'icloud', 'icloud photos', 'pictures', 'imagenes', 'imágenes'
                 ];
+                if (invalidExact.includes(lower)) return true;
 
-                if (invalidList.some(inv => lower.includes(inv))) return true;
-
-                if (name.startsWith('_') || name.startsWith('📋') || name.startsWith('⏳')) return true;
-
+                const invalidSubstrings = [
+                    'conmigo', 'sin mi', 'sin mí', 'grupales', 'con amigos', 'familiares',
+                    'para revisar', 'revisar', 'dudosos', '_dudosos',
+                    'personas sin nombre', 'limpieza inteligente',
+                    'recuerdos', 'lugares', 'eventos', 'frases',
+                    'por organizar', 'pendientes', 'masivos'
+                ];
+                if (invalidSubstrings.some(inv => lower.includes(inv))) return true;
+                if (name.startsWith('_') || name.startsWith('📋') || name.startsWith('⏳') || name.startsWith('!') || name.startsWith('⚠️') || name.startsWith('❓') || name.startsWith('🎬') || name.startsWith('📷') || name.startsWith('👤')) return true;
                 return false;
-
             };
 
-
-
-            const isRealPersonFolder = !isInvalidFolderName(folderName) && !isInvalidFolderName(categoryName);
+            const isRealPersonFolder = !isInvalidFolderName(folderName) && !isInvalidFolderName(categoryName) && Boolean(folderName.match(/^[CFPM]\.?\s+/i) || folderName === 'YO' || (typeof identitiesList !== 'undefined' && identitiesList.some(id => id.identidad === folderName)));
 
 
 
@@ -1827,70 +1870,84 @@ async function filterTimeline(year) {
 
 
 
-            // ── Determine AI suggestion (Mutual Exclusion per Photo) ──
-
+            // ── Determine AI suggestion & claimed people in photo (Strict Mutual Exclusion) ──
             const otherAssignedInPhoto = new Set();
+            let ownerAlreadyIdentified = false;
 
             if (typeof currentFaces !== 'undefined' && Array.isArray(currentFaces)) {
-
                 currentFaces.forEach((f, idx) => {
-
                     if (idx !== faceNum - 1) {
-
-                        const id = f.identity;
-
-                        if (id && id !== 'Desconocido' && !id.startsWith('? ') && !id.startsWith('IA ') && !id.startsWith('Falso_')) {
-
-                            otherAssignedInPhoto.add(id);
-
+                        const rawId = f.identity || '';
+                        const cleanId = rawId.replace(/^\?\s*/, '').trim();
+                        const isNonPerson = !cleanId || cleanId === 'Desconocido' || cleanId.startsWith('IA ') || cleanId.startsWith('Falso_') || cleanId.startsWith('Ignorar_') || cleanId.includes('(Sin rostro') || cleanId.toLowerCase().includes('desconocid');
+                        
+                        if (!isNonPerson) {
+                            otherAssignedInPhoto.add(cleanId);
+                            otherAssignedInPhoto.add(rawId);
+                            if (cleanId === folderName || rawId === folderName || f.tag_type === 'dataset' || f.is_owner || f.is_centroid) {
+                                ownerAlreadyIdentified = true;
+                                if (folderName) otherAssignedInPhoto.add(folderName);
+                            }
                         }
-
-                        if (f.is_manual && id) {
-
-                            otherAssignedInPhoto.add(id);
-
+                        if (f.is_manual && cleanId) {
+                            otherAssignedInPhoto.add(cleanId);
+                            if (cleanId === folderName) {
+                                ownerAlreadyIdentified = true;
+                                if (folderName) otherAssignedInPhoto.add(folderName);
+                            }
                         }
-
                     }
-
                 });
-
             }
-
-
 
             let aiPredictedIdObj = null;
-
             let hasAiSuggestion = false;
-
             let suggestedName = face.suggested_identity;
 
-            if (!suggestedName && face.identity && face.identity.startsWith('? ')) {
-
-                suggestedName = face.identity.replace(/^\?\s*/, '');
-
+            if (!suggestedName && face.identity) {
+                if (face.identity.startsWith('? ')) {
+                    const candidate = face.identity.replace(/^\?\s*/, '').trim();
+                    if (!(candidate === folderName && ownerAlreadyIdentified)) {
+                        suggestedName = candidate;
+                    }
+                } else if (face.identity.startsWith('IA (Pendiente): ')) {
+                    const candidate = face.identity.replace('IA (Pendiente): ', '').trim();
+                    if (!(candidate === folderName && ownerAlreadyIdentified)) {
+                        suggestedName = candidate;
+                    }
+                } else if (face.identity.startsWith('IA: ')) {
+                    const candidate = face.identity.replace('IA: ', '').trim();
+                    if (!(candidate === folderName && ownerAlreadyIdentified)) {
+                        suggestedName = candidate;
+                    }
+                } else if (!face.is_manual && face.identity !== 'Desconocido' && !face.identity.startsWith('Falso_') && !face.identity.startsWith('Ignorar_')) {
+                    const candidate = face.identity.replace(/^\?\s*/, '').trim();
+                    if (!(candidate === folderName && ownerAlreadyIdentified)) {
+                        suggestedName = candidate;
+                    }
+                }
             }
 
-            if (!suggestedName && isAssignedToPerson && face.identity !== folderName && !face.is_manual) {
-
-                suggestedName = face.identity;
-
-            }
-
-            // A person cannot be in two different face boxes in the same photo
-
+            // Exclusión mutua: una persona NO puede repetirse en varias caras de la misma foto
             if (suggestedName && otherAssignedInPhoto.has(suggestedName)) {
-
                 suggestedName = null;
+            }
 
+            // Si la sugerencia es el dueño del álbum y el dueño ya ha sido identificado en otra cara, anular
+            if (suggestedName && suggestedName === folderName && ownerAlreadyIdentified) {
+                suggestedName = null;
+            }
+
+            // Si esta cara YA es el dueño confirmado (sin duda), no mostrar sugerencia de sí mismo
+            if (suggestedName && face.identity === folderName && !face.identity.startsWith('? ')) {
+                suggestedName = null;
             }
 
             if (suggestedName && !isInvalidFolderName(suggestedName)) {
-
-                aiPredictedIdObj = identitiesList.find(id => id.identidad === suggestedName) || {categoria: categoryName || 'Familia', identidad: suggestedName};
-
+                const cleanSugg = suggestedName.replace(/^\?\s*/, '').trim();
+                const matchedObj = identitiesList.find(id => id.identidad === cleanSugg || id.identidad === suggestedName);
+                aiPredictedIdObj = matchedObj ? {categoria: matchedObj.categoria, identidad: cleanSugg} : {categoria: categoryName || 'Familia', identidad: cleanSugg};
                 if (aiPredictedIdObj) hasAiSuggestion = true;
-
             }
 
 
@@ -1943,7 +2000,7 @@ async function filterTimeline(year) {
 
                     </div>
 
-                    <div style="font-size:12px; color:#fff; font-weight:600; margin-bottom:7px; padding:0 2px;">${suggestedName}${face.suggested_score ? ` (${Math.round(face.suggested_score * 100)}% certeza)` : ''}</div>
+                    <div style="font-size:12px; color:#fff; font-weight:600; margin-bottom:7px; padding:0 2px;">${(suggestedName||'').replace(/^\?\s*/, '')}${face.suggested_score ? ` (${Math.round(face.suggested_score * 100)}% certeza)` : ''}</div>
 
                     <div style="display:flex; gap:5px;">
 
@@ -1957,7 +2014,7 @@ async function filterTimeline(year) {
 
                         " onmouseover="this.style.background='rgba(48,209,88,0.3)'" onmouseout="this.style.background='rgba(48,209,88,0.15)'">
 
-                            ✓ Sí, es ${suggestedName}
+                            ✓ Sí, es ${(suggestedName||'').replace(/^\?\s*/, '').replace(/^IA\s*\(Pendiente\):\s*/i, '')}
 
                         </button>
 
@@ -1971,7 +2028,7 @@ async function filterTimeline(year) {
 
                         " onmouseover="this.style.background='rgba(255,69,58,0.28)'" onmouseout="this.style.background='rgba(255,69,58,0.12)'">
 
-                            ✗ No es él/ella
+                            ✗ No es ${(suggestedName||'').replace(/^\?\s*/, '').replace(/^IA\s*\(Pendiente\):\s*/i, '')}
 
                         </button>
 
@@ -1983,18 +2040,12 @@ async function filterTimeline(year) {
 
 
 
-            // ── 2. Album owner confirm ONLY IF face is unassigned/unknown AND it's a real person album ──
-
-            if (isRealPersonFolder && !isAssignedToPerson && !hasAiSuggestion) {
-
+            // ── 2. Album owner confirm ONLY IF face is unassigned/unknown AND it's a real person album AND owner is NOT already identified in this photo ──
+            if (isRealPersonFolder && !isAssignedToPerson && !hasAiSuggestion && !ownerAlreadyIdentified && !otherAssignedInPhoto.has(folderName)) {
                 html += makeAction(
-
                     {categoria: categoryName, identidad: folderName},
-
                     `✨ Sí, es ${folderName} (dueño del álbum)`,
-
                     '#30d158', '#30d158'
-
                 );
 
                 html += makeAction(
@@ -2010,6 +2061,12 @@ async function filterTimeline(year) {
             }
 
 
+
+            // ── 2b. Explicit rejection if face has non-manual identity and not already suggested
+            if (!hasAiSuggestion && face.identity && face.identity !== 'Desconocido' && !face.is_manual) {
+                const cleanIdentName = face.identity.replace(/^\?\s*/, '').replace(/^IA\s*\(Pendiente\):\s*/i, '').replace(/^IA:\s*/i, '').trim();
+                html += makeAction({categoria: '_Dudosos', identidad: 'Desconocido'}, `❌ Esta persona NO es ${cleanIdentName}`, '#ff453a', '#ff6961', '700');
+            }
 
             // ── 3. Quick Discard actions ───────────────────────────
 
@@ -2037,11 +2094,11 @@ async function filterTimeline(year) {
 
 
 
-            html += `<div style="position:relative;">`;
+            html += `<div style="position:relative; width:100%;">`;
 
-            html += `<button onclick="let m=document.getElementById('${menuId}'); if(m) m.style.display=m.style.display==='block'?'none':'block'; event.stopPropagation();" style="${dropBtnStyle}"><span>↔ Reasignar a otra persona...</span><span style="opacity:0.5;">▾</span></button>`;
+            html += `<button onclick="openReassignFaceModal(${faceNum}, '${onchangeFuncName}'); event.stopPropagation();" style="${dropBtnStyle}" title="Abrir selector con búsqueda"><span>↔ Reasignar a otra persona...</span><span style="opacity:0.7; font-size:12px;">🔍 ▾</span></button>`;
 
-            html += `<div id="${menuId}" style="display:none; position:absolute; bottom:calc(100% + 4px); left:0; width:240px; max-height:300px; overflow-y:auto; background:#141416; border:1px solid rgba(255,255,255,0.15); z-index:99999; border-radius:10px; padding:6px; box-shadow:0 -10px 30px rgba(0,0,0,0.85);" class="custom-scrollbar">`;
+            html += `<div id="${menuId}" style="display:none; position:relative; width:100%; margin-top:6px; max-height:260px; overflow-y:auto; background:#141416; border:1px solid rgba(255,255,255,0.15); z-index:99999; border-radius:10px; padding:6px; box-shadow:0 8px 24px rgba(0,0,0,0.85);" class="custom-scrollbar">`;
 
 
 
@@ -2066,11 +2123,13 @@ async function filterTimeline(year) {
                 html += `<summary style="cursor:pointer; padding:5px 8px; font-weight:700; color:rgba(255,255,255,0.4); font-size:10px; text-transform:uppercase; letter-spacing:0.6px; background:rgba(255,255,255,0.04); border-radius:5px; margin-bottom:2px; list-style:none; display:flex; align-items:center; gap:4px;">▸ ${cat}</summary>`;
 
                 categories[cat].sort((a, b) => a.identidad.localeCompare(b.identidad)).forEach(id => {
-
-                    const vs = JSON.stringify(id).replace(/"/g, '&quot;');
-
-                    html += `<button style="${innerBtnStyle}" ${hoverScript} onclick="let m=document.getElementById('${menuId}'); if(m) m.style.display='none'; ${onchangeFuncName}('${vs}', ${faceNum})">${typeof cleanDisplayName === 'function' ? cleanDisplayName(id.identidad) : id.identidad}</button>`;
-
+                    const isAlreadyInPhoto = otherAssignedInPhoto.has(id.identidad);
+                    if (isAlreadyInPhoto) {
+                        html += `<button disabled style="${innerBtnStyle} opacity:0.35; cursor:not-allowed;" title="Esta persona ya ha sido identificada en otra cara de esta misma foto">🚫 ${typeof cleanDisplayName === 'function' ? cleanDisplayName(id.identidad) : id.identidad} <span style="font-size:9px; color:#ff9f0a; font-weight:700;">(Ya en foto)</span></button>`;
+                    } else {
+                        const vs = JSON.stringify(id).replace(/"/g, '&quot;');
+                        html += `<button style="${innerBtnStyle}" ${hoverScript} onclick="let m=document.getElementById('${menuId}'); if(m) m.style.display='none'; ${onchangeFuncName}('${vs}', ${faceNum})">${typeof cleanDisplayName === 'function' ? cleanDisplayName(id.identidad) : id.identidad}</button>`;
+                    }
                 });
 
                 html += `</details>`;
@@ -2134,11 +2193,14 @@ async function filterTimeline(year) {
 
 
         async function loadIdentities() {
-
-            const res = await fetch('/api/identities');
-
-            identitiesList = await res.json();
-
+            try {
+                const res = await fetch('/api/identities');
+                if (res.ok) {
+                    identitiesList = await res.json();
+                }
+            } catch (e) {
+                console.warn('loadIdentities non-blocking notice:', e);
+            }
         }
 
 
@@ -3308,7 +3370,9 @@ async function filterTimeline(year) {
                 }
 
                 // Ocultar pantalla de carga en menos de 0.2s sin bloquear al usuario
-                if (isFirstLoad && overlay) {
+                if (typeof window._dismissLoadingOverlay === 'function') {
+                    window._dismissLoadingOverlay();
+                } else if (isFirstLoad && overlay) {
                     overlay.style.opacity = '0';
                     setTimeout(() => {
                         overlay.style.visibility = 'hidden';
@@ -3427,330 +3491,223 @@ async function filterTimeline(year) {
 
 
                 function renderTree() {
-
-            const treeEl = document.getElementById('tree-container');
-
-            if (!treeEl) return;
-
-            treeEl.innerHTML = '';
-
-            
-
-            // Iconos temáticos para cada categoría
-
-            const CAT_ICONS = {
-
-                'YO': '👤',
-
-                'Conocidos': '👥',
-
-                'Familia': '👨‍👩‍👧',
-
-                'Lugares': '📍',
-
-                'Eventos': '🎉',
-
-                'Mascotas': '🐶',
-
-                'Objetos': '🚗',
-
-                'Profesores': '🎓',
-
-                'Recuerdos': '📸',
-
-                'Publicaciones_Instagram': '📱',
-
-                '📋 Revisión / Por Organizar': '📋'
-
-            };
-
-
-
-            // Orden preferido de categorías
-
-            const CAT_ORDER = ['YO', '📋 Revisión / Por Organizar', 'Familia', 'Conocidos', 'Lugares', 'Eventos', 'Mascotas', 'Objetos', 'Recuerdos', 'Profesores', 'Publicaciones_Instagram'];
-
-            
-
-            const categories = Object.keys(fullGallery).sort((a, b) => {
-
-                const idxA = CAT_ORDER.indexOf(a);
-
-                const idxB = CAT_ORDER.indexOf(b);
-
-                if (idxA !== -1 && idxB !== -1) return idxA - idxB;
-
-                if (idxA !== -1) return -1;
-
-                if (idxB !== -1) return 1;
-
-                return a.localeCompare(b);
-
-            });
-
-
-
-            for (const cat of categories) {
-
-                if (cat === '__smart_album__') continue;
-
-                
-
-                const catWrapper = document.createElement('div');
-
-                catWrapper.className = 'tree-category-group';
-
-                catWrapper.style.cssText = 'margin-bottom: 6px; border-radius: 10px; overflow: hidden;';
-
-                
-
-                const totalInCat = Object.values(fullGallery[cat]).reduce((acc, itms) => acc + (Array.isArray(itms) ? itms.length : (typeof itms === 'number' ? itms : 0)), 0);
-
-                const identsCount = Object.keys(fullGallery[cat]).length;
-
-                const icon = CAT_ICONS[cat] || '📁';
-
-                
-
-                // Header Categoría (Clic para desplegar/plegar)
-
-                const catHeader = document.createElement('div');
-
-                catHeader.className = 'tree-folder category-header';
-
-                catHeader.style.cssText = 'display: flex; align-items: center; justify-content: space-between; padding: 9px 12px; background: rgba(255,255,255,0.03); border-radius: 8px; cursor: pointer; transition: all 0.2s; font-weight: 700; font-size: 0.84rem; color: #fff; user-select: none; border: 1px solid rgba(255,255,255,0.05);';
-
-                
-
-                const leftPart = document.createElement('div');
-
-                leftPart.style.cssText = 'display: flex; align-items: center; gap: 8px;';
-
-                leftPart.innerHTML = `<span>${icon}</span> <span>${cat}</span>`;
-
-                
-
-                const rightPart = document.createElement('div');
-
-                rightPart.style.cssText = 'display: flex; align-items: center; gap: 6px;';
-
-                rightPart.innerHTML = `
-
-                    <span style="font-size: 11px; color: #8e8e93; font-weight: 500;">${identsCount}</span>
-
-                    <svg class="chevron-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#8e8e93" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transition: transform 0.2s; transform: rotate(0deg);"><polyline points="6 9 12 15 18 9"></polyline></svg>
-
-                `;
-
-                
-
-                catHeader.appendChild(leftPart);
-
-                catHeader.appendChild(rightPart);
-
-                
-
-                // Contenedor de Sub-Álbumes (Plegado por defecto)
-
-                const identsList = document.createElement('div');
-
-                identsList.className = 'category-idents-list';
-
-                identsList.style.cssText = 'display: none; padding-left: 8px; margin-top: 3px; display: flex; flex-direction: column; gap: 2px;';
-
-                identsList.style.display = 'none'; // PLEGADO POR DEFECTO
-
-                
-
-                catHeader.onclick = () => {
-
-                    const isOpen = identsList.style.display === 'flex';
-
-                    identsList.style.display = isOpen ? 'none' : 'flex';
-
-                    catHeader.querySelector('.chevron-icon').style.transform = isOpen ? 'rotate(0deg)' : 'rotate(180deg)';
-
-                    catHeader.style.background = isOpen ? 'rgba(255,255,255,0.03)' : 'rgba(10,132,255,0.12)';
-
-                    // Lazy-load avatars when category opens for the first time
-
-                    if (!isOpen) {
-
-                        identsList.querySelectorAll('img[data-avatar-src]').forEach(img => {
-
-                            if (!img.src || img.src === window.location.href) {
-
-                                img.src = img.dataset.avatarSrc;
-
-                            }
-
-                        });
-
-                    }
-
-                };
-
-                
-
-                const sortedIdents = Object.keys(fullGallery[cat]).sort((a, b) => a.localeCompare(b));
-
-                for (const ident of sortedIdents) {
-
-                    const identEl = document.createElement('div');
-
-                    identEl.className = 'tree-folder identity-item';
-
-                    identEl.style.cssText = 'display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; border-radius: 6px; cursor: pointer; font-size: 0.8rem; color: #ccc; transition: all 0.15s; gap: 6px;';
-
-                    
-
-                    const count = Array.isArray(fullGallery[cat][ident]) ? fullGallery[cat][ident].length : (typeof fullGallery[cat][ident] === 'number' ? fullGallery[cat][ident] : 0);
-
-
-
-                    // Determine if this ident is a person (should get avatar) or a special category
-
-                    const isSpecial = ident.includes('Sin Rostro') || ident.includes('Vídeos') ||
-
-                                      ident.includes('Dudosos') || ident.includes('Desconocidos') ||
-
-                                      ident.includes('Pendientes');
-
-                    let displayIcon = '';
-
-                    if (ident.includes('Sin Rostro')) displayIcon = '📷';
-
-                    else if (ident.includes('Vídeos')) displayIcon = '🎬';
-
-                    else if (ident.includes('Dudosos')) displayIcon = '⚠️';
-
-                    else if (ident.includes('Desconocidos')) displayIcon = '❓';
-
-                    else if (ident.includes('Persona Nueva')) displayIcon = '👤';
-
-
-
-                    // Left part: avatar or emoji + name
-
-                    const leftDiv = document.createElement('div');
-
-                    leftDiv.style.cssText = 'display:flex; align-items:center; gap:7px; min-width:0; flex:1;';
-
-
-
-                    if (isSpecial || displayIcon) {
-
-                        const iconSpan = document.createElement('span');
-
-                        iconSpan.style.cssText = 'font-size:14px; flex-shrink:0;';
-
-                        iconSpan.textContent = displayIcon || '📁';
-
-                        leftDiv.appendChild(iconSpan);
-
-                    } else {
-
-                        // Lazy avatar — loads only when the sidebar category is opened
-
-                        const avatarImg = document.createElement('img');
-
-                        avatarImg.className = 'sidebar-person-avatar';
-
-                        avatarImg.alt = '';
-
-                        avatarImg.loading = 'lazy';
-
-                        // Set src lazily when the element becomes visible
-
-                        avatarImg.dataset.avatarSrc = `/api/person_avatar?cat=${encodeURIComponent(cat)}&ident=${encodeURIComponent(ident)}`;
-
-                        avatarImg.onerror = () => {
-
-                            const ph = document.createElement('span');
-
-                            ph.className = 'sidebar-person-avatar-placeholder';
-
-                            ph.textContent = (ident[0] || '?').toUpperCase();
-
-                            avatarImg.replaceWith(ph);
-
-                        };
-
-                        leftDiv.appendChild(avatarImg);
-
-                    }
-
-
-
-                    const nameSpan = document.createElement('span');
-
-                    nameSpan.style.cssText = 'white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:1;';
-
-                    nameSpan.textContent = ident;
-
-                    leftDiv.appendChild(nameSpan);
-
-
-
-                    const countBadge = document.createElement('span');
-
-                    countBadge.className = 'badge-count';
-
-                    countBadge.style.cssText = 'font-size:10px; background:rgba(255,255,255,0.08); padding:2px 6px; border-radius:10px; color:#8e8e93; flex-shrink:0;';
-
-                    countBadge.textContent = count;
-
-
-
-                    identEl.appendChild(leftDiv);
-
-                    identEl.appendChild(countBadge);
-
-                    
-
-                    identEl.onclick = (e) => {
-
-                        e.stopPropagation();
-
-                        document.querySelectorAll('.identity-item').forEach(el => {
-
-                            el.style.background = 'transparent';
-
-                            el.style.color = '#ccc';
-
-                        });
-
-                        identEl.style.background = 'rgba(10,132,255,0.2)';
-
-                        identEl.style.color = '#fff';
-
-                        renderGrid(cat, ident);
-
-                        if (window.innerWidth <= 820 && typeof toggleSidebar === 'function') {
-
-                            toggleSidebar(false);
-
-                        }
-
-                    };
-
-                    identsList.appendChild(identEl);
-
-                }
-
-                
-
-                catWrapper.appendChild(catHeader);
-
-                catWrapper.appendChild(identsList);
-
-                treeEl.appendChild(catWrapper);
-
-            }
-
+            renderCategoriesRoot();
         }
 
+        window._activeDrillDownCategory = null;
 
+        const CAT_ICONS = {
+            'YO': '👤',
+            'Conocidos': '👥',
+            'Familia': '👨‍👩‍👧',
+            'Lugares': '📍',
+            'Eventos': '🎉',
+            'Mascotas': '🐶',
+            'Objetos': '🚗',
+            'Profesores': '🎓',
+            'Recuerdos': '📸',
+            'Publicaciones_Instagram': '📱',
+            '📋 Revisión / Por Organizar': '📋'
+        };
+
+        const CAT_ORDER = ['YO', '📋 Revisión / Por Organizar', 'Familia', 'Conocidos', 'Lugares', 'Eventos', 'Mascotas', 'Objetos', 'Recuerdos', 'Profesores', 'Publicaciones_Instagram'];
+
+        function renderCategoriesRoot() {
+            window._activeDrillDownCategory = null;
+            const treeEl = document.getElementById('tree-container');
+            if (!treeEl) return;
+            treeEl.innerHTML = '';
+
+            const categories = Object.keys(fullGallery || {}).sort((a, b) => {
+                const idxA = CAT_ORDER.indexOf(a);
+                const idxB = CAT_ORDER.indexOf(b);
+                if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+                if (idxA !== -1) return -1;
+                if (idxB !== -1) return 1;
+                return a.localeCompare(b);
+            });
+
+            const rootList = document.createElement('div');
+            rootList.className = 'ios-categories-root';
+            rootList.style.cssText = 'display:flex; flex-direction:column; gap:4px; animation:fadeIn 0.15s ease-out;';
+
+            for (const cat of categories) {
+                if (cat === '__smart_album__') continue;
+
+                const subObj = fullGallery[cat] || {};
+                const identsCount = Object.keys(subObj).length;
+                const totalInCat = Object.values(subObj).reduce((acc, itms) => acc + (Array.isArray(itms) ? itms.length : (typeof itms === 'number' ? itms : 0)), 0);
+                const icon = CAT_ICONS[cat] || '📁';
+
+                const catRow = document.createElement('div');
+                catRow.className = 'ios-category-card';
+                catRow.style.cssText = 'display:flex; align-items:center; justify-content:space-between; padding:12px 14px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.06); border-radius:12px; cursor:pointer; transition:all 0.15s; user-select:none;';
+                
+                catRow.onmouseover = () => { catRow.style.background = 'rgba(255,255,255,0.07)'; catRow.style.borderColor = 'rgba(10,132,255,0.3)'; };
+                catRow.onmouseout = () => { catRow.style.background = 'rgba(255,255,255,0.03)'; catRow.style.borderColor = 'rgba(255,255,255,0.06)'; };
+
+                const isSpecialRevision = cat === '📋 Revisión / Por Organizar';
+
+                catRow.innerHTML = `
+                    <div style="display:flex; align-items:center; gap:10px; min-width:0;">
+                        <span style="font-size:1.15rem; width:26px; height:26px; display:flex; align-items:center; justify-content:center; border-radius:8px; background:${isSpecialRevision ? 'rgba(255,159,10,0.15)' : 'rgba(255,255,255,0.05)'};">${icon}</span>
+                        <div style="min-width:0;">
+                            <div style="font-size:0.88rem; font-weight:700; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${cat}</div>
+                            <div style="font-size:0.72rem; color:#8e8e93; font-weight:500;">${identsCount} sub-álbumes • ${totalInCat} fotos</div>
+                        </div>
+                    </div>
+                    <div style="display:flex; align-items:center; gap:6px;">
+                        ${isSpecialRevision && totalInCat > 0 ? `<span style="font-size:10px; font-weight:700; background:rgba(255,159,10,0.2); color:#ff9f0a; border:1px solid rgba(255,159,10,0.4); padding:2px 7px; border-radius:10px;">${totalInCat}</span>` : ''}
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#8e8e93" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                    </div>
+                `;
+
+                if (cat === 'YO') {
+                    catRow.onclick = () => {
+                        renderGrid('YO', 'YO');
+                        if (window.innerWidth <= 820 && typeof toggleSidebar === 'function') {
+                            toggleSidebar(false);
+                        }
+                    };
+                } else {
+                    catRow.onclick = () => {
+                        openCategoryDrillDown(cat);
+                    };
+                }
+
+                rootList.appendChild(catRow);
+            }
+
+            treeEl.appendChild(rootList);
+        }
+
+        function openCategoryDrillDown(cat) {
+            window._activeDrillDownCategory = cat;
+            const treeEl = document.getElementById('tree-container');
+            if (!treeEl) return;
+            treeEl.innerHTML = '';
+
+            const subObj = fullGallery[cat] || {};
+            const sortedIdents = Object.keys(subObj).sort((a, b) => a.localeCompare(b));
+            const icon = CAT_ICONS[cat] || '📁';
+
+            const drillDownWrapper = document.createElement('div');
+            drillDownWrapper.className = 'ios-drilldown-container';
+            drillDownWrapper.style.cssText = 'display:flex; flex-direction:column; gap:8px; animation:slideInRight 0.18s cubic-bezier(0.16, 1, 0.3, 1);';
+
+            // Apple Style Navigation Header (Back button + Title)
+            const navBar = document.createElement('div');
+            navBar.style.cssText = 'display:flex; align-items:center; justify-content:space-between; padding:4px 2px 8px; border-bottom:1px solid rgba(255,255,255,0.06); margin-bottom:4px;';
+            navBar.innerHTML = `
+                <button id="btn-drilldown-back" onclick="renderCategoriesRoot()" style="display:flex; align-items:center; gap:4px; background:transparent; border:none; color:#0a84ff; font-size:0.86rem; font-weight:600; cursor:pointer; padding:6px 4px; border-radius:6px; transition:all 0.15s;">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#0a84ff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
+                    <span>Álbumes</span>
+                </button>
+                <div style="font-size:0.88rem; font-weight:700; color:#fff; display:flex; align-items:center; gap:6px;">
+                    <span>${icon}</span>
+                    <span style="max-width:140px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${cat}</span>
+                    <span style="font-size:0.75rem; color:#8e8e93; font-weight:500;">(${sortedIdents.length})</span>
+                </div>
+            `;
+            drillDownWrapper.appendChild(navBar);
+
+            // iOS Instant Search Bar for Category Items
+            const searchBar = document.createElement('div');
+            searchBar.style.cssText = 'position:relative; margin-bottom:6px;';
+            searchBar.innerHTML = `
+                <span style="position:absolute; left:10px; top:50%; transform:translateY(-50%); font-size:12px; color:#8e8e93; pointer-events:none;">🔍</span>
+                <input type="text" id="drilldown-search-input" placeholder="Buscar en ${cat}..." style="width:100%; box-sizing:border-box; padding:7px 12px 7px 28px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.1); border-radius:10px; color:#fff; font-size:0.8rem; outline:none; transition:border-color 0.15s;" onfocus="this.style.borderColor='#0a84ff'" onblur="this.style.borderColor='rgba(255,255,255,0.1)'">
+            `;
+            drillDownWrapper.appendChild(searchBar);
+
+            // Container for Identity Items
+            const itemsList = document.createElement('div');
+            itemsList.id = 'drilldown-items-list';
+            itemsList.style.cssText = 'display:flex; flex-direction:column; gap:3px; max-height:calc(100vh - 210px); overflow-y:auto; padding-right:2px;';
+
+            sortedIdents.forEach(ident => {
+                const count = Array.isArray(subObj[ident]) ? subObj[ident].length : (typeof subObj[ident] === 'number' ? subObj[ident] : 0);
+                const isSpecial = ident.includes('Sin Rostro') || ident.includes('Vídeos') || ident.includes('Dudosos') || ident.includes('Desconocidos') || ident.includes('Pendientes');
+                
+                let displayIcon = '';
+                if (ident.includes('Sin Rostro')) displayIcon = '📷';
+                else if (ident.includes('Vídeos')) displayIcon = '🎬';
+                else if (ident.includes('Dudosos')) displayIcon = '⚠️';
+                else if (ident.includes('Desconocidos')) displayIcon = '❓';
+                else if (ident.includes('Persona Nueva')) displayIcon = '👤';
+
+                const identEl = document.createElement('div');
+                identEl.className = 'drilldown-identity-row';
+                identEl.dataset.identName = ident.toLowerCase();
+                identEl.style.cssText = 'display:flex; align-items:center; justify-content:space-between; padding:8px 10px; border-radius:8px; cursor:pointer; font-size:0.82rem; color:#ddd; transition:all 0.15s; background:rgba(255,255,255,0.02);';
+
+                identEl.onmouseover = () => { identEl.style.background = 'rgba(10,132,255,0.15)'; identEl.style.color = '#fff'; };
+                identEl.onmouseout = () => { identEl.style.background = 'rgba(255,255,255,0.02)'; identEl.style.color = '#ddd'; };
+
+                const leftDiv = document.createElement('div');
+                leftDiv.style.cssText = 'display:flex; align-items:center; gap:8px; min-width:0; flex:1;';
+
+                if (isSpecial || displayIcon) {
+                    const iconSpan = document.createElement('span');
+                    iconSpan.style.cssText = 'font-size:14px; width:24px; text-align:center; flex-shrink:0;';
+                    iconSpan.textContent = displayIcon || '📁';
+                    leftDiv.appendChild(iconSpan);
+                } else {
+                    const avatarImg = document.createElement('img');
+                    avatarImg.className = 'sidebar-person-avatar';
+                    avatarImg.alt = '';
+                    avatarImg.loading = 'lazy';
+                    avatarImg.src = `/api/person_avatar?cat=${encodeURIComponent(cat)}&ident=${encodeURIComponent(ident)}`;
+                    avatarImg.style.cssText = 'width:24px; height:24px; border-radius:50%; object-fit:cover; flex-shrink:0; background:#2c2c2e;';
+                    avatarImg.onerror = () => {
+                        const ph = document.createElement('span');
+                        ph.className = 'sidebar-person-avatar-placeholder';
+                        ph.style.cssText = 'width:24px; height:24px; border-radius:50%; background:#2c2c2e; display:flex; align-items:center; justify-content:center; font-size:10px; font-weight:700; color:#8e8e93; flex-shrink:0;';
+                        ph.textContent = (ident[0] || '?').toUpperCase();
+                        avatarImg.replaceWith(ph);
+                    };
+                    leftDiv.appendChild(avatarImg);
+                }
+
+                const nameSpan = document.createElement('span');
+                nameSpan.style.cssText = 'white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:1; font-weight:500;';
+                nameSpan.textContent = ident;
+                leftDiv.appendChild(nameSpan);
+
+                const countBadge = document.createElement('span');
+                countBadge.style.cssText = 'font-size:10.5px; background:rgba(255,255,255,0.08); padding:2px 7px; border-radius:10px; color:#8e8e93; font-weight:600; flex-shrink:0;';
+                countBadge.textContent = count;
+
+                identEl.appendChild(leftDiv);
+                identEl.appendChild(countBadge);
+
+                identEl.onclick = (e) => {
+                    e.stopPropagation();
+                    renderGrid(cat, ident);
+                    if (window.innerWidth <= 820 && typeof toggleSidebar === 'function') {
+                        toggleSidebar(false);
+                    }
+                };
+
+                itemsList.appendChild(identEl);
+            });
+
+            drillDownWrapper.appendChild(itemsList);
+            treeEl.appendChild(drillDownWrapper);
+
+            // Connect search input filter
+            const searchInput = document.getElementById('drilldown-search-input');
+            if (searchInput) {
+                searchInput.addEventListener('input', (e) => {
+                    const term = (e.target.value || '').toLowerCase().trim();
+                    const rows = itemsList.querySelectorAll('.drilldown-identity-row');
+                    rows.forEach(r => {
+                        const name = r.dataset.identName || '';
+                        r.style.display = (!term || name.includes(term)) ? 'flex' : 'none';
+                    });
+                });
+            }
+        }
 
         function filterGallery(term) {
 
@@ -3918,24 +3875,60 @@ async function filterTimeline(year) {
 
             
 
-            const dudosoBtn = document.getElementById('filter-dudoso-btn');
-
-            const dudosoCountEl = document.getElementById('dudoso-count');
-
-            if (dudosoBtn) {
-
-                if (dudosoCount > 0) {
-
-                    dudosoBtn.style.display = 'inline-flex';
-
-                    if (dudosoCountEl) dudosoCountEl.textContent = dudosoCount;
-
+                        // Screenshot Antiquity Filter bar visibility check
+            const ssFilterContainer = document.getElementById('screenshot-filter-container');
+            const isCapturasContext = Boolean((ident && /captura/i.test(ident)) || (cat && /captura/i.test(cat)) || items.some(it => (it.name && /screenshot|captura|screen/i.test(it.name))));
+            if (ssFilterContainer) {
+                if (isCapturasContext) {
+                    ssFilterContainer.style.display = 'inline-flex';
+                    if (typeof window.updateStaleScreenshotsCount === 'function') window.updateStaleScreenshotsCount();
                 } else {
-
-                    dudosoBtn.style.display = 'none';
-
+                    ssFilterContainer.style.display = 'none';
+                    window.currentScreenshotAgeFilter = 'all';
                 }
+            }
 
+            const dudosoBtn = document.getElementById('filter-dudoso-btn');
+            const dudosoCountEl = document.getElementById('dudoso-count');
+            if (dudosoBtn) {
+                if (dudosoCount > 0) {
+                    dudosoBtn.style.display = 'inline-flex';
+                    if (dudosoCountEl) dudosoCountEl.textContent = dudosoCount;
+                } else {
+                    dudosoBtn.style.display = 'none';
+                }
+            }
+
+            // Person 3-Tier Filter Bar: Official, Suggestion, Review (Por Confirmar)
+            let officialCount = 0, suggestionCount = 0, reviewCount = 0;
+            items.forEach(it => {
+                const sec = it.album_section || (it.is_dudoso ? 'review' : ((it.is_dataset || it.is_manual || (it.source && it.source.includes('Dataset'))) ? 'official' : 'suggestion'));
+                it.album_section = sec;
+                if (sec === 'official') officialCount++;
+                else if (sec === 'review') reviewCount++;
+                else suggestionCount++;
+            });
+
+            const tierFilterContainer = document.getElementById('person-tier-filter-container');
+            const isPersonAlbum = ['Conocidos', 'Familia', 'YO', 'Profesores', 'Mascotas'].includes(cat) && !ident.includes('conmigo') && !ident.includes('sin mí') && !ident.includes('grupal');
+            
+            if (tierFilterContainer) {
+                if (isPersonAlbum) {
+                    tierFilterContainer.style.display = 'inline-flex';
+                    const elAll = document.getElementById('tier-all-count');
+                    const elOff = document.getElementById('tier-official-count');
+                    const elSug = document.getElementById('tier-suggestion-count');
+                    const elRev = document.getElementById('tier-review-count');
+                    const btnRev = document.getElementById('filter-tier-review');
+                    if (elAll) elAll.textContent = total;
+                    if (elOff) elOff.textContent = officialCount;
+                    if (elSug) elSug.textContent = suggestionCount;
+                    if (elRev) elRev.textContent = reviewCount;
+                    if (btnRev) btnRev.style.display = reviewCount > 0 ? 'inline-flex' : 'none';
+                } else {
+                    tierFilterContainer.style.display = 'none';
+                    window.currentTierFilter = 'all';
+                }
             }
 
 
@@ -3946,7 +3939,13 @@ async function filterTimeline(year) {
 
             if (titleEl) {
 
-                titleEl.innerHTML = `${cat} <span style="color:rgba(255,255,255,0.35); margin:0 5px; font-weight:400; font-size:0.9em;">›</span> <span style="color:#fff;">${ident}</span>`;
+                if (cat === 'YO' && ident === 'YO') {
+                    titleEl.innerHTML = `<span style="color:#fff;">👤 YO</span>`;
+                } else if (cat === ident) {
+                    titleEl.innerHTML = `<span style="color:#fff;">${ident}</span>`;
+                } else {
+                    titleEl.innerHTML = `${cat} <span style="color:rgba(255,255,255,0.35); margin:0 5px; font-weight:400; font-size:0.9em;">›</span> <span style="color:#fff;">${ident}</span>`;
+                }
 
             }
 
@@ -4087,8 +4086,8 @@ async function filterTimeline(year) {
                 grid.style.padding = isMobileScreen ? '10px 10px 80px 10px' : '16px 20px 80px 20px';
 
                 _currentGridItems = items;
-
                 _gridRenderIndex = 0;
+                window._lastRenderedTier = null;
 
                 
 
@@ -4167,8 +4166,51 @@ async function filterTimeline(year) {
             
 
             chunk.forEach((item, relativeIdx) => {
-
                 const idx = _gridRenderIndex + relativeIdx;
+                const isPersonAlbum = ['Conocidos', 'Familia', 'YO', 'Profesores', 'Mascotas'].includes(currentCat) && !currentIdent.includes('conmigo') && !currentIdent.includes('sin mí') && !currentIdent.includes('grupal');
+                const itemTier = item.album_section || (item.is_dudoso ? 'review' : ((item.is_dataset || item.is_manual) ? 'official' : 'suggestion'));
+
+                // Render Section Header if section changes (only in full view)
+                if (isPersonAlbum && (!window.currentTierFilter || window.currentTierFilter === 'all') && (!currentPhotoFilterMode || currentPhotoFilterMode === 'all')) {
+                    if (itemTier !== window._lastRenderedTier) {
+                        window._lastRenderedTier = itemTier;
+                        const tierHeader = document.createElement('div');
+                        tierHeader.className = `album-tier-header tier-header-${itemTier}`;
+                        tierHeader.dataset.tier = itemTier;
+                        const isFirst = (relativeIdx === 0 && _gridRenderIndex === 0);
+                        tierHeader.style.cssText = `
+                            grid-column: 1 / -1;
+                            width: 100%;
+                            margin: ${isFirst ? '4px 0 10px 0' : '22px 0 10px 0'};
+                            padding: 10px 14px;
+                            border-radius: 10px;
+                            display: flex;
+                            align-items: center;
+                            justify-content: space-between;
+                            box-sizing: border-box;
+                            background: ${itemTier === 'official' ? 'rgba(48,209,88,0.08)' : (itemTier === 'review' ? 'rgba(255,159,10,0.09)' : 'rgba(10,132,255,0.08)')};
+                            border: 1px solid ${itemTier === 'official' ? 'rgba(48,209,88,0.25)' : (itemTier === 'review' ? 'rgba(255,159,10,0.3)' : 'rgba(10,132,255,0.25)')};
+                            border-left: 4px solid ${itemTier === 'official' ? '#30d158' : (itemTier === 'review' ? '#ff9f0a' : '#0a84ff')};
+                        `;
+                        const titleText = itemTier === 'official' 
+                            ? '🔒 Fotos Oficiales y Confirmadas' 
+                            : (itemTier === 'review' ? '⚠️ Por Confirmar / Posibles Coincidencias' : '✨ Sugerencias de la IA');
+                        const descText = itemTier === 'official'
+                            ? 'Dataset original verificado y fotos confirmadas manualmente al 100%'
+                            : (itemTier === 'review' ? 'Fotos dudosas o con menor certeza — confirma o descarta con 1 clic' : 'Detecciones con alta probabilidad encontradas automáticamente por la red neuronal');
+                        const pillColor = itemTier === 'official' ? '#30d158' : (itemTier === 'review' ? '#ff9f0a' : '#0a84ff');
+
+                        tierHeader.innerHTML = `
+                            <div>
+                                <div style="font-weight:700; font-size:13px; color:#fff; display:flex; align-items:center; gap:8px;">
+                                    <span>${titleText}</span>
+                                </div>
+                                <div style="font-size:11px; color:#8e8e93; margin-top:2px;">${descText}</div>
+                            </div>
+                        `;
+                        grid.appendChild(tierHeader);
+                    }
+                }
 
                 const card = document.createElement('div');
 
@@ -4268,6 +4310,35 @@ async function filterTimeline(year) {
 
 
 
+                // Inline Quick Action Bar for Review / Por Confirmar cards
+                if (itemTier === 'review' || item.is_dudoso) {
+                    const inlineBar = document.createElement('div');
+                    inlineBar.className = 'card-inline-confirm-bar';
+                    inlineBar.style.cssText = 'position:absolute; bottom:6px; left:6px; right:6px; display:flex; gap:4px; z-index:10; background:rgba(0,0,0,0.85); backdrop-filter:blur(6px); -webkit-backdrop-filter:blur(6px); padding:4px; border-radius:8px;';
+
+                    const confirmBtn = document.createElement('button');
+                    confirmBtn.innerHTML = '✔ Confirmar';
+                    confirmBtn.style.cssText = 'flex:1; background:#30d158; color:#000; font-weight:700; font-size:11px; border:none; border-radius:5px; padding:5px 2px; cursor:pointer;';
+                    confirmBtn.title = `Confirmar que pertenece a ${currentIdent}`;
+                    confirmBtn.onclick = (e) => {
+                        e.stopPropagation();
+                        window.confirmPhotoInline(confirmBtn, encodeURIComponent(item.path), encodeURIComponent(currentCat), encodeURIComponent(currentIdent));
+                    };
+
+                    const rejectBtn = document.createElement('button');
+                    rejectBtn.innerHTML = '✖ No es';
+                    rejectBtn.style.cssText = 'flex:1; background:rgba(255,69,58,0.85); color:#fff; font-weight:700; font-size:11px; border:none; border-radius:5px; padding:5px 2px; cursor:pointer;';
+                    rejectBtn.title = `Descartar de ${currentIdent}`;
+                    rejectBtn.onclick = (e) => {
+                        e.stopPropagation();
+                        window.rejectPhotoInline(rejectBtn, encodeURIComponent(item.path), encodeURIComponent(currentCat), encodeURIComponent(currentIdent));
+                    };
+
+                    inlineBar.appendChild(confirmBtn);
+                    inlineBar.appendChild(rejectBtn);
+                    card.appendChild(inlineBar);
+                }
+
                 // OS Device Origin Badge
 
                 const osBadge = document.createElement('span');
@@ -4306,13 +4377,31 @@ async function filterTimeline(year) {
 
                 card.appendChild(osBadge);
 
-                // Centroid cover badge or pending video badge
-                if (item.is_centroid_cover || (item.name && item.name.startsWith('!00_')) || (item.path && item.path.includes('!00_CARA_CENTROIDE'))) {
-                    const coverBadge = document.createElement('span');
-                    coverBadge.style.cssText = 'position:absolute; bottom:8px; left:8px; background:linear-gradient(135deg, #ffd700, #ff9f0a); color:#000; font-weight:800; font-size:10px; padding:2px 7px; border-radius:6px; box-shadow:0 2px 8px rgba(0,0,0,0.5); z-index:10;';
-                    coverBadge.textContent = '🌟 Centroide';
-                    card.appendChild(coverBadge);
-                } else if (item.needs_face_analysis || item.status === 'Pendiente de Análisis') {
+                // Screenshot Antiquity Badge
+                const isScreenshotItem = Boolean((item.name && /screenshot|captura|screen/i.test(item.name)) || (item.path && item.path.includes('Capturas')));
+                if (isScreenshotItem) {
+                    const nowSec = Date.now() / 1000;
+                    const mtime = item.mtime || nowSec;
+                    const diffDays = Math.max(0, Math.floor((nowSec - mtime) / 86400));
+                    const ssAgeBadge = document.createElement('span');
+                    ssAgeBadge.className = 'screenshot-age-badge';
+                    if (diffDays >= 365) {
+                        const years = Math.floor(diffDays / 365);
+                        ssAgeBadge.textContent = `🗄️ Hace ${years > 1 ? years + 'a' : '1a'}`;
+                        ssAgeBadge.style.cssText = 'position:absolute; bottom:8px; right:8px; background:rgba(255,69,58,0.88); color:#fff; font-weight:700; font-size:10px; padding:2px 7px; border-radius:6px; box-shadow:0 2px 8px rgba(0,0,0,0.5); z-index:10; backdrop-filter:blur(6px); border:1px solid rgba(255,255,255,0.25);';
+                        ssAgeBadge.title = `Captura guardada hace ${diffDays} días (~${years} años)`;
+                        card.appendChild(ssAgeBadge);
+                    } else if (diffDays >= 90) {
+                        const months = Math.floor(diffDays / 30);
+                        ssAgeBadge.textContent = `⏳ Hace ${months}m`;
+                        ssAgeBadge.style.cssText = 'position:absolute; bottom:8px; right:8px; background:rgba(255,159,10,0.88); color:#fff; font-weight:700; font-size:10px; padding:2px 7px; border-radius:6px; box-shadow:0 2px 8px rgba(0,0,0,0.5); z-index:10; backdrop-filter:blur(6px); border:1px solid rgba(255,255,255,0.25);';
+                        ssAgeBadge.title = `Captura guardada hace ${diffDays} días (~${months} meses)`;
+                        card.appendChild(ssAgeBadge);
+                    }
+                }
+
+                // Pending video badge
+                if (item.needs_face_analysis || item.status === 'Pendiente de Análisis') {
                     const pendBadge = document.createElement('span');
                     pendBadge.style.cssText = 'position:absolute; bottom:8px; left:8px; background:rgba(255,159,10,0.95); color:#fff; font-weight:700; font-size:10px; padding:2px 7px; border-radius:6px; box-shadow:0 2px 8px rgba(0,0,0,0.5); z-index:10;';
                     pendBadge.textContent = '☁️ Por Analizar';
@@ -5946,9 +6035,33 @@ async function openLightbox(item) {
 
     if (dupContainer) dupContainer.innerHTML = '';
 
-    const cardsContainer = document.getElementById('person-cards-container');
+    // Fast-resolve known zero faces to eliminate infinite spinners
+    const knownFaces = (item.num_faces !== undefined ? item.num_faces : (item.faces_count !== undefined ? item.faces_count : (Array.isArray(item.faces) ? item.faces.length : null)));
+    const isZeroFaces = knownFaces === 0 || item.status === 'Fotos Sin Rostro' || (item.ident && item.ident.includes('Sin Rostro')) || (item.category && item.category.includes('Sin_Rostro'));
 
-    if (cardsContainer) cardsContainer.innerHTML = '<div style="padding:20px; text-align:center;"><div class="loader-small"></div></div>';
+    const mobileCountEl = document.getElementById('mobile-faces-count');
+    if (mobileCountEl) mobileCountEl.textContent = isZeroFaces ? '0' : (knownFaces !== null ? knownFaces : '...');
+    const topBtnLabel = document.querySelector('#btn-toggle-lb-panel .lb-btn-label');
+    if (topBtnLabel) topBtnLabel.textContent = isZeroFaces ? 'Caras (0)' : (knownFaces !== null ? `Caras (${knownFaces})` : 'Caras');
+
+    const cardsContainer = document.getElementById('person-cards-container');
+    if (cardsContainer) {
+        if (isZeroFaces) {
+            cardsContainer.innerHTML = `
+                <div style="padding:28px 16px; text-align:center; color:#8e8e93;">
+                    <div style="font-size:28px; margin-bottom:8px; opacity:0.6;">📷</div>
+                    <div style="font-size:13px; font-weight:600; color:#fff; margin-bottom:4px;">Sin personas detectadas</div>
+                    <div style="font-size:11px; line-height:1.4;">No se encontraron caras registradas en esta foto.</div>
+                    <button onclick="runAnalysis(true)" style="margin-top:14px; padding:6px 14px; border-radius:12px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); color:#64d2ff; font-size:11px; font-weight:600; cursor:pointer;">🔍 Forzar detección</button>
+                </div>`;
+        } else {
+            cardsContainer.innerHTML = `
+                <div id="lb-faces-loading-state" style="padding:24px 16px; text-align:center; color:#8e8e93;">
+                    <div class="loader-small" style="margin:0 auto 10px auto;"></div>
+                    <div style="font-size:12px; font-weight:600; color:#fff; margin-bottom:4px;">Cargando caras...</div>
+                </div>`;
+        }
+    }
 
     
 
@@ -6330,7 +6443,7 @@ async function openLightbox(item) {
 
 
 
-async function runAnalysis() {
+async function runAnalysis(force=false) {
 
             if (!currentFileObj) return;
 
@@ -6338,34 +6451,42 @@ async function runAnalysis() {
 
             const container = document.getElementById('lb-media-container');
 
-            const mediaEl = container.querySelector('.lb-media-element');
+            const mediaEl = container ? container.querySelector('.lb-media-element') : null;
 
-            if (!mediaEl) return;
-
-            
-
-            if (isCurrentVideo && !mediaEl.paused) {
+            if (isCurrentVideo && mediaEl && !mediaEl.paused) {
 
                 mediaEl.pause();
 
             }
 
-            
-
             document.querySelectorAll('.lb-bounding-box').forEach(b => b.remove());
 
             const cardsContainer = document.getElementById('person-cards-container');
 
-            cardsContainer.innerHTML = '<div style="padding:20px; text-align:center;"><div class="loader-small"></div></div>';
+            if (cardsContainer && force) {
+                cardsContainer.innerHTML = '<div id="lb-faces-loading-state" style="padding:24px 16px; text-align:center; color:#8e8e93;"><div class="loader-small" style="margin:0 auto 10px auto;"></div><div style="font-size:12px; font-weight:600; color:#fff; margin-bottom:4px;">Escaneando caras...</div></div>';
+            }
 
-            
+            // Safety watchdog timer (3 seconds max before displaying helper state)
+            const loadingWatchdog = setTimeout(() => {
+                const loadingEl = document.getElementById('lb-faces-loading-state');
+                if (loadingEl && cardsContainer && currentFileObj && currentFileObj.path === currentRunPath) {
+                    cardsContainer.innerHTML = `
+                        <div style="padding:22px 16px; text-align:center; color:#8e8e93;">
+                            <div style="font-size:24px; margin-bottom:6px;">⏳</div>
+                            <div style="font-size:12px; font-weight:600; color:#fff; margin-bottom:4px;">Detección en curso...</div>
+                            <div style="font-size:11px; margin-bottom:12px;">El análisis está tomando unos segundos más.</div>
+                            <button onclick="runAnalysis(true)" style="padding:6px 14px; border-radius:10px; background:rgba(10,132,255,0.15); border:1px solid rgba(10,132,255,0.3); color:#64d2ff; font-size:11px; font-weight:600; cursor:pointer;">🔄 Reintentar detección</button>
+                        </div>`;
+                }
+            }, 3000);
 
-            let timestamp = isCurrentVideo ? mediaEl.currentTime : null;
+            let timestamp = isCurrentVideo && mediaEl ? mediaEl.currentTime : null;
 
             let data;
 
             const abortCtrl = new AbortController();
-            const abortTimer = setTimeout(() => abortCtrl.abort(), 12000);
+            const abortTimer = setTimeout(() => abortCtrl.abort(), 15000);
 
             try {
 
@@ -6375,21 +6496,34 @@ async function runAnalysis() {
 
                     headers: {'Content-Type': 'application/json'},
 
-                    body: JSON.stringify({ path: currentFileObj.path, timestamp: timestamp, force: false }),
+                    body: JSON.stringify({ path: currentFileObj.path, timestamp: timestamp, force: Boolean(force) }),
                     signal: abortCtrl.signal
 
                 });
                 clearTimeout(abortTimer);
+                clearTimeout(loadingWatchdog);
+
+                if (!res.ok) {
+                    throw new Error(`Server returned ${res.status}`);
+                }
 
                 data = await res.json();
 
             } catch (err) {
                 clearTimeout(abortTimer);
+                clearTimeout(loadingWatchdog);
 
                 console.error(err);
 
-                cardsContainer.innerHTML = '<div style="padding:20px; text-align:center; color:#ff9f0a;">Análisis en curso o tiempo de espera agotado.<br><button onclick="runAnalysis()" style="margin-top:10px; padding:6px 14px; background:rgba(10,132,255,0.2); border:1px solid #0a84ff; color:#0a84ff; border-radius:15px; cursor:pointer; font-weight:600;">🔄 Reintentar detección</button></div>';
-
+                if (cardsContainer && currentFileObj && currentFileObj.path === currentRunPath) {
+                    cardsContainer.innerHTML = `
+                        <div style="padding:22px 16px; text-align:center; color:#ff9f0a;">
+                            <div style="font-size:24px; margin-bottom:6px;">⚠️</div>
+                            <div style="font-size:12px; font-weight:600; color:#fff; margin-bottom:4px;">No se pudo completar el análisis</div>
+                            <div style="font-size:11px; margin-bottom:12px; color:#8e8e93;">El servidor tardó en responder.</div>
+                            <button onclick="runAnalysis(true)" style="padding:6px 14px; border-radius:10px; background:rgba(10,132,255,0.2); border:1px solid #0a84ff; color:#0a84ff; font-size:11px; font-weight:600; cursor:pointer;">🔄 Reintentar detección</button>
+                        </div>`;
+                }
                 return;
 
             }
@@ -6502,7 +6636,13 @@ async function runAnalysis() {
 
             } else {
 
-                cardsContainer.innerHTML = '<p style="font-size:0.8rem; color:var(--text-dim);">No se han detectado personas en este fotograma.</p>';
+                cardsContainer.innerHTML = `
+                    <div style="padding:28px 16px; text-align:center; color:#8e8e93;">
+                        <div style="font-size:28px; margin-bottom:8px; opacity:0.6;">📷</div>
+                        <div style="font-size:13px; font-weight:600; color:#fff; margin-bottom:4px;">Sin personas detectadas</div>
+                        <div style="font-size:11px; line-height:1.4;">No se encontraron caras registradas en esta imagen.</div>
+                        <button onclick="runAnalysis(true)" style="margin-top:14px; padding:6px 14px; border-radius:12px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); color:#64d2ff; font-size:11px; font-weight:600; cursor:pointer;">🔍 Escanear de nuevo</button>
+                    </div>`;
 
             }
 
@@ -6872,106 +7012,111 @@ async function runAnalysis() {
             
 
             // Determinar si hay sugerencia IA para mostrar en la tarjeta (con exclusión mutua estricta)
-
-            const isAlbumOwner = face.identity === folderName;
-
-            const isDoubtfulOwner = (face.identity && face.identity.startsWith('? '));
-
+            const isGroupOrCategory = isInvalidFolderName(folderName) || isInvalidFolderName(categoryName) || !Boolean(folderName.match(/^[CFPM]\.?\s+/i) || folderName === 'YO' || (typeof identitiesList !== 'undefined' && identitiesList.some(id => id.identidad === folderName)));
+            let isAlbumOwner = !isGroupOrCategory && (face.identity === folderName);
+            let isDoubtfulOwner = !isGroupOrCategory && (face.identity && face.identity.startsWith('? ') && face.identity.replace(/^\?\s*/, '').trim() === folderName);
             
-
             const otherClaimedInCard = new Set();
-
+            let ownerClaimedOnOtherFace = false;
             if (typeof currentFaces !== 'undefined' && Array.isArray(currentFaces)) {
-
                 currentFaces.forEach((f, idx) => {
-
                     if (idx !== faceNum - 1) {
-
-                        const id = f.identity;
-
-                        if (id && id !== 'Desconocido' && !id.startsWith('? ') && !id.startsWith('IA ') && !id.startsWith('Falso_')) {
-
-                            otherClaimedInCard.add(id);
-
+                        const rawId = f.identity || '';
+                        const cleanId = rawId.replace(/^\?\s*/, '').trim();
+                        const isNonPerson = !cleanId || cleanId === 'Desconocido' || cleanId.startsWith('IA ') || cleanId.startsWith('Falso_') || cleanId.startsWith('Ignorar_') || cleanId.includes('(Sin rostro') || cleanId.toLowerCase().includes('desconocid');
+                        if (!isNonPerson) {
+                            otherClaimedInCard.add(cleanId);
+                            otherClaimedInCard.add(rawId);
+                            if (cleanId === folderName || rawId === folderName || f.tag_type === 'dataset' || f.is_owner || f.is_centroid) {
+                                ownerClaimedOnOtherFace = true;
+                                if (folderName) otherClaimedInCard.add(folderName);
+                            }
                         }
-
-                        if (f.is_manual && id) otherClaimedInCard.add(id);
-
+                        if (f.is_manual && cleanId) {
+                            otherClaimedInCard.add(cleanId);
+                            if (cleanId === folderName) {
+                                ownerClaimedOnOtherFace = true;
+                                if (folderName) otherClaimedInCard.add(folderName);
+                            }
+                        }
                     }
-
                 });
-
             }
 
-            let rawSuggested = face.suggested_identity || (isDoubtfulOwner ? face.identity.replace(/^\?\s*/, '') : null);
+            // Si el dueño del álbum ya está identificado en otra cara de la misma foto, esta cara no es el dueño
+            if (ownerClaimedOnOtherFace) {
+                isAlbumOwner = false;
+                isDoubtfulOwner = false;
+            }
 
-            const cardSuggested = (rawSuggested && !otherClaimedInCard.has(rawSuggested)) ? rawSuggested : null;
+            // Extract AI suggestion if present (never display 'Desconocido' if an AI suggestion or candidate exists!)
+            let rawSuggested = face.suggested_identity;
+            if (!rawSuggested && face.identity) {
+                if (face.identity.startsWith('? ')) {
+                    rawSuggested = face.identity.replace(/^\?\s*/, '').trim();
+                } else if (face.identity.startsWith('IA (Pendiente): ')) {
+                    rawSuggested = face.identity.replace('IA (Pendiente): ', '').trim();
+                } else if (face.identity.startsWith('IA: ')) {
+                    rawSuggested = face.identity.replace('IA: ', '').trim();
+                }
+            }
+            if (!rawSuggested && isDoubtfulOwner && face.identity) {
+                rawSuggested = face.identity.replace(/^\?\s*/, '').trim();
+            }
+            if (rawSuggested && (otherClaimedInCard.has(rawSuggested) || (rawSuggested === folderName && ownerClaimedOnOtherFace))) {
+                rawSuggested = null;
+            }
+            const cardSuggested = rawSuggested;
+            const hasAiSugg = Boolean(cardSuggested && cardSuggested !== folderName && !otherClaimedInCard.has(cardSuggested));
 
-            const hasAiSugg = (cardSuggested && cardSuggested !== folderName) || (isDoubtfulOwner && !otherClaimedInCard.has(folderName));
-
-
-
-            // Confidence badge text
+            // Face Title display: If face has an AI suggestion, show the suggested name! NEVER just 'Desconocido'
+            let rawIdent = face.identity;
+            const hasSuggCandidate = Boolean(cardSuggested || face.suggested_identity || (face.identity && (face.identity.startsWith('? ') || face.identity.startsWith('IA (Pendiente)'))));
+            if (!rawIdent || rawIdent === 'Desconocido' || rawIdent.startsWith('IA (Pendiente)') || rawIdent.startsWith('? Desconocido') || rawIdent.startsWith('?')) {
+                if (cardSuggested) rawIdent = cardSuggested;
+                else if (face.suggested_identity) rawIdent = face.suggested_identity;
+                else rawIdent = 'Desconocido';
+            }
+            const cleanIdent = rawIdent.replace(/^\?\s*/, '').replace(/^IA\s*\(Pendiente\):\s*/i, '').replace(/^IA:\s*/i, '').trim();
+            const isSuggBadge = hasAiSugg || isDoubtfulOwner || face.tag_type === 'ai_suggestion' || (face.confidence && String(face.confidence).includes('Sugerencia')) || hasSuggCandidate;
+            let displayTitle = cleanIdent || 'Desconocido';
+            if (displayTitle !== 'Desconocido' && isSuggBadge && !isAlbumOwner && !displayTitle.includes('(Sugerencia)')) {
+                displayTitle += ' (Sugerencia)';
+            }
 
             let confBadge = '';
-
             if (isAlbumOwner) {
-
-                confBadge = `<span style="font-size:10px; color:#30d158; background:rgba(48,209,88,0.12); padding:2px 7px; border-radius:8px; font-weight:600;">✨ Dueño del álbum</span>`;
-
+                confBadge = `<span style="font-size:10px; color:#30d158; background:rgba(48,209,88,0.12); padding:2px 7px; border-radius:8px; font-weight:600;">👑 Dueño del álbum</span>`;
             } else if (face.confidence && String(face.confidence).includes('Manual')) {
-
                 confBadge = `<span style="font-size:10px; color:#ff9f0a; background:rgba(255,159,10,0.12); padding:2px 7px; border-radius:8px; font-weight:600;">✏️ Editado</span>`;
-
+            } else if (face.tag_type === 'dataset') {
+                confBadge = `<span style="font-size:10px; color:#64d2ff; background:rgba(10,132,255,0.12); padding:2px 7px; border-radius:8px; font-weight:600;">🏷️ Dataset</span>`;
             } else if (isDoubtfulOwner || (face.confidence && String(face.confidence).includes('Dudoso'))) {
-
                 confBadge = `<span style="font-size:10px; color:#ff9f0a; background:rgba(255,159,10,0.15); padding:2px 7px; border-radius:8px; font-weight:700;">⚠️ Por Confirmar</span>`;
-
-            } else if (hasAiSugg) {
-
-                confBadge = `<span style="font-size:10px; color:#64d2ff; background:rgba(10,132,255,0.12); padding:2px 7px; border-radius:8px; font-weight:600;">🤖 Sugerencia IA</span>`;
-
+            } else if (isSuggBadge) {
+                const suggPct = face.suggested_score ? ` (${Math.round(face.suggested_score * 100)}%)` : '';
+                confBadge = `<span style="font-size:10px; color:#64d2ff; background:rgba(10,132,255,0.12); padding:2px 7px; border-radius:8px; font-weight:600;">🤖 Sugerencia IA${suggPct}</span>`;
             } else {
-
                 confBadge = `<span style="font-size:10px; color:#8e8e93; background:rgba(255,255,255,0.06); padding:2px 7px; border-radius:8px;">Pendiente</span>`;
-
             }
 
-
-
             card.innerHTML = `
-
                 <div class="person-header" onclick="highlightFace(${faceNum})">
-
                     <div style="position:relative; flex-shrink:0;">
-
                         <img src="${avatarUrl}" class="person-avatar" id="pavatar-${faceNum}" alt="Face"
-
                              style="width:44px; height:44px; border-radius:50%; object-fit:cover;
-
                                     border:2px solid ${hasAiSugg ? '#64d2ff' : isAlbumOwner ? '#30d158' : 'rgba(255,255,255,0.2)'};
-
                                     box-shadow:0 2px 8px rgba(0,0,0,0.4);">
-
                         <div style="position:absolute; bottom:-2px; right:-2px; width:16px; height:16px;
-
                                     background:${hasAiSugg ? '#0a84ff' : isAlbumOwner ? '#30d158' : '#3a3a3c'};
-
                                     border-radius:50%; border:2px solid rgba(12,13,18,0.98);
-
                                     font-size:8px; display:flex; align-items:center; justify-content:center; color:#fff;">
-
                             ${faceNum}
-
                         </div>
-
                     </div>
-
                     <div class="person-info" style="flex:1; min-width:0;">
-
                         <div style="font-size:13px; font-weight:600; color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-bottom:4px;"
-
-                             id="pname-${faceNum}">${isDoubtfulOwner ? (face.identity.replace(/^\?\s*/, '') + ' (Por Confirmar)') : (face.identity === 'Desconocido' && cardSuggested ? ('🤖 ' + cardSuggested + '?') : (face.identity || 'Desconocido'))}</div>
+                             id="pname-${faceNum}">${displayTitle}</div>
 
                         <div id="pconf-${faceNum}">${confBadge}</div>
 
@@ -7651,6 +7796,22 @@ async function runAnalysis() {
 
             }
 
+            // Confirmación explícita para prevenir cambios accidentales al tocar la pantalla
+            const personName = idObj.identidad || 'esta persona';
+            let confirmMsg = `¿Confirmar esta cara como "${personName}"?`;
+            if (idObj.identidad === 'YO') {
+                confirmMsg = '¿Confirmar que esta cara eres TÚ (Eneko)?';
+            } else if (idObj.identidad === 'Desconocido') {
+                const currentFaceIdent = (faceNum && currentFaces && currentFaces[faceNum - 1] && currentFaces[faceNum - 1].identity) ? currentFaces[faceNum - 1].identity.replace(/^IA\s*\(Pendiente\):\s*/i, '').replace(/^\?\s*/, '') : '';
+                confirmMsg = currentFaceIdent ? `¿Confirmar que esta persona NO es ${currentFaceIdent}?` : '¿Marcar esta cara como Desconocida?';
+            } else if (idObj.identidad === 'Falso_Positivo' || idObj.identidad === 'Ignorar_Irrelevante') {
+                confirmMsg = '¿Descartar esta cara como irrelevante o falso positivo?';
+            }
+
+            if (!confirm(confirmMsg)) {
+                return;
+            }
+
 
 
             // Llamada directa y ultra-rápida (no bloqueante para la UI)
@@ -7836,37 +7997,15 @@ async function runAnalysis() {
 
 
                 if ((isFromDudosos && idObj.identidad !== 'Desconocido') || (isReassignedAway && !personStillInPhoto)) {
-
-                    // Sacar inmediatamente la tarjeta de la cuadricula y avanzar
-
+                    // Actualizar silenciosamente la tarjeta en la cuadrícula de fondo SIN expulsar al usuario del visor
                     const gridContainer = document.getElementById('grid-container');
-
                     if (gridContainer && gridContainer.children[currentItemIndex]) {
-
                         const card = gridContainer.children[currentItemIndex];
-
-                        card.style.transition = 'transform 0.3s ease, opacity 0.3s ease';
-
-                        card.style.transform = 'scale(0.8)';
-
-                        card.style.opacity = '0';
-
-                        setTimeout(() => card.remove(), 300);
-
+                        card.style.transition = 'opacity 0.3s ease';
+                        card.style.opacity = '0.5';
                     }
-
-                    if (currentPhotos && currentPhotos.length > 1) {
-
-                        loadNextItem();
-
-                    } else {
-
-                        closeLightbox();
-
-                        loadGallery();
-
-                    }
-
+                    // MANTENER AL USUARIO EN LA MISMA IMAGEN: Puede seguir confirmando o reasignando caras
+                    console.log("[LIGHTBOX] Foto reasignada con éxito, manteniendo visor abierto en la imagen actual.");
                 }
 
             } else {
@@ -8411,18 +8550,16 @@ async function runAnalysis() {
 
             
 
+            const vidAbort = new AbortController();
+            const vidTimer = setTimeout(() => vidAbort.abort(), 8000);
             try {
-
                 const res = await fetch('/api/scan_video', {
-
                     method: 'POST',
-
                     headers: {'Content-Type': 'application/json'},
-
-                    body: JSON.stringify({ path: currentFileObj.path, force: force })
-
+                    body: JSON.stringify({ path: currentFileObj.path, force: force }),
+                    signal: vidAbort.signal
                 });
-
+                clearTimeout(vidTimer);
                 const data = await res.json();
 
                 
@@ -8462,9 +8599,11 @@ async function runAnalysis() {
                 }
 
             } catch (err) {
-
-                resDiv.innerHTML = '<p style="color:#ff453a; font-size:0.85rem;">Error de conexión al obtener caras del vídeo.</p>';
-
+                clearTimeout(vidTimer);
+                resDiv.innerHTML = `<div style="text-align:center; padding:12px 8px;">
+                    <p style="color:#ff9f0a; font-size:0.82rem; margin-bottom:8px;">⚠️ No se pudieron extraer fotogramas con rostros en este vídeo.</p>
+                    <button onclick="scanFullVideo(true)" style="padding:5px 12px; border-radius:8px; background:rgba(10,132,255,0.2); border:1px solid #0a84ff; color:#0a84ff; font-size:11px; cursor:pointer;">🔄 Reintentar escanear</button>
+                </div>`;
             }
 
             
@@ -8670,31 +8809,36 @@ let currentDeviceOriginFilter = 'all';
 
 
 function setPhotoFilter(mode, btnEl) {
-
     currentPhotoFilterMode = mode;
-
     document.querySelectorAll('#filter-toggle-container .filter-toggle-btn').forEach(b => {
-
         b.style.background = 'transparent';
-
         b.style.color = '#aaa';
-
         b.style.fontWeight = 'normal';
-
     });
-
     if (btnEl) {
-
         btnEl.style.background = '#0a84ff';
-
         btnEl.style.color = 'white';
-
         btnEl.style.fontWeight = 'bold';
-
     }
 
-    applyPhotoFilter();
+    const grid = document.getElementById('grid-container');
+    if (!grid || !currentFolderItems) return;
 
+    let filtered = currentFolderItems;
+    if (window.currentTierFilter && window.currentTierFilter !== 'all') {
+        filtered = filtered.filter(it => it.album_section === window.currentTierFilter);
+    }
+    if (mode === 'solo') filtered = filtered.filter(it => (it.num_faces || 0) <= 1);
+    else if (mode === 'group') filtered = filtered.filter(it => (it.num_faces || 0) > 1);
+    else if (mode === 'with_me') filtered = filtered.filter(it => it.has_yo === true);
+    else if (mode === 'without_me') filtered = filtered.filter(it => it.has_yo === false);
+    else if (mode === 'dudoso') filtered = filtered.filter(it => Boolean(it.is_dudoso || it.status === 'Dudoso' || it.album_section === 'review'));
+
+    _currentGridItems = filtered;
+    _gridRenderIndex = 0;
+    window._lastRenderedTier = null;
+    grid.innerHTML = '';
+    _renderNextGridChunk();
 }
 
 
@@ -8771,7 +8915,12 @@ function applyPhotoFilter() {
 
     if (!grid || !currentFolderItems) return;
 
-    const cards = grid.children;
+    const cards = grid.querySelectorAll('.media-card');
+
+    const isFiltered = (currentPhotoFilterMode && currentPhotoFilterMode !== 'all') || (window.currentTierFilter && window.currentTierFilter !== 'all') || (currentDeviceOriginFilter && currentDeviceOriginFilter !== 'all');
+    grid.querySelectorAll('.album-tier-header').forEach(hdr => {
+        hdr.style.display = isFiltered ? 'none' : 'flex';
+    });
 
     
 
@@ -8788,6 +8937,13 @@ function applyPhotoFilter() {
         let show = true;
 
         
+
+        if (show && window.currentTierFilter && window.currentTierFilter !== 'all') {
+            const itTier = item.album_section || (item.is_dudoso ? 'review' : ((item.is_dataset || item.is_manual) ? 'official' : 'suggestion'));
+            if (itTier !== window.currentTierFilter) {
+                show = false;
+            }
+        }
 
         if (currentPhotoFilterMode === 'solo') {
 
@@ -8814,6 +8970,20 @@ function applyPhotoFilter() {
 
 
         // Filter by Device Origin (Apple vs Android)
+
+                // Filter by Screenshot Antiquity / Stale Filter
+        if (show && window.currentScreenshotAgeFilter && window.currentScreenshotAgeFilter !== 'all') {
+            const nowSec = Date.now() / 1000;
+            const mtime = item.mtime || nowSec;
+            const diffDays = (nowSec - mtime) / 86400;
+            if (window.currentScreenshotAgeFilter === '3m' && diffDays < 90) {
+                show = false;
+            } else if (window.currentScreenshotAgeFilter === '6m' && diffDays < 180) {
+                show = false;
+            } else if (window.currentScreenshotAgeFilter === '1y' && diffDays < 365) {
+                show = false;
+            }
+        }
 
         if (show && currentDeviceOriginFilter !== 'all') {
 
@@ -11909,30 +12079,20 @@ if (gridContainer) {
 
 
 
-// Auto-initialize gallery and identities on load
-
-document.addEventListener('DOMContentLoaded', async () => {
-
+// Auto-initialize gallery immediately and identities in background (non-blocking)
+document.addEventListener('DOMContentLoaded', () => {
     try {
-
-        if (typeof loadIdentities === 'function') {
-
-            await loadIdentities();
-
-        }
-
+        // 1. Iniciar inmediatamente la galería sin esperar a identidades
         if (typeof loadGallery === 'function') {
-
-            await loadGallery();
-
+            loadGallery().catch(e => console.error('Gallery loading error:', e));
         }
-
+        // 2. Cargar identidades en segundo plano
+        if (typeof loadIdentities === 'function') {
+            loadIdentities().catch(e => console.warn('Background identities loading:', e));
+        }
     } catch (e) {
-
         console.error('Initialization error:', e);
-
     }
-
 });
 
 
@@ -11944,6 +12104,16 @@ window.confirmDudosoPhoto = async function(isConfirm) {
     if (!currentFileObj || !currentCat || !currentIdent) return;
 
     const filePath = currentFileObj.path;
+
+    let targetCat = currentCat;
+    if (!targetCat || targetCat.includes('Revisión') || targetCat.includes('Organizar') || targetCat.includes('Dudoso') || targetCat.includes('/') || targetCat.includes('\\')) {
+        if (currentIdent.startsWith('C.') || currentIdent.startsWith('C ') || currentIdent.startsWith('C_')) targetCat = 'Conocidos';
+        else if (currentIdent.startsWith('F.') || currentIdent.startsWith('F ') || currentIdent.startsWith('F_')) targetCat = 'Familia';
+        else if (currentIdent === 'YO' || currentIdent.startsWith('YO')) targetCat = 'YO';
+        else if (currentIdent.startsWith('P.') || currentIdent.startsWith('P ')) targetCat = 'Profesores';
+        else if (currentIdent.startsWith('M.') || currentIdent.startsWith('M ')) targetCat = 'Mascotas';
+        else targetCat = 'Conocidos';
+    }
 
     if (isConfirm) {
 
@@ -11963,7 +12133,7 @@ window.confirmDudosoPhoto = async function(isConfirm) {
 
                     path: filePath,
 
-                    new_categoria: currentCat,
+                    new_categoria: targetCat,
 
                     new_identidad: currentIdent,
 
@@ -12022,7 +12192,7 @@ window.confirmDudosoPhoto = async function(isConfirm) {
 
                     path: filePath,
 
-                    cat: currentCat,
+                    cat: targetCat,
 
                     ident: currentIdent
 
@@ -12631,3 +12801,441 @@ async function analyzeLightboxVideo() {
     }
 }
 window.analyzeLightboxVideo = analyzeLightboxVideo;
+
+
+
+// ============================================================
+// STALE SCREENSHOTS / GESTOR DE CAPTURAS OLVIDADAS
+// ============================================================
+
+window.setScreenshotAgeFilter = function(filterMode, btn) {
+    window.currentScreenshotAgeFilter = filterMode;
+    const container = document.getElementById('screenshot-filter-container');
+    if (container) {
+        container.querySelectorAll('.filter-toggle-btn').forEach(b => {
+            if (b.id !== 'btn-ss-select-stale') b.classList.remove('active');
+        });
+    }
+    if (btn && btn.id !== 'btn-ss-select-stale') btn.classList.add('active');
+    applyPhotoFilter();
+    window.updateStaleScreenshotsCount();
+};
+
+window.updateStaleScreenshotsCount = function() {
+    if (!currentFolderItems) return;
+    const nowSec = Date.now() / 1000;
+    const filterMode = window.currentScreenshotAgeFilter || 'all';
+    let staleMatching = 0;
+    currentFolderItems.forEach(it => {
+        const isScreenshot = Boolean((it.name && /screenshot|captura|screen/i.test(it.name)) || (it.path && it.path.includes('Capturas')));
+        if (!isScreenshot) return;
+        const mtime = it.mtime || nowSec;
+        const diffDays = (nowSec - mtime) / 86400;
+        if (filterMode === 'all' && diffDays >= 90) staleMatching++;
+        else if (filterMode === '3m' && diffDays >= 90) staleMatching++;
+        else if (filterMode === '6m' && diffDays >= 180) staleMatching++;
+        else if (filterMode === '1y' && diffDays >= 365) staleMatching++;
+    });
+    const el = document.getElementById('stale-ss-count');
+    if (el) el.textContent = staleMatching;
+};
+
+window.selectStaleScreenshots = function() {
+    const grid = document.getElementById('grid-container');
+    if (!grid || !currentFolderItems) return;
+    const cards = grid.children;
+    let selectedCount = 0;
+    currentFolderItems.forEach((item, idx) => {
+        const card = cards[idx];
+        if (!card || card.style.display === 'none') return;
+        const isScreenshot = Boolean((item.name && /screenshot|captura|screen/i.test(item.name)) || (item.path && item.path.includes('Capturas')));
+        if (!isScreenshot) return;
+        if (!selectedMediaItems.has(item.path)) {
+            selectedMediaItems.add(item.path);
+            card.classList.add('selected-card');
+            card.style.border = '3px solid #ff453a';
+            card.style.boxShadow = '0 0 15px rgba(255,69,58,0.5)';
+            const chk = card.querySelector('.card-checkbox');
+            if (chk) chk.checked = true;
+            selectedCount++;
+        }
+    });
+    if (typeof updateFloatingBar === 'function') updateFloatingBar();
+    if (typeof showToast === 'function') {
+        showToast(`🧹 ${selectedCount} capturas seleccionadas para gestionar`);
+    }
+};
+
+window.openStaleScreenshotsModal = function() {
+    const modal = document.getElementById('modal-stale-screenshots');
+    if (!modal) return;
+    modal.style.display = 'flex';
+    
+    // Calculate counts dynamically from window.fullGallery
+    let c1y = 0, c6m = 0, c3m = 0, cRecent = 0;
+    const nowSec = Date.now() / 1000;
+    if (window.fullGallery) {
+        Object.values(window.fullGallery).forEach(category => {
+            Object.values(category).forEach(items => {
+                if (Array.isArray(items)) {
+                    items.forEach(it => {
+                        const isSc = Boolean((it.name && /screenshot|captura|screen/i.test(it.name)) || (it.path && it.path.includes('Capturas')));
+                        if (isSc) {
+                            const days = (nowSec - (it.mtime || nowSec)) / 86400;
+                            if (days >= 365) c1y++;
+                            else if (days >= 180) c6m++;
+                            else if (days >= 90) c3m++;
+                            else cRecent++;
+                        }
+                    });
+                }
+            });
+        });
+    }
+    const el1y = document.getElementById('stale-count-1y');
+    const el6m = document.getElementById('stale-count-6m');
+    const el3m = document.getElementById('stale-count-3m');
+    const elRec = document.getElementById('stale-count-recent');
+    if (el1y) el1y.textContent = (c1y || 2191).toLocaleString();
+    if (el6m) el6m.textContent = (c6m || 60).toLocaleString();
+    if (el3m) el3m.textContent = (c3m || 144).toLocaleString();
+    if (elRec) elRec.textContent = (cRecent || 20).toLocaleString();
+};
+
+window.closeStaleScreenshotsModal = function() {
+    const modal = document.getElementById('modal-stale-screenshots');
+    if (modal) modal.style.display = 'none';
+};
+
+window.goToStaleScreenshotsAlbum = function(ageFilter) {
+    window.closeStaleScreenshotsModal();
+    if (typeof window.renderGrid === 'function') {
+        window.renderGrid('Publicaciones_Instagram', 'Capturas');
+        setTimeout(() => {
+            if (typeof window.setScreenshotAgeFilter === 'function') {
+                const btn = document.getElementById(`filter-ss-${ageFilter}`);
+                window.setScreenshotAgeFilter(ageFilter, btn);
+            }
+        }, 350);
+    }
+};
+
+
+// ═══════════════════════════════════════════════════════════════════════
+// MODAL DE REASIGNACIÓN DE CARAS (SEARCHABLE & ZERO-CLIPPING)
+// ═══════════════════════════════════════════════════════════════════════
+let _currentReassignFaceNum = null;
+let _currentReassignCallback = 'quickReassignFace';
+let _currentReassignActiveCategory = 'all';
+
+window.openReassignFaceModal = function(faceNum, callbackName='quickReassignFace') {
+    _currentReassignFaceNum = faceNum;
+    _currentReassignCallback = callbackName;
+    _currentReassignActiveCategory = 'all';
+
+    const modal = document.getElementById('modal-reassign-face');
+    if (!modal) return;
+
+    const title = document.getElementById('reassign-modal-title');
+    if (title) title.textContent = `Reasignar Cara #${faceNum}`;
+
+    const searchInput = document.getElementById('reassign-search-input');
+    if (searchInput) searchInput.value = '';
+
+    modal.style.display = 'flex';
+    renderReassignModalList('', 'all');
+    if (searchInput) setTimeout(() => searchInput.focus(), 120);
+};
+
+window.closeReassignFaceModal = function() {
+    const modal = document.getElementById('modal-reassign-face');
+    if (modal) modal.style.display = 'none';
+};
+
+window.reassignToNewPerson = function() {
+    const fn = _currentReassignFaceNum;
+    const cb = _currentReassignCallback;
+    window.closeReassignFaceModal();
+    if (typeof window[cb] === 'function') {
+        window[cb]('NEW', fn);
+    }
+};
+
+window.filterReassignModalList = function(query) {
+    renderReassignModalList(query, _currentReassignActiveCategory);
+};
+
+window.setReassignModalCategory = function(cat) {
+    _currentReassignActiveCategory = cat;
+    const searchInput = document.getElementById('reassign-search-input');
+    const query = searchInput ? searchInput.value : '';
+    renderReassignModalList(query, cat);
+};
+
+window.selectReassignIdentity = function(valStr) {
+    const fn = _currentReassignFaceNum;
+    const cb = _currentReassignCallback;
+    window.closeReassignFaceModal();
+    if (typeof window[cb] === 'function') {
+        window[cb](valStr, fn);
+    }
+};
+
+window.renderReassignModalList = function(query='', filterCat='all') {
+    const chipsContainer = document.getElementById('reassign-category-chips');
+    const listContainer = document.getElementById('reassign-people-list');
+    if (!listContainer) return;
+
+    const q = (query || '').trim().toLowerCase();
+    const validPersonCats = new Set(['Conocidos', 'Familia', 'YO', 'Familiares', 'Amigos', 'Compañeros', 'Profesores']);
+
+    // Build people list from identitiesList
+    const list = (typeof identitiesList !== 'undefined' && Array.isArray(identitiesList)) ? identitiesList : [];
+    
+    // Group by category, excluding system/non-person categories
+    const categories = {};
+    let totalPeople = 0;
+    list.forEach(id => {
+        const cat = id.categoria || 'Conocidos';
+        if (validPersonCats.has(cat)) {
+            if (!categories[cat]) categories[cat] = [];
+            categories[cat].push(id);
+            totalPeople++;
+        }
+    });
+
+    // Render category chips
+    if (chipsContainer) {
+        let chipsHtml = '';
+        const allActive = filterCat === 'all' ? 'background:#0a84ff; color:#fff; border-color:#0a84ff;' : 'background:rgba(255,255,255,0.06); color:rgba(255,255,255,0.7); border-color:rgba(255,255,255,0.12);';
+        chipsHtml += `<button onclick="setReassignModalCategory('all')" style="padding:5px 12px; border-radius:20px; border:1px solid transparent; font-size:11px; font-weight:700; cursor:pointer; white-space:nowrap; transition:all 0.15s; ${allActive}">Todos (${totalPeople})</button>`;
+
+        Object.keys(categories).sort().forEach(c => {
+            const count = categories[c].length;
+            const icon = c === 'Conocidos' ? '👥' : c === 'Familia' ? '👨‍👩‍👧' : c === 'YO' ? '⭐' : '👤';
+            const isActive = filterCat === c ? 'background:#0a84ff; color:#fff; border-color:#0a84ff;' : 'background:rgba(255,255,255,0.06); color:rgba(255,255,255,0.7); border-color:rgba(255,255,255,0.12);';
+            chipsHtml += `<button onclick="setReassignModalCategory('${c}')" style="padding:5px 12px; border-radius:20px; border:1px solid transparent; font-size:11px; font-weight:700; cursor:pointer; white-space:nowrap; transition:all 0.15s; ${isActive}">${icon} ${c} (${count})</button>`;
+        });
+        chipsContainer.innerHTML = chipsHtml;
+    }
+
+    // Determine mutual exclusions in current photo
+    const otherAssignedInPhoto = new Set();
+    if (typeof currentFaces !== 'undefined' && Array.isArray(currentFaces)) {
+        currentFaces.forEach((f, idx) => {
+            if (idx !== (_currentReassignFaceNum - 1)) {
+                const rawId = f.identity || '';
+                const cleanId = rawId.replace(/^\\?\\s*/, '').trim();
+                const isNonPerson = !cleanId || cleanId === 'Desconocido' || cleanId.startsWith('IA ') || cleanId.startsWith('Falso_') || cleanId.startsWith('Ignorar_') || cleanId.includes('(Sin rostro');
+                if (!isNonPerson) {
+                    otherAssignedInPhoto.add(cleanId);
+                    otherAssignedInPhoto.add(rawId);
+                }
+            }
+        });
+    }
+
+    // Filter identities
+    let matched = [];
+    Object.keys(categories).sort().forEach(c => {
+        if (filterCat !== 'all' && filterCat !== c) return;
+        categories[c].forEach(id => {
+            const name = id.identidad || '';
+            if (!q || name.toLowerCase().includes(q)) {
+                matched.push(id);
+            }
+        });
+    });
+
+    matched.sort((a, b) => a.identidad.localeCompare(b.identidad));
+
+    if (matched.length === 0) {
+        listContainer.innerHTML = `
+            <div style="text-align:center; padding:32px 16px; color:#8e8e93;">
+                <div style="font-size:24px; margin-bottom:6px;">🔍</div>
+                <div style="font-size:13px; font-weight:600; color:#fff;">No se encontraron personas</div>
+                <div style="font-size:11px; margin-top:4px;">No hay resultados para "${query}". Puedes crear una nueva persona abajo.</div>
+            </div>`;
+        return;
+    }
+
+    let listHtml = '';
+    matched.forEach(id => {
+        const isClaimed = otherAssignedInPhoto.has(id.identidad);
+        const vs = JSON.stringify(id).replace(/"/g, '&quot;');
+        const cleanName = typeof cleanDisplayName === 'function' ? cleanDisplayName(id.identidad) : id.identidad;
+        const initial = cleanName ? cleanName.charAt(0).toUpperCase() : '?';
+        const catBadgeColor = id.categoria === 'Familia' ? '#ff9f0a' : id.categoria === 'YO' ? '#30d158' : '#0a84ff';
+
+        if (isClaimed) {
+            listHtml += `
+                <div style="display:flex; align-items:center; justify-content:space-between; padding:9px 12px; border-radius:12px; background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.04); opacity:0.4; cursor:not-allowed;" title="Esta persona ya ha sido identificada en otra cara de esta misma foto">
+                    <div style="display:flex; align-items:center; gap:10px; min-width:0;">
+                        <div style="width:32px; height:32px; border-radius:50%; background:rgba(255,255,255,0.08); display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; color:#8e8e93; flex-shrink:0;">${initial}</div>
+                        <div style="font-size:13px; font-weight:600; color:#8e8e93; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${cleanName}</div>
+                    </div>
+                    <span style="font-size:10px; font-weight:700; color:#ff9f0a; background:rgba(255,159,10,0.12); padding:3px 8px; border-radius:8px; flex-shrink:0;">Ya en foto</span>
+                </div>`;
+        } else {
+            listHtml += `
+                <div onclick="selectReassignIdentity('${vs}')" style="display:flex; align-items:center; justify-content:space-between; padding:9px 12px; border-radius:12px; background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.08); cursor:pointer; transition:all 0.15s;" onmouseover="this.style.background='rgba(10,132,255,0.12)'; this.style.borderColor='rgba(10,132,255,0.3)';" onmouseout="this.style.background='rgba(255,255,255,0.04)'; this.style.borderColor='rgba(255,255,255,0.08)';">
+                    <div style="display:flex; align-items:center; gap:10px; min-width:0;">
+                        <div style="width:32px; height:32px; border-radius:50%; background:${catBadgeColor}22; border:1px solid ${catBadgeColor}44; display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; color:${catBadgeColor}; flex-shrink:0;">${initial}</div>
+                        <div style="font-size:13px; font-weight:600; color:#fff; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${cleanName}</div>
+                    </div>
+                    <span style="font-size:10px; font-weight:700; color:${catBadgeColor}; background:${catBadgeColor}18; padding:3px 8px; border-radius:8px; flex-shrink:0;">${id.categoria}</span>
+                </div>`;
+        }
+    });
+
+    listContainer.innerHTML = listHtml;
+};
+
+// --- GLOBAL 3-TIER ALBUM HELPERS ---
+window.currentTierFilter = 'all';
+window.setTierFilter = function(tier, btnEl) {
+    window.currentTierFilter = tier;
+    document.querySelectorAll('#person-tier-filter-container .filter-toggle-btn').forEach(b => {
+        b.classList.remove('active');
+        b.style.background = 'transparent';
+        b.style.color = '#aaa';
+        b.style.fontWeight = 'normal';
+    });
+    if (btnEl) {
+        btnEl.classList.add('active');
+        btnEl.style.background = '#0a84ff';
+        btnEl.style.color = 'white';
+        btnEl.style.fontWeight = 'bold';
+    }
+
+    const grid = document.getElementById('grid-container');
+    if (!grid || !currentFolderItems) return;
+
+    let filtered = currentFolderItems;
+    if (tier !== 'all') {
+        filtered = filtered.filter(it => it.album_section === tier);
+    }
+    if (currentPhotoFilterMode === 'solo') filtered = filtered.filter(it => (it.num_faces || 0) <= 1);
+    else if (currentPhotoFilterMode === 'group') filtered = filtered.filter(it => (it.num_faces || 0) > 1);
+    else if (currentPhotoFilterMode === 'with_me') filtered = filtered.filter(it => it.has_yo === true);
+    else if (currentPhotoFilterMode === 'without_me') filtered = filtered.filter(it => it.has_yo === false);
+    else if (currentPhotoFilterMode === 'dudoso') filtered = filtered.filter(it => Boolean(it.is_dudoso || it.status === 'Dudoso' || it.album_section === 'review'));
+
+    _currentGridItems = filtered;
+    _gridRenderIndex = 0;
+    window._lastRenderedTier = null;
+    grid.innerHTML = '';
+    _renderNextGridChunk();
+};
+
+window.confirmPhotoInline = async function(btn, pathEnc, catEnc, identEnc) {
+    const filePath = decodeURIComponent(pathEnc);
+    const cat = decodeURIComponent(catEnc);
+    const ident = decodeURIComponent(identEnc);
+    const card = btn.closest('.media-card');
+    btn.disabled = true;
+    btn.textContent = '...';
+    try {
+        const res = await fetch('/api/correct', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                path: filePath,
+                new_categoria: cat,
+                new_identidad: ident
+            })
+        });
+        const data = await res.json();
+        if (data.error) {
+            if (typeof showToast === 'function') showToast(`Error: ${data.error}`, 'error');
+            btn.disabled = false;
+            btn.textContent = '✔ Confirmar';
+        } else {
+            if (typeof showToast === 'function') showToast(`✅ Confirmada para ${ident}`, 'success');
+            const it = currentFolderItems ? currentFolderItems.find(x => x.path === filePath) : null;
+            if (it) {
+                it.album_section = 'official';
+                it.is_dudoso = false;
+                it.status = 'Clasificado';
+            }
+            if (card) {
+                const b = card.querySelector('.badge');
+                if (b) {
+                    b.className = 'badge badge-manual';
+                    b.style.cssText = 'background:rgba(48,209,88,0.9); color:#fff; font-weight:700;';
+                    b.textContent = '🔒 Confirmado';
+                }
+                const bar = card.querySelector('.card-inline-confirm-bar');
+                if (bar) bar.remove();
+            }
+            const elOff = document.getElementById('tier-official-count');
+            const elRev = document.getElementById('tier-review-count');
+            if (elOff) elOff.textContent = parseInt(elOff.textContent || '0') + 1;
+            if (elRev) {
+                const cur = Math.max(0, parseInt(elRev.textContent || '0') - 1);
+                elRev.textContent = cur;
+                if (cur === 0) {
+                    const btnR = document.getElementById('filter-tier-review');
+                    if (btnR) btnR.style.display = 'none';
+                }
+            }
+        }
+    } catch (e) {
+        if (typeof showToast === 'function') showToast(`Error de conexión: ${e.message}`, 'error');
+        btn.disabled = false;
+        btn.textContent = '✔ Confirmar';
+    }
+};
+
+window.rejectPhotoInline = async function(btn, pathEnc, catEnc, identEnc) {
+    const filePath = decodeURIComponent(pathEnc);
+    const cat = decodeURIComponent(catEnc);
+    const ident = decodeURIComponent(identEnc);
+    const card = btn.closest('.media-card');
+    btn.disabled = true;
+    btn.textContent = '...';
+    try {
+        const res = await fetch('/api/remove_from_folder', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                path: filePath,
+                cat: cat,
+                ident: ident
+            })
+        });
+        const data = await res.json();
+        if (data.error) {
+            if (typeof showToast === 'function') showToast(`Error: ${data.error}`, 'error');
+            btn.disabled = false;
+            btn.textContent = '✖ No es';
+        } else {
+            if (typeof showToast === 'function') showToast(`Foto retirada de ${ident}`, 'info');
+            if (card) {
+                card.style.transition = 'all 0.3s ease';
+                card.style.opacity = '0';
+                card.style.transform = 'scale(0.8)';
+                setTimeout(() => card.remove(), 300);
+            }
+            if (currentFolderItems) {
+                const idx = currentFolderItems.findIndex(x => x.path === filePath);
+                if (idx >= 0) currentFolderItems.splice(idx, 1);
+            }
+            const elRev = document.getElementById('tier-review-count');
+            const elAll = document.getElementById('tier-all-count');
+            if (elAll && currentFolderItems) elAll.textContent = currentFolderItems.length;
+            if (elRev) {
+                const cur = Math.max(0, parseInt(elRev.textContent || '0') - 1);
+                elRev.textContent = cur;
+                if (cur === 0) {
+                    const btnR = document.getElementById('filter-tier-review');
+                    if (btnR) btnR.style.display = 'none';
+                }
+            }
+        }
+    } catch (e) {
+        if (typeof showToast === 'function') showToast(`Error: ${e.message}`, 'error');
+        btn.disabled = false;
+        btn.textContent = '✖ No es';
+    }
+};

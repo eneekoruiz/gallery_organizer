@@ -49,7 +49,7 @@ Resultados_Test/
 *_cache.json
 *_state.json
 *_status.json
-apple_db.json
+apple_db*.json
 duplicate_groups.json
 gallery.json
 gallery_cache.json

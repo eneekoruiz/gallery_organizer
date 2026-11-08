@@ -1,4 +1,7 @@
 import hashlib
+import json
+import re
+import traceback
 from app.utils.images import decode_image
 from app.services.content_analysis_service import model_version, load_analysis, save_analysis
 from app.services.face_learning import HUMAN, face_rectangle, aligned_feature, normalized_feature, confirmed_centroid
@@ -107,6 +110,11 @@ _CENTROIDS_KEYS = []
 
 def get_vectorized_centroids():
     global _CENTROIDS_CACHE_KEY, _CENTROIDS_MATRIX, _CENTROIDS_KEYS
+    if len(known_faces) == 0:
+        try:
+            reload_known_faces()
+        except Exception:
+            pass
     kf_len = len(known_faces)
     if _CENTROIDS_MATRIX is not None and _CENTROIDS_CACHE_KEY == kf_len and kf_len > 0:
         return _CENTROIDS_MATRIX, _CENTROIDS_KEYS
@@ -324,10 +332,10 @@ def api_analyze():
                             
                     if override_match:
                         if override_match in ["Ignorar_Irrelevante", "Falso_Positivo"]: continue
-                        identity_name = override_match
+                        identity_name = re.sub(r'^\?\s*', '', str(override_match)).strip()
                         confidence_str = "✏️ Corrección Manual"
                         tag_type = "manual"
-                        claimed_identities.add(override_match)
+                        claimed_identities.add(identity_name)
                         feature_vec = None
                     else:
                         feature_vec = None
@@ -372,80 +380,100 @@ def api_analyze():
                                 if c_mat.shape[0] > 0:
                                     sims = np.dot(c_mat, feat_norm)
                                     ident_scores = {}
+                                    ident_best_keys = {}
                                     for idx_c, s in enumerate(sims):
                                         k = c_keys[idx_c]
                                         ident_n = k[1] if isinstance(k, tuple) else str(k)
-                                        if ident_n in claimed_identities:
+                                        clean_id = re.sub(r'^\?\s*', '', ident_n).strip()
+                                        if clean_id in claimed_identities or ident_n in claimed_identities:
                                             continue
-                                        if k not in ident_scores or s > ident_scores[k]:
-                                            ident_scores[k] = float(s)
+                                        s_flt = float(s)
+                                        if clean_id not in ident_scores or s_flt > ident_scores[clean_id]:
+                                            ident_scores[clean_id] = s_flt
+                                            ident_best_keys[clean_id] = k
                                     
                                     sorted_matches = sorted(ident_scores.items(), key=lambda itm: itm[1], reverse=True)
                                     if len(sorted_matches) > 0 and sorted_matches[0][1] > 0:
-                                        best_match, best_score = sorted_matches[0]
+                                        clean_bm, best_score = sorted_matches[0]
+                                        best_match = ident_best_keys.get(clean_bm)
                                     if len(sorted_matches) > 1 and sorted_matches[1][1] > 0:
-                                        second_best_match, second_best_score = sorted_matches[1]
+                                        clean_second, second_best_score = sorted_matches[1]
+                                        second_best_match = ident_best_keys.get(clean_second)
                                 
-                                # Safety rule: If face matches YO (>0.48), never misassign to another person!
+                                # Safety rule: If face matches YO (>0.45), prioritize YO suggestion
                                 clean_bm = best_match[1] if isinstance(best_match, tuple) else str(best_match)
-                                if yo_score > 0.48 and clean_bm != 'YO':
+                                clean_bm = re.sub(r'^\?\s*', '', clean_bm).strip()
+                                if yo_score > 0.45 and clean_bm != 'YO':
                                     if yo_score >= 0.54:
                                         best_match = 'YO'
                                         best_score = yo_score
                                         clean_bm = 'YO'
-                                    else:
-                                        best_match = None
-                                        best_score = 0.0
-                                        clean_bm = None
+                                    elif yo_score >= 0.35:
+                                        best_match = 'YO'
+                                        best_score = yo_score
+                                        clean_bm = 'YO'
                                 
                                 # Priorización Contextual del Dueño del Álbum / Familia (Multi-Centroide)
                                 current_folder = path_obj.parent.name
                                 owner_folder = path_obj.parent.parent.name if current_folder == "_Dudosos" else current_folder
                                 owner_entry = known_faces.get(owner_folder) or known_faces.get((path_obj.parent.parent.name, owner_folder)) or {}
                                 if clean_bm != "YO" and not is_smart_relationship_album(owner_folder) and owner_folder not in ["_Dudosos", "Personas Sin Nombre", "Resultados", "Fotos", "Para Revisar", "Por Organizar"]:
-                                    owner_sim = match_face_to_identity(feat_norm, owner_entry)
-                                    if owner_sim >= 0.35 and (best_score - owner_sim) < 0.15:
-                                        best_match = owner_folder
-                                        best_score = owner_sim
-                                        clean_bm = owner_folder
+                                    if owner_folder not in claimed_identities and f"? {owner_folder}" not in claimed_identities:
+                                        owner_sim = match_face_to_identity(feat_norm, owner_entry)
+                                        if owner_sim >= 0.35 and (best_score - owner_sim) < 0.15:
+                                            best_match = owner_folder
+                                            best_score = owner_sim
+                                            clean_bm = owner_folder
 
                                 # Cross-Identity Margin (CIM) Protection
-                                # If difference between best_score and second_best_score is < 0.05,
-                                # we do not auto-classify as Best Match to prevent centroid contamination!
+                                # Only penalize if best and second best are truly DIFFERENT identities
                                 if best_match and second_best_match and clean_bm != 'YO':
-                                    margin = best_score - second_best_score
-                                    if margin < 0.05 and best_score < 0.65:
-                                        best_score = min(best_score, 0.50)
+                                    clean_sec = second_best_match[1] if isinstance(second_best_match, tuple) else str(second_best_match)
+                                    clean_sec = re.sub(r'^\?\s*', '', clean_sec).strip()
+                                    if clean_bm != clean_sec:
+                                        margin = best_score - second_best_score
+                                        if margin < 0.05 and best_score < 0.65:
+                                            best_score = min(best_score, 0.50)
                                         
                                 if best_match and best_score >= 0.54:
-                                    if str(best_match).startswith("Falso_Positivo") or is_smart_relationship_album(str(best_match)): 
-                                        continue
-                                    identity_name = clean_bm
-                                    if best_score >= 0.62:
-                                        confidence_str = f"🏷️ Dataset ({(best_score * 100):.1f}%)"
-                                        tag_type = "dataset"
+                                    if str(best_match).startswith("Falso_Positivo") or is_smart_relationship_album(str(best_match)):
+                                        clean_bm = None
+                                        best_match = None
                                     else:
-                                        confidence_str = f"🤖 IA ({(best_score * 100):.1f}%)"
-                                        tag_type = "ai"
-                                elif best_match and best_score >= 0.38:
+                                        identity_name = clean_bm
+                                        if best_score >= 0.62:
+                                            confidence_str = f"🏷️ Dataset ({(best_score * 100):.1f}%)"
+                                            tag_type = "dataset"
+                                        else:
+                                            confidence_str = f"🤖 IA ({(best_score * 100):.1f}%)"
+                                            tag_type = "ai"
+                                elif best_match and best_score >= 0.20:
                                     current_folder = path_obj.parent.name
                                     owner_folder = path_obj.parent.parent.name if current_folder == "_Dudosos" else current_folder
-                                    if best_match == owner_folder and not is_smart_relationship_album(owner_folder):
-                                        identity_name = f"? {best_match}"
+                                    if best_match == owner_folder and not is_smart_relationship_album(owner_folder) and best_score >= 0.38:
+                                        identity_name = f"? {clean_bm}"
                                         confidence_str = f"⚠️ Dudoso ({(best_score * 100):.1f}%)"
                                         tag_type = "doubtful"
                                     else:
-                                        identity_name = "Desconocido"
+                                        identity_name = clean_bm
                                         confidence_str = f"🤖 Sugerencia: {clean_bm} ({(best_score * 100):.1f}%)"
                                         tag_type = "ai_suggestion"
                         except Exception: pass
                     
+                    # Mutual Exclusion: Claim identity so no other face in this photo takes it
+                    if identity_name not in ("Desconocido", "Ignorar_Irrelevante", "Falso_Positivo"):
+                        clean_claim = identity_name.replace("? ", "").strip()
+                        claimed_identities.add(clean_claim)
+                        claimed_identities.add(identity_name)
+
+                    sug_id = clean_bm if (best_match and best_score >= 0.18 and clean_bm not in claimed_identities and clean_bm != 'Desconocido' and not is_smart_relationship_album(clean_bm)) else None
+
                     faces_data.append({
                         "x": x, "y": y, "width": w, "height": h,
                         "img_width": width, "img_height": height,
                         "identity": identity_name,
-                        "suggested_identity": clean_bm if (best_match and best_score >= 0.38) else None,
-                        "suggested_score": round(best_score, 4) if (best_match and best_score >= 0.38) else 0.0,
+                        "suggested_identity": sug_id,
+                        "suggested_score": round(best_score, 4) if sug_id else 0.0,
                         "confidence": confidence_str,
                         "tag_type": tag_type,
                         "feature": feature_vec.tolist() if feature_vec is not None else None,
@@ -644,13 +672,71 @@ def apply_correction_to_file(filepath, new_categoria, new_identidad, face_data, 
         return filepath
     if face_data:
         face_data = {**face_data, **face_rectangle(face_data)}
-    if not new_categoria or not new_identidad or any(v in ('.', '..') or '/' in v or chr(92) in v for v in (new_categoria, new_identidad)):
+
+    # Auto-resolve canonical category if empty, invalid or review-related
+    clean_id = str(new_identidad or '').strip().lstrip('?').strip()
+    if clean_id.startswith(('C.', 'C ', 'C_')):
+        canonical_cat = 'Conocidos'
+    elif clean_id.startswith(('F.', 'F ', 'F_')):
+        canonical_cat = 'Familia'
+    elif clean_id == 'YO' or clean_id.startswith('YO'):
+        canonical_cat = 'YO'
+    elif clean_id.startswith(('P.', 'P ', 'Prof')):
+        canonical_cat = 'Profesores'
+    elif clean_id.startswith(('M.', 'M ', 'Mascota')) or clean_id in {'Perro', 'Gato', 'Ney', 'Sua'}:
+        canonical_cat = 'Mascotas'
+    else:
+        canonical_cat = None
+
+    if not new_categoria or any(v in ('.', '..') or '/' in v or chr(92) in v for v in (new_categoria,)) or 'revisi' in str(new_categoria).lower() or 'dudoso' in str(new_categoria).lower() or 'organizar' in str(new_categoria).lower():
+        new_categoria = canonical_cat or 'Conocidos'
+    elif canonical_cat and new_categoria in {'Dudosos', 'Personas Sin Nombre'}:
+        new_categoria = canonical_cat
+
+    # Clean identity name
+    new_identidad = clean_id.replace('/', '_').replace(chr(92), '_')
+    if not new_categoria or not new_identidad or any(v in ('.', '..') for v in (new_categoria, new_identidad)):
         raise ValueError('Invalid identity or category')
+
+    # Update Apple DB if this is an iCloud or Apple indexed photo
+    try:
+        from app.services.apple_service import load_apple_db, save_apple_db
+        apple_db = load_apple_db()
+        norm_fp = os.path.normpath(filepath) if filepath else ''
+        matching_key = None
+        for k in apple_db.keys():
+            if os.path.normpath(k) == norm_fp or os.path.basename(k) == os.path.basename(filepath or ''):
+                matching_key = k
+                break
+        if matching_key:
+            entry = apple_db[matching_key]
+            entry['category'] = new_categoria
+            entry['identity'] = new_identidad
+            entry['status'] = 'Clasificado'
+            entry['is_dudoso'] = False
+            if 'faces' in entry and isinstance(entry['faces'], list):
+                for f in entry['faces']:
+                    f['identity'] = new_identidad
+                    f['confidence'] = 100.0
+                    f['is_manual'] = True
+            save_apple_db()
+            print(f'[APPLE DB] Confirmed photo {matching_key} -> {new_categoria} / {new_identidad}')
+    except Exception as e_adb:
+        print(f'[WARN] Error updating apple_db for photo confirmation: {e_adb}')
+
     if filepath and not os.path.exists(filepath):
         resolved = find_relocated_file(filepath)
         if resolved and os.path.exists(resolved):
             filepath = resolved
     if not filepath or not os.path.exists(filepath):
+        # Allow dehydrated/virtual iCloud photos if registered in apple_db
+        try:
+            from app.services.apple_service import load_apple_db
+            apple_db = load_apple_db()
+            if filepath in apple_db or (filepath and os.path.basename(filepath) in apple_db):
+                return filepath
+        except Exception:
+            pass
         return None
     orig_path = Path(filepath)
     is_manual_source = False
@@ -816,12 +902,22 @@ def apply_correction_to_file(filepath, new_categoria, new_identidad, face_data, 
         if orig_path.parent.resolve() == target_dir.resolve():
             target_path = orig_path
         else:
-            orig_ino = os.stat(str(orig_path)).st_ino
+            orig_ino = None
+            try:
+                if orig_path.exists():
+                    orig_ino = os.stat(str(orig_path)).st_ino
+            except OSError:
+                pass
+
             existing_link = None
-            for f in target_dir.iterdir():
-                if f.is_file() and os.stat(str(f)).st_ino == orig_ino:
-                    existing_link = f
-                    break
+            if orig_ino is not None:
+                for f in target_dir.iterdir():
+                    try:
+                        if f.is_file() and os.stat(str(f)).st_ino == orig_ino:
+                            existing_link = f
+                            break
+                    except OSError:
+                        pass
                     
             if existing_link:
                 target_path = existing_link
@@ -901,11 +997,29 @@ def api_correct():
         
     real_path = find_relocated_file(filepath)
     if not real_path:
+        # Check if virtual iCloud photo in apple_db
+        try:
+            from app.services.apple_service import load_apple_db
+            adb = load_apple_db()
+            if filepath in adb or (filepath and os.path.basename(filepath) in adb):
+                real_path = filepath
+        except Exception:
+            pass
+    if not real_path:
         return jsonify({"error": "Archivo fuera de la biblioteca o no encontrado"}), 404
     filepath = real_path
 
     if not os.path.exists(filepath):
-        return jsonify({"error": f"El archivo {filepath} no existe en disco"}), 404
+        is_virtual = False
+        try:
+            from app.services.apple_service import load_apple_db
+            adb = load_apple_db()
+            if filepath in adb or (filepath and os.path.basename(filepath) in adb):
+                is_virtual = True
+        except Exception:
+            pass
+        if not is_virtual:
+            return jsonify({"error": f"El archivo {filepath} no existe en disco"}), 404
         
     clear_gallery_cache()
     
@@ -1923,7 +2037,7 @@ _ENGINE_THREAD = None
 
 AUDIT_THRESHOLD_LOW  = 0.48   # por debajo → la foto sale de su carpeta
 AUDIT_THRESHOLD_HIGH = 0.48   # por encima → asignamos a nuevo destino
-AUDIT_PHASE_DELAY    = 0.04   # segundos de pausa entre fotos (baja prioridad de CPU)
+AUDIT_PHASE_DELAY    = 0.0   # segundos de pausa entre fotos (baja prioridad de CPU)
 
 
 def _log_action(action_str: str):
@@ -1991,7 +2105,22 @@ def _load_engine_state():
 
 
 def _compare_feat_to_centroids(feat_arr):
-    """Devuelve (best_name, best_score) comparando feat vs todos los centroides (Multi-Centroide)."""
+    """Devuelve (best_name, best_score) vectorizado (<0.02ms por cara)."""
+    try:
+        mat, keys = get_vectorized_centroids()
+        if mat is not None and mat.shape[0] > 0:
+            arr = np.asarray(feat_arr, dtype=np.float32).flatten()
+            norm = np.linalg.norm(arr)
+            if norm > 1e-6:
+                sims = np.dot(mat, arr / norm)
+                best_idx = np.argmax(sims)
+                best_score = float(sims[best_idx])
+                best_key = keys[best_idx]
+                best_name = best_key[1] if isinstance(best_key, tuple) else str(best_key)
+                return best_name, best_score
+    except Exception:
+        pass
+
     from app.globals import known_faces
     feat_norm = feat_arr / (np.linalg.norm(feat_arr) + 1e-10)
     best_match = None
@@ -2010,14 +2139,18 @@ def _compare_feat_to_centroids(feat_arr):
 
 def _phase_scan_unknown():
     """
-    FASE A: Escanea determinísticamente Personas Sin Nombre → asigna a conocidos.
-    Guarda progreso continuo en disco para reanudar exactamente en el mismo punto.
+    FASE A: Escanea determinísticamente Personas Sin Nombre y Dudosos → asigna a conocidos en paralelo (4 workers).
+    Guarda progreso continuo en disco para reanudar exactamente en el mismo punto sin latencia artificial.
     """
-    from app.globals import faces_cache, RESULTADOS_DIR, FACES_CACHE_FILE, detector, recognizer
+    from app.globals import faces_cache, RESULTADOS_DIR, FACES_CACHE_FILE, detector, recognizer, detector_lock
     from app.utils.files import get_file_key
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     review_dirs = [
         RESULTADOS_DIR / "Personas Sin Nombre",
-        RESULTADOS_DIR / "Dudosos" / "Para Revisar"
+        RESULTADOS_DIR / "Dudosos" / "Para Revisar",
+        RESULTADOS_DIR / "_Dudosos",
+        RESULTADOS_DIR / "Revision_Interactiva"
     ]
     valid_exts = {".jpg", ".jpeg", ".png", ".webp"}
     file_list = []
@@ -2030,23 +2163,24 @@ def _phase_scan_unknown():
                         file_list.append(os.path.join(root, fname))
     
     file_list.sort()
-    scan_batch_counter = 0
-
+    pending_files = []
     for fpath in file_list:
+        try:
+            mtime = os.stat(fpath).st_mtime_ns
+            ck_key = f"suggestions-v1:{fpath}:{mtime}"
+            if not _ENGINE_STATE["checkpoint"].get(ck_key):
+                pending_files.append((fpath, ck_key))
+        except OSError:
+            continue
+
+    if not pending_files:
+        return
+
+    def _process_one(item):
+        fpath, ck_key = item
         if not _ENGINE_STATE["running"]:
-            break
-        if not os.path.exists(fpath):
-            continue
-
+            return None
         fname = os.path.basename(fpath)
-        ck_key = f"suggestions-v1:{fpath}:{os.stat(fpath).st_mtime_ns}"
-        if _ENGINE_STATE["checkpoint"].get(ck_key):
-            continue
-
-        with _ENGINE_LOCK:
-            _ENGINE_STATE["total_scanned"] += 1
-            _ENGINE_STATE["last_scanned_file"] = fname
-
         fkey = get_file_key(fpath)
         cached_faces = faces_cache.get(fkey, [])
         if not cached_faces:
@@ -2056,18 +2190,21 @@ def _phase_scan_unknown():
                 img = decode_image(img_bytes)
                 if img is not None and detector is not None and recognizer is not None:
                     h, w = img.shape[:2]
-                    detector.setInputSize((w, h))
-                    _, faces = detector.detect(img)
-                    features_list = []
-                    if faces is not None:
-                        for face in faces:
-                            aligned = recognizer.alignCrop(img, face)
-                            feat = recognizer.feature(aligned)
-                            features_list.append({"box": face[:4].tolist(), "feature": feat, "identity": "", "confidence": 0.0})
+                    with detector_lock:
+                        detector.setInputSize((w, h))
+                        _, faces = detector.detect(img)
+                        features_list = []
+                        if faces is not None:
+                            for face in faces:
+                                aligned = recognizer.alignCrop(img, face)
+                                feat = recognizer.feature(aligned)
+                                features_list.append({"box": face[:4].tolist(), "feature": feat, "identity": "", "confidence": 0.0})
                     faces_cache[fkey] = features_list
                     cached_faces = features_list
-            except Exception: pass
+            except Exception:
+                pass
 
+        suggestions = []
         for face_info in cached_faces:
             feat = face_info.get("feature")
             if feat is None:
@@ -2083,23 +2220,47 @@ def _phase_scan_unknown():
                 elif best_match == "YO":
                     target_cat = "YO"
                 apply_correction_to_file(fpath, target_cat, best_match, face_info)
-                msg = f"Sugerencia pendiente: {fname[:30]} → {target_cat}/{best_match} ({best_score:.2f})"
-                _log_action(msg)
-                print(f"[ENGINE-A] {msg}")
-                with _ENGINE_LOCK:
-                    _ENGINE_STATE["total_suggested"] = _ENGINE_STATE.get("total_suggested", 0) + 1
-                    _ENGINE_STATE["review_only"] = True
-                _save_engine_state()
+                suggestions.append((fname, target_cat, best_match, best_score))
                 break
 
-        _ENGINE_STATE["checkpoint"][ck_key] = time.time()
-        scan_batch_counter += 1
-        if scan_batch_counter % 20 == 0:
-            _save_engine_state()
-            try:
-                with open(FACES_CACHE_FILE, 'wb') as f_out: pickle.dump(faces_cache, f_out)
-            except: pass
-        time.sleep(AUDIT_PHASE_DELAY)
+        return (fpath, ck_key, fname, suggestions)
+
+    batch_size = 64
+    total_items = len(pending_files)
+    save_counter = 0
+
+    with ThreadPoolExecutor(max_workers=4, thread_name_prefix="FastFace") as executor:
+        for i in range(0, total_items, batch_size):
+            if not _ENGINE_STATE["running"]:
+                break
+            batch = pending_files[i:i + batch_size]
+            futures = [executor.submit(_process_one, it) for it in batch]
+            for fut in as_completed(futures):
+                res = fut.result()
+                if res is None:
+                    continue
+                fpath, ck_key, fname, suggestions = res
+                with _ENGINE_LOCK:
+                    _ENGINE_STATE["total_scanned"] += 1
+                    _ENGINE_STATE["last_scanned_file"] = fname
+                    _ENGINE_STATE["checkpoint"][ck_key] = time.time()
+                    for f_name, t_cat, b_match, b_score in suggestions:
+                        msg = f"Sugerencia pendiente: {f_name[:30]} → {t_cat}/{b_match} ({b_score:.2f})"
+                        _log_action(msg)
+                        print(f"[ENGINE-A] {msg}")
+                        _ENGINE_STATE["total_suggested"] = _ENGINE_STATE.get("total_suggested", 0) + 1
+                        _ENGINE_STATE["review_only"] = True
+
+                save_counter += 1
+                if save_counter % 100 == 0:
+                    _save_engine_state()
+                    try:
+                        with open(FACES_CACHE_FILE, 'wb') as f_out:
+                            pickle.dump(faces_cache, f_out)
+                    except Exception:
+                        pass
+
+    _save_engine_state()
 
 
 def is_smart_relationship_album(name: str) -> bool:

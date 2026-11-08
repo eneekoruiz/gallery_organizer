@@ -8,6 +8,11 @@ def sanitize_display_name(name):
         clean = clean[2:]
     elif clean.startswith("?"):
         clean = clean[1:].strip()
+    import re
+    clean = re.sub(r'^C\s+', 'C. ', clean)
+    clean = re.sub(r'^F\s+', 'F. ', clean)
+    clean = re.sub(r'^P\s+', 'P. ', clean)
+    clean = re.sub(r'^M\s+', 'M. ', clean)
     return clean.strip()
 
 _IDENTITIES_CACHE = None
@@ -22,9 +27,45 @@ def get_all_identities():
     global _IDENTITIES_CACHE, _IDENTITIES_CACHE_TS
     import time
     now = time.time()
-    # Cache for 120s in memory unless explicitly invalidated
-    if _IDENTITIES_CACHE is not None and (now - _IDENTITIES_CACHE_TS) < 120:
+    # Cache for 300s in memory unless explicitly invalidated
+    if _IDENTITIES_CACHE is not None and (now - _IDENTITIES_CACHE_TS) < 300:
         return _IDENTITIES_CACHE
+
+    # 1. Fast-path: extract identities directly from memory/disk gallery_cache (<10ms)
+    try:
+        from app.services.gallery_service import get_gallery_cache
+        g_cache = get_gallery_cache()
+        if g_cache:
+            identities = []
+            seen = set()
+            for cat, idents in g_cache.items():
+                if cat in ["Ignorar", "temp", "cache", ".thumbnails", "_Dudosos"]:
+                    continue
+                if isinstance(idents, dict):
+                    for ident in idents.keys():
+                        if not ident or ident.startswith("Falso_Positivo") or ident.startswith("Ignorar_"):
+                            continue
+                        c_name = cat
+                        i_name = ident
+                        if i_name.upper() == 'YO':
+                            c_name = 'YO'
+                            i_name = 'YO'
+                        elif c_name == 'Recuerdos' or i_name == 'Recuerdos':
+                            c_name = 'Recuerdos'
+                            i_name = 'Recuerdos'
+                        elif i_name.lower().startswith('persona') or i_name.lower().startswith('desconocid'):
+                            c_name = 'Personas Sin Nombre'
+                        key = f"{c_name}/{i_name}"
+                        if key not in seen:
+                            identities.append({"categoria": c_name, "identidad": i_name})
+                            seen.add(key)
+            if identities:
+                res = sorted(identities, key=lambda x: x['identidad'])
+                _IDENTITIES_CACHE = res
+                _IDENTITIES_CACHE_TS = now
+                return res
+    except Exception:
+        pass
 
     import os
     identities = []
@@ -47,10 +88,6 @@ def get_all_identities():
                             pass
                         
                         if not has_files:
-                            try:
-                                os.rmdir(str(ident))
-                            except Exception:
-                                pass
                             continue
                             
                         c_name = cat.name

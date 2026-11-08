@@ -1,4 +1,4 @@
-import os
+﻿import os
 import hashlib
 import logging
 import re
@@ -132,6 +132,22 @@ def _read_icloud_media(path):
     revision = (before.st_size, before.st_mtime_ns)
     attrs = getattr(before, 'st_file_attributes', 0)
     
+    is_video = Path(path).suffix.lower() in {".mp4", ".mov", ".avi"}
+    is_dehydrated = bool(attrs & 0x400000)
+    is_massive = before.st_size > 50 * 1024 * 1024
+
+    # Si es un vídeo masivo o está en la nube (>50MB o RECALL_ON_DATA_ACCESS)
+    if is_video and (is_massive or is_dehydrated):
+        _dehydrate_cloud_file(path)
+        sha256 = hashlib.sha256(f"icloud_cloud_video_{path}_{before.st_size}_{before.st_mtime_ns}".encode("utf-8")).hexdigest()
+        return ("CLOUD_MASSIVE", sha256, revision)
+
+    # Si es cualquier otro archivo masivo en la nube (>50MB y deshidratado)
+    if is_massive and is_dehydrated:
+        _dehydrate_cloud_file(path)
+        sha256 = hashlib.sha256(f"icloud_cloud_massive_{path}_{before.st_size}_{before.st_mtime_ns}".encode("utf-8")).hexdigest()
+        return ("CLOUD_MASSIVE", sha256, revision)
+
     # Si es un archivo en la nube no descargado (0x400000 = RECALL_ON_DATA_ACCESS)
     if attrs & 0x400000:
         _hydrate_cloud_file(path)
@@ -163,8 +179,8 @@ def _read_icloud_media(path):
             except OSError:
                 return None
         cap = cv2.VideoCapture(path, cv2.CAP_FFMPEG, [
-            cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 4000,
-            cv2.CAP_PROP_READ_TIMEOUT_MSEC, 2000,
+            cv2.CAP_PROP_OPEN_TIMEOUT_MSEC, 500,
+            cv2.CAP_PROP_READ_TIMEOUT_MSEC, 500,
         ])
         try:
             ok, frame = cap.read()
@@ -369,131 +385,139 @@ def _run_icloud_worker(batch_size=None):
 
         try:
             img, sha256, revision = media
-            h, w = img.shape[:2]
-            
-            # 2. Generar miniatura WebP (~20-25 KB) para carga instantánea
-            preview = generate_thumbnail(abs_p, max_size=320, decoded_image=img)
-
-            # Reuse detections and embeddings; classify with the current identity profiles.
-            cached_analysis = load_analysis(abs_p, sha256, analysis_profile)
-            analysis_reused = cached_analysis is not None
-            if cached_analysis is None:
-                scale = min(1.0, 1024 / max(w, h))
-                det_w = max(160, int(w * scale) // 32 * 32)
-                det_h = max(160, int(h * scale) // 32 * 32)
-                det.setInputSize((det_w, det_h))
-                _, raw_faces = det.detect(cv2.resize(img, (det_w, det_h)))
-                extracted = []
-                if raw_faces is not None:
-                    raw_faces[:, :14:2] *= w / det_w
-                    raw_faces[:, 1:14:2] *= h / det_h
-                    for face in raw_faces:
-                        if len(face) < 15:
-                            continue
-                        feat = rec.feature(rec.alignCrop(img, face)).flatten()
-                        extracted.append({"landmarks": face.tolist(), "feature": feat.tolist()})
-                cached_analysis = {"faces": extracted}
-                save_analysis(sha256, analysis_profile, cached_analysis)
-            extracted = cached_analysis["faces"]
-
-            detected_faces = []
-            assigned_cat = "📋 Revisión / Por Organizar"
-            assigned_ident = "📷 Fotos Sin Rostro"
-            photo_status = "Clasificado"
-
-            if extracted:
-                with cache_lock:
-                    refresh_centroids()
-                    profiles = dict(confirmed_profiles)
-                best_photo_match_sim = -1.0
-                best_photo_match_tuple = None
-
-                for cached_face in extracted:
-                    face = np.asarray(cached_face["landmarks"], dtype=np.float32)
-                    box = [float(face[0]), float(face[1]), float(face[2]), float(face[3])]
-                    feat = np.asarray(cached_face["feature"], dtype=np.float32)
-                    norm_feat = feat / (np.linalg.norm(feat) + 1e-10)
-
-                    ranked = rank_known_identities(norm_feat, centroids, profiles)
-                    best_sim, best_ident_tup = ranked[0] if ranked else (-1.0, None)
-                    margin = best_sim - ranked[1][0] if len(ranked) > 1 else float("inf")
-
-                    face_identity = "Desconocido"
-                    face_confidence = 0.0
-
-                    if best_ident_tup and best_sim >= 0.65 and margin >= 0.08:
-                        face_identity = best_ident_tup[1]
-                        face_confidence = round(best_sim * 100, 1)
-                        if best_sim > best_photo_match_sim:
-                            best_photo_match_sim = best_sim
-                            best_photo_match_tuple = best_ident_tup
-                            photo_status = "Clasificado"
-                    elif best_ident_tup and best_sim >= 0.46:
-                        face_identity = f"IA (Pendiente): {best_ident_tup[1]}"
-                        face_confidence = round(best_sim * 100, 1)
-                        if best_sim > best_photo_match_sim:
-                            best_photo_match_sim = best_sim
-                            best_photo_match_tuple = ("📋 Revisión / Por Organizar", best_ident_tup[1])
-                            photo_status = "Dudoso"
-                    else:
-                        # Cara desconocida: buscar si coincide con una 'Persona Nueva #...' ya registrada
-                        matched_new_person = None
-                        new_person_sim = -1.0
-                        for id_tup, c_vec in centroids.items():
-                            if isinstance(id_tup, tuple) and "Persona Nueva" in id_tup[1]:
-                                norm_c = c_vec.flatten() / (np.linalg.norm(c_vec) + 1e-10)
-                                sim = float(np.dot(norm_feat, norm_c))
-                                if sim > new_person_sim:
-                                    new_person_sim = sim
-                                    matched_new_person = id_tup
-
-                        if matched_new_person and new_person_sim >= 0.52:
-                            face_identity = matched_new_person[1]
-                            face_confidence = round(new_person_sim * 100, 1)
-                            if new_person_sim > best_photo_match_sim:
-                                best_photo_match_sim = new_person_sim
-                                best_photo_match_tuple = matched_new_person
-                        else:
-                            # Crear nueva Persona Nueva
-                            highest_new_person += 1
-                            new_name = f"Persona Nueva #{highest_new_person}"
-                            new_key = ("📋 Revisión / Por Organizar", new_name)
-                            new_centroids[new_key] = norm_feat
-                            centroids[new_key] = norm_feat
-                            face_identity = new_name
-                            face_confidence = 100.0
-                            if best_photo_match_sim < 0:
-                                best_photo_match_sim = 0.50
-                                best_photo_match_tuple = ("📋 Revisión / Por Organizar", new_name)
-
-                    detected_faces.append({
-                        "x": box[0],
-                        "y": box[1],
-                        "width": box[2],
-                        "height": box[3],
-                        "box": box,
-                        "identity": face_identity,
-                        "confidence": face_confidence,
-                        "feature": feat.tolist(),
-                        "img_width": w,
-                        "img_height": h
-                    })
-
-                # Asignación de carpeta para la foto
-                if best_photo_match_tuple:
-                    assigned_cat = best_photo_match_tuple[0]
-                    assigned_ident = best_photo_match_tuple[1]
-                else:
-                    assigned_cat = "📋 Revisión / Por Organizar"
-                    assigned_ident = "❓ Desconocidos (Por Identificar)"
+            if isinstance(img, str) and img == "CLOUD_MASSIVE":
+                assigned_cat = "📋 Revisión / Por Organizar"
+                assigned_ident = "🎬 Vídeos Pesados iCloud"
+                photo_status = "Cloud_Massive"
+                detected_faces = []
+                preview = None
+                analysis_reused = True
             else:
-                # Sin caras detectadas
-                if screenshot_re.search(fname):
-                    assigned_cat = "Publicaciones_Instagram"
-                    assigned_ident = "Capturas"
+                h, w = img.shape[:2]
+                
+                # 2. Generar miniatura WebP (~20-25 KB) para carga instantánea
+                preview = generate_thumbnail(abs_p, max_size=320, decoded_image=img)
+
+                # Reuse detections and embeddings; classify with the current identity profiles.
+                cached_analysis = load_analysis(abs_p, sha256, analysis_profile)
+                analysis_reused = cached_analysis is not None
+                if cached_analysis is None:
+                    scale = min(1.0, 1024 / max(w, h))
+                    det_w = max(160, int(w * scale) // 32 * 32)
+                    det_h = max(160, int(h * scale) // 32 * 32)
+                    det.setInputSize((det_w, det_h))
+                    _, raw_faces = det.detect(cv2.resize(img, (det_w, det_h)))
+                    extracted = []
+                    if raw_faces is not None:
+                        raw_faces[:, :14:2] *= w / det_w
+                        raw_faces[:, 1:14:2] *= h / det_h
+                        for face in raw_faces:
+                            if len(face) < 15:
+                                continue
+                            feat = rec.feature(rec.alignCrop(img, face)).flatten()
+                            extracted.append({"landmarks": face.tolist(), "feature": feat.tolist()})
+                    cached_analysis = {"faces": extracted}
+                    save_analysis(sha256, analysis_profile, cached_analysis)
+                extracted = cached_analysis["faces"]
+
+                detected_faces = []
+                assigned_cat = "📋 Revisión / Por Organizar"
+                assigned_ident = "📷 Fotos Sin Rostro"
+                photo_status = "Clasificado"
+
+                if extracted:
+                    with cache_lock:
+                        refresh_centroids()
+                        profiles = dict(confirmed_profiles)
+                    best_photo_match_sim = -1.0
+                    best_photo_match_tuple = None
+
+                    for cached_face in extracted:
+                        face = np.asarray(cached_face["landmarks"], dtype=np.float32)
+                        box = [float(face[0]), float(face[1]), float(face[2]), float(face[3])]
+                        feat = np.asarray(cached_face["feature"], dtype=np.float32)
+                        norm_feat = feat / (np.linalg.norm(feat) + 1e-10)
+
+                        ranked = rank_known_identities(norm_feat, centroids, profiles)
+                        best_sim, best_ident_tup = ranked[0] if ranked else (-1.0, None)
+                        margin = best_sim - ranked[1][0] if len(ranked) > 1 else float("inf")
+
+                        face_identity = "Desconocido"
+                        face_confidence = 0.0
+
+                        if best_ident_tup and best_sim >= 0.65 and margin >= 0.08:
+                            face_identity = best_ident_tup[1]
+                            face_confidence = round(best_sim * 100, 1)
+                            if best_sim > best_photo_match_sim:
+                                best_photo_match_sim = best_sim
+                                best_photo_match_tuple = best_ident_tup
+                                photo_status = "Clasificado"
+                        elif best_ident_tup and best_sim >= 0.46:
+                            face_identity = f"IA (Pendiente): {best_ident_tup[1]}"
+                            face_confidence = round(best_sim * 100, 1)
+                            if best_sim > best_photo_match_sim:
+                                best_photo_match_sim = best_sim
+                                best_photo_match_tuple = ("📋 Revisión / Por Organizar", best_ident_tup[1])
+                                photo_status = "Dudoso"
+                        else:
+                            # Cara desconocida: buscar si coincide con una 'Persona Nueva #...' ya registrada
+                            matched_new_person = None
+                            new_person_sim = -1.0
+                            for id_tup, c_vec in centroids.items():
+                                if isinstance(id_tup, tuple) and "Persona Nueva" in id_tup[1]:
+                                    norm_c = c_vec.flatten() / (np.linalg.norm(c_vec) + 1e-10)
+                                    sim = float(np.dot(norm_feat, norm_c))
+                                    if sim > new_person_sim:
+                                        new_person_sim = sim
+                                        matched_new_person = id_tup
+
+                            if matched_new_person and new_person_sim >= 0.52:
+                                face_identity = matched_new_person[1]
+                                face_confidence = round(new_person_sim * 100, 1)
+                                if new_person_sim > best_photo_match_sim:
+                                    best_photo_match_sim = new_person_sim
+                                    best_photo_match_tuple = matched_new_person
+                            else:
+                                # Crear nueva Persona Nueva
+                                highest_new_person += 1
+                                new_name = f"Persona Nueva #{highest_new_person}"
+                                new_key = ("📋 Revisión / Por Organizar", new_name)
+                                new_centroids[new_key] = norm_feat
+                                centroids[new_key] = norm_feat
+                                face_identity = new_name
+                                face_confidence = 100.0
+                                if best_photo_match_sim < 0:
+                                    best_photo_match_sim = 0.50
+                                    best_photo_match_tuple = ("📋 Revisión / Por Organizar", new_name)
+
+                        detected_faces.append({
+                            "x": box[0],
+                            "y": box[1],
+                            "width": box[2],
+                            "height": box[3],
+                            "box": box,
+                            "identity": face_identity,
+                            "confidence": face_confidence,
+                            "feature": feat.tolist(),
+                            "img_width": w,
+                            "img_height": h
+                        })
+
+                    # Asignación de carpeta para la foto
+                    if best_photo_match_tuple:
+                        assigned_cat = best_photo_match_tuple[0]
+                        assigned_ident = best_photo_match_tuple[1]
+                    else:
+                        assigned_cat = "📋 Revisión / Por Organizar"
+                        assigned_ident = "❓ Desconocidos (Por Identificar)"
                 else:
-                    assigned_cat = "📋 Revisión / Por Organizar"
-                    assigned_ident = "📷 Fotos Sin Rostro"
+                    # Sin caras detectadas
+                    if screenshot_re.search(fname):
+                        assigned_cat = "Publicaciones_Instagram"
+                        assigned_ident = "Capturas"
+                    else:
+                        assigned_cat = "📋 Revisión / Por Organizar"
+                        assigned_ident = "📷 Fotos Sin Rostro"
 
             # 4. Guardar en apple_db con supervisión IA activa en tiempo real (100% de fotos)
             entry = {
@@ -511,10 +535,11 @@ def _run_icloud_worker(batch_size=None):
                 "mtime_ns": revision[1],
                 "mtime": revision[1] / 1e9
             }
-            supervise_and_adapt_decision(abs_p, entry, centroids, learn=False)
-            assigned_cat = entry["category"]
-            assigned_ident = entry["identity"]
-            photo_status = entry["status"]
+            if photo_status != "Cloud_Massive":
+                supervise_and_adapt_decision(abs_p, entry, centroids, learn=False)
+                assigned_cat = entry["category"]
+                assigned_ident = entry["identity"]
+                photo_status = entry["status"]
 
             current = os.stat(abs_p)
             if revision != (current.st_size, current.st_mtime_ns):
@@ -522,7 +547,10 @@ def _run_icloud_worker(batch_size=None):
             apple_db[abs_p] = entry
 
             # 5. Deshidratar inmediatamente para dejar 0 KB en disco
-            if preview:
+            if photo_status == "Cloud_Massive":
+                entry["dehydrated"] = True
+                _dehydrate_cloud_file(abs_p)
+            elif preview:
                 entry["dehydrated"] = _dehydrate_cloud_file(abs_p)
 
             # 6. Crear acceso directo virtual en Resultados con la categoría supervisada

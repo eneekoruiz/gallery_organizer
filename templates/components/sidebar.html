@@ -13,10 +13,14 @@
         <button id="btn-close-sidebar" class="sidebar-mobile-close-btn" onclick="toggleSidebar(false)" title="Cerrar Álbumes">
             ✕
         </button>
+        <button class="smart-tool-chip" onclick="if(window.innerWidth<=820&&typeof toggleSidebar==='function')toggleSidebar(false); openStaleScreenshotsModal();" title="Gestionar y limpiar capturas antiguas sin abrir" style="background: rgba(255, 69, 58, 0.08); border: 1px solid rgba(255, 69, 58, 0.25); color: #ff6961; border-radius: 8px; padding: 6px 2px; font-size: 10.5px; font-weight: 600; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 2px; transition: all 0.15s;">
+            <span style="font-size: 13px;">📱</span>
+            <span>Capturas</span>
+        </button>
     </div>
 
     <!-- Quick Smart Tools Action Chips -->
-    <div style="padding: 10px 14px; display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 5px; border-bottom: 1px solid rgba(255,255,255,0.04); flex-shrink:0;">
+    <div style="padding: 10px 14px; display: grid; grid-template-columns: repeat(5, 1fr); gap: 5px; border-bottom: 1px solid rgba(255,255,255,0.04); flex-shrink:0;">
         <button class="smart-tool-chip" onclick="if(window.innerWidth<=820&&typeof toggleSidebar==='function')toggleSidebar(false); if(typeof openExactDuplicatesModal==='function')openExactDuplicatesModal();" title="Escanear y eliminar duplicados exactos en disco" style="background: rgba(255, 159, 10, 0.08); border: 1px solid rgba(255, 159, 10, 0.2); color: #ff9f0a; border-radius: 8px; padding: 6px 2px; font-size: 10.5px; font-weight: 600; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 2px; transition: all 0.15s;">
             <span style="font-size: 13px;">⚡</span>
             <span>Duplicados</span>

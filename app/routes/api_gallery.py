@@ -53,7 +53,9 @@ def get_gallery_preview_route():
 @api_gallery_bp.route('/gallery/refresh', methods=['GET', 'POST'])
 def refresh_gallery_route():
     from app.globals import clear_gallery_cache
-    clear_gallery_cache()
+    clear_gallery_cache(unlink_file=True)
+    from app.services.gallery_service import get_gallery
+    get_gallery(force_reload=True)
     return jsonify({"success": True, "message": "Gallery cache refreshed"})
 
 @api_gallery_bp.route('/gallery/structure')

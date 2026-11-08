@@ -494,3 +494,104 @@ window.closeShortcutsModal = function() {
     if (modal) modal.style.display = 'none';
 };
 </script>
+
+
+<!-- MODAL GESTOR DE CAPTURAS ANTIGUAS Y OLVIDADAS -->
+<div id="modal-stale-screenshots" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.85); backdrop-filter:blur(20px); -webkit-backdrop-filter:blur(20px); z-index:10000; align-items:center; justify-content:center; padding:16px;">
+    <div style="background:rgba(20,22,30,0.96); border:1px solid rgba(255,159,10,0.3); border-radius:24px; padding:26px; width:680px; max-width:96%; max-height:90vh; overflow-y:auto; color:white; position:relative; box-shadow:0 30px 80px rgba(0,0,0,0.9);">
+        <button onclick="closeStaleScreenshotsModal()" style="position:absolute; top:18px; right:20px; background:none; border:none; color:#8e8e93; font-size:24px; cursor:pointer; transition:color 0.2s;" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='#8e8e93'">&times;</button>
+        
+        <div style="display:flex; align-items:center; gap:12px; margin-bottom:16px; padding-bottom:14px; border-bottom:1px solid rgba(255,255,255,0.08);">
+            <div style="width:42px; height:42px; border-radius:12px; background:linear-gradient(135deg, #ff9f0a, #ff3b30); display:flex; align-items:center; justify-content:center; font-size:20px; box-shadow:0 4px 15px rgba(255,159,10,0.35);">📱</div>
+            <div>
+                <h3 style="margin:0; font-size:1.25rem; font-weight:800; letter-spacing:-0.4px;">Gestor de Capturas Antiguas</h3>
+                <p style="margin:2px 0 0; font-size:0.8rem; color:#8e8e93;">Filtra y limpia capturas olvidadas que llevas meses o años sin abrir.</p>
+            </div>
+        </div>
+
+        <div id="stale-screenshots-stats-grid" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(130px, 1fr)); gap:10px; margin-bottom:20px;">
+            <div style="background:rgba(255,69,58,0.12); border:1px solid rgba(255,69,58,0.3); border-radius:14px; padding:14px; text-align:center;">
+                <div style="font-size:24px; font-weight:800; color:#ff453a;" id="stale-count-1y">2.191</div>
+                <div style="font-size:11px; font-weight:700; color:#ff6961; margin-top:2px;">🗄️ > 1 año</div>
+                <div style="font-size:10px; color:#8e8e93; margin-top:2px;">Olvidadas</div>
+            </div>
+            <div style="background:rgba(255,159,10,0.1); border:1px solid rgba(255,159,10,0.25); border-radius:14px; padding:14px; text-align:center;">
+                <div style="font-size:24px; font-weight:800; color:#ff9f0a;" id="stale-count-6m">60</div>
+                <div style="font-size:11px; font-weight:700; color:#ffb340; margin-top:2px;">📅 > 6 meses</div>
+                <div style="font-size:10px; color:#8e8e93; margin-top:2px;">Sin consultar</div>
+            </div>
+            <div style="background:rgba(255,214,10,0.08); border:1px solid rgba(255,214,10,0.2); border-radius:14px; padding:14px; text-align:center;">
+                <div style="font-size:24px; font-weight:800; color:#ffd60a;" id="stale-count-3m">144</div>
+                <div style="font-size:11px; font-weight:700; color:#ffe040; margin-top:2px;">⏳ > 3 meses</div>
+                <div style="font-size:10px; color:#8e8e93; margin-top:2px;">Poco uso</div>
+            </div>
+            <div style="background:rgba(48,209,88,0.08); border:1px solid rgba(48,209,88,0.2); border-radius:14px; padding:14px; text-align:center;">
+                <div style="font-size:24px; font-weight:800; color:#30d158;" id="stale-count-recent">20</div>
+                <div style="font-size:11px; font-weight:700; color:#5de27e; margin-top:2px;">🟢 &lt; 3 meses</div>
+                <div style="font-size:10px; color:#8e8e93; margin-top:2px;">Recientes</div>
+            </div>
+        </div>
+
+        <div style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07); border-radius:16px; padding:16px; margin-bottom:20px;">
+            <div style="font-size:12.5px; font-weight:700; color:#e5e5ea; margin-bottom:6px; display:flex; align-items:center; gap:6px;">
+                <span>💡</span> <span>¿Por qué gestionar capturas antiguas?</span>
+            </div>
+            <p style="font-size:12px; color:#8e8e93; margin:0; line-height:1.5;">
+                Las capturas de pantalla suelen ser efímeras (recibos, chats, confirmaciones). Las que tienen más de 1 año casi nunca vuelven a abrirse y ocupan cientos de megabytes en tu biblioteca.
+            </p>
+        </div>
+
+        <div style="display:flex; flex-direction:column; gap:8px;">
+            <button onclick="goToStaleScreenshotsAlbum('1y')" style="background:linear-gradient(135deg, #ff453a, #ff9f0a); border:none; color:#fff; padding:12px 18px; border-radius:14px; font-weight:700; font-size:13.5px; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:8px; box-shadow:0 4px 15px rgba(255,69,58,0.35); transition:transform 0.15s;" onmouseover="this.style.transform='scale(1.01)'" onmouseout="this.style.transform='scale(1)'">
+                <span>🗄️</span> <span>Ver y limpiar capturas de más de 1 año (2.191)</span>
+            </button>
+            <button onclick="goToStaleScreenshotsAlbum('3m')" style="background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); color:#fff; padding:11px 18px; border-radius:14px; font-weight:600; font-size:13px; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:8px; transition:background 0.2s;" onmouseover="this.style.background='rgba(255,255,255,0.1)'" onmouseout="this.style.background='rgba(255,255,255,0.06)'">
+                <span>⏳</span> <span>Revisar capturas de más de 3 meses</span>
+            </button>
+            <button onclick="goToStaleScreenshotsAlbum('all')" style="background:transparent; border:none; color:#8e8e93; padding:8px; font-size:12px; cursor:pointer;">
+                Ver todas las capturas
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL REASIGNAR CARA (RESPONSIVE & SEARCHABLE ZERO-CLIPPING) -->
+<div id="modal-reassign-face" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.85); backdrop-filter:blur(25px); -webkit-backdrop-filter:blur(25px); z-index:100000; align-items:center; justify-content:center; padding:12px;">
+    <div style="background:rgba(20,22,30,0.98); border:1px solid rgba(255,255,255,0.18); border-radius:22px; width:480px; max-width:96%; max-height:86vh; display:flex; flex-direction:column; color:white; position:relative; box-shadow:0 30px 80px rgba(0,0,0,0.95); overflow:hidden; animation:fade-in-up 0.25s ease;">
+        
+        <!-- Header -->
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:16px 20px 12px; border-bottom:1px solid rgba(255,255,255,0.08); flex-shrink:0;">
+            <div style="display:flex; align-items:center; gap:10px;">
+                <div style="width:36px; height:36px; border-radius:10px; background:rgba(10,132,255,0.15); border:1px solid rgba(10,132,255,0.3); display:flex; align-items:center; justify-content:center; font-size:18px;">👥</div>
+                <div>
+                    <h3 id="reassign-modal-title" style="font-size:1.05rem; font-weight:800; margin:0; color:#fff;">Reasignar Cara</h3>
+                    <p style="font-size:0.75rem; color:#8e8e93; margin:2px 0 0 0;">Elige a quién pertenece esta cara o crea una nueva</p>
+                </div>
+            </div>
+            <button onclick="closeReassignFaceModal()" style="background:rgba(255,255,255,0.08); border:none; color:#8e8e93; width:30px; height:30px; border-radius:50%; font-size:14px; cursor:pointer; display:flex; align-items:center; justify-content:center; transition:all 0.15s;" onmouseover="this.style.background='rgba(255,255,255,0.15)'; this.style.color='#fff';" onmouseout="this.style.background='rgba(255,255,255,0.08)'; this.style.color='#8e8e93';">✕</button>
+        </div>
+
+        <!-- Search Bar -->
+        <div style="padding:12px 16px 8px; flex-shrink:0; background:rgba(255,255,255,0.02);">
+            <div style="position:relative; width:100%;">
+                <span style="position:absolute; left:12px; top:50%; transform:translateY(-50%); font-size:13px; color:#8e8e93;">🔍</span>
+                <input id="reassign-search-input" type="text" placeholder="Buscar conocido o familiar (ej. Amaia, Mikel...)" oninput="filterReassignModalList(this.value)" style="width:100%; box-sizing:border-box; padding:10px 12px 10px 34px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.14); border-radius:12px; color:#fff; font-size:13px; outline:none; transition:border-color 0.2s;" onfocus="this.style.borderColor='#0a84ff'" onblur="this.style.borderColor='rgba(255,255,255,0.14)'">
+            </div>
+        </div>
+
+        <!-- Filter category chips -->
+        <div id="reassign-category-chips" style="display:flex; gap:6px; padding:0 16px 10px; overflow-x:auto; flex-shrink:0; -webkit-overflow-scrolling:touch; scrollbar-width:none;">
+        </div>
+
+        <!-- List of People -->
+        <div id="reassign-people-list" class="custom-scrollbar" style="flex:1; overflow-y:auto; padding:6px 16px 16px; min-height:220px; display:flex; flex-direction:column; gap:4px;">
+        </div>
+
+        <!-- Bottom Action: New Person -->
+        <div style="padding:12px 16px; border-top:1px solid rgba(255,255,255,0.08); background:rgba(255,255,255,0.02); flex-shrink:0;">
+            <button onclick="reassignToNewPerson()" style="width:100%; padding:10px 14px; border-radius:12px; border:1px solid rgba(10,132,255,0.3); background:rgba(10,132,255,0.12); color:#64d2ff; font-weight:700; font-size:12px; cursor:pointer; display:flex; align-items:center; justify-content:center; gap:8px; transition:all 0.15s;" onmouseover="this.style.background='rgba(10,132,255,0.25)'" onmouseout="this.style.background='rgba(10,132,255,0.12)'">
+                <span>➕</span> Crear y reasignar a una nueva persona...
+            </button>
+        </div>
+    </div>
+</div>

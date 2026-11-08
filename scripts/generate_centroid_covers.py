@@ -52,27 +52,54 @@ def get_best_avatar_image(cat, ident):
     return None
 
 def extract_face_from_folder_photos(folder_path):
-    """Fallback: Si no hay avatar previo, extrae la cara más clara de una foto en la carpeta."""
+    """Extrae ÚNICAMENTE una cara real detectada con confianza alta. NUNCA recortar paisajes ni fotos sin caras."""
+    from app.globals import detector
     valid_exts = {".jpg", ".jpeg", ".png", ".webp"}
-    photos = [p for p in folder_path.iterdir() if p.is_file() and p.suffix.lower() in valid_exts and not p.name.startswith(("_00_", "00_"))]
-    if not photos:
+    photos = [p for p in folder_path.iterdir() if p.is_file() and p.suffix.lower() in valid_exts and not p.name.startswith(("_00_", "00_", "!00_"))]
+    if not photos or detector is None:
         return None
 
-    # Ordenar por tamaño para coger la foto de mayor calidad
     photos.sort(key=lambda x: x.stat().st_size, reverse=True)
     
-    for photo_path in photos[:5]:
+    for photo_path in photos[:8]:
         data = np.fromfile(str(photo_path), dtype=np.uint8)
         img = cv2.imdecode(data, cv2.IMREAD_COLOR)
         if img is None:
             continue
-        h, w = img.shape[:2]
-        crop_sz = min(h, w)
-        cx, cy = w // 2, h // 2
-        crop = img[max(0, cy - crop_sz // 2):min(h, cy + crop_sz // 2),
-                   max(0, cx - crop_sz // 2):min(w, cx + crop_sz // 2)]
-        if crop.size > 0:
-            return crop
+        h_img, w_img = img.shape[:2]
+        # Scaled detection
+        max_dim = 1024
+        scale = 1.0
+        if max(w_img, h_img) > max_dim:
+            scale = max_dim / max(w_img, h_img)
+            det_w = max(160, int(w_img * scale))
+            det_h = max(160, int(h_img * scale))
+            det_img = cv2.resize(img, (det_w, det_h), interpolation=cv2.INTER_AREA)
+        else:
+            det_w, det_h = w_img, h_img
+            det_img = img
+            
+        inv_scale = 1.0 / scale
+        try:
+            detector.setInputSize((det_w, det_h))
+            detector.setScoreThreshold(0.55)
+            _, faces = detector.detect(det_img)
+            if faces is not None and len(faces) > 0:
+                # Filtrar la mejor cara
+                faces = sorted(faces, key=lambda f: f[2]*f[3]*f[-1], reverse=True)
+                best_f = faces[0]
+                if best_f[-1] >= 0.55:
+                    x, y, w, h = int(best_f[0] * inv_scale), int(best_f[1] * inv_scale), int(best_f[2] * inv_scale), int(best_f[3] * inv_scale)
+                    if w >= 40 and h >= 40:
+                        pad_x = int(min(w * 0.15, x, w_img - (x + w)))
+                        pad_y = int(min(h * 0.15, y, h_img - (y + h)))
+                        px1, py1 = max(0, x - pad_x), max(0, y - pad_y)
+                        px2, py2 = min(w_img, x + w + pad_x), min(h_img, y + h + pad_y)
+                        crop = img[py1:py2, px1:px2]
+                        if crop.size > 0:
+                            return crop
+        except Exception:
+            pass
 
     return None
 

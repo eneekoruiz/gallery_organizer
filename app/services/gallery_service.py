@@ -54,7 +54,7 @@ def is_genuine_manual_override(ov_list):
 def api_identities():
     return jsonify(get_all_identities())
 
-def get_gallery():
+def get_gallery(force_reload=False):
     process_pending_deletions()
     
     global FOTOS_DIR, RESULTADOS_DIR
@@ -76,7 +76,8 @@ def get_gallery():
             RESULTADOS_DIR = pathlib.Path(l_path) / 'Resultados'
     
     from flask import has_request_context, has_app_context
-    force_reload = (request.args.get('force') == 'true') if has_request_context() else False
+    if not force_reload and has_request_context():
+        force_reload = (request.args.get('force') == 'true')
     gallery_cache = get_gallery_cache()
     if gallery_cache is not None and not force_reload:
         return jsonify(gallery_cache) if has_app_context() else gallery_cache
@@ -126,6 +127,9 @@ def get_gallery():
             if "Ignorar" in parts or any(p.startswith("Falso_Positivo") or p.startswith("Ignorar_") for p in parts):
                 continue
             for file in files:
+                f_up = file.upper()
+                if f_up.startswith("!00_") or f_up.startswith("_00_") or "CENTROIDE" in f_up:
+                    continue
                 ext = os.path.splitext(file)[1].lower()
                 if ext in valid_exts:
                     all_file_targets.append((os.path.join(root, file), is_orig_dataset, base_dir))
@@ -168,6 +172,10 @@ def get_gallery():
             elif len(parts) >= 3:
                 folder, subfolder = parts[0], parts[1]
                 is_dudoso = folder_dudoso
+                # If folder is Dudosos and subfolder is a person, preserve person identity and mark dudoso
+                if folder.lower() in ('dudosos', '_dudosos') and (subfolder.startswith(('C.', 'C ', 'F.', 'F ', 'YO', 'P.', 'M.')) or subfolder in ident_to_cat_map):
+                    folder = ident_to_cat_map.get(subfolder) or ('Conocidos' if subfolder.startswith(('C.', 'C ')) else 'Familia' if subfolder.startswith(('F.', 'F ')) else 'YO' if subfolder == 'YO' else 'Profesores' if subfolder.startswith('P.') else 'Mascotas' if subfolder.startswith('M.') else 'Conocidos')
+                    is_dudoso = True
             elif len(parts) == 2:
                 folder, subfolder = parts[0], parts[0]
                 is_dudoso = folder_dudoso
@@ -332,7 +340,12 @@ def get_gallery():
     
     ident_to_cat_map = {id_info["identidad"]: id_info["categoria"] for id_info in get_all_identities()}
     added_paths = set()
+    added_names = set()
     def add_to_gallery(cat, ident, item):
+        fname_upper = str(item.get('name', '')).upper()
+        pname_upper = str(item.get('path', '')).replace('\\', '/').split('/')[-1].upper()
+        if fname_upper.startswith('!00_') or fname_upper.startswith('_00_') or 'CENTROIDE' in fname_upper or 'CENTROIDE' in pname_upper:
+            return  # Archivos de centroide interno: NUNCA agregar como foto a la galería
         if isinstance(ident, str):
             ident = sanitize_display_name(ident)
             if ident.startswith('? ') or ident.startswith('?'):
@@ -341,37 +354,83 @@ def get_gallery():
         ident_l = str(ident).lower()
         p_l = str(item.get('path', '')).lower()
         
-        # Redirigir cualquier Dudoso genérico a '📋 Revisión / Por Organizar',
-        # PERO si pertenece a un álbum de persona conocida (cat in KNOWN_CATEGORIES), se mantiene en su álbum con flag is_dudoso
-        is_person_album = (cat in KNOWN_CATEGORIES and not ident.startswith('⚠️') and not ident.startswith('⏳') and not ident.startswith('❓') and not ident.startswith('👤'))
-        
-        if not is_person_album and ('_dudoso' in cat_l or '_dudoso' in ident_l or '_dudoso' in p_l or 'dudoso' in ident_l):
-            cat = "📋 Revisión / Por Organizar"
-            ident = "⚠️ Dudosos / Baja Confianza"
-        elif 'sin_rostro' in cat_l or 'sin_rostro' in ident_l or 'sin_rostro' in p_l:
-            cat = "📋 Revisión / Por Organizar"
-            ident = "🎬 Vídeos Sin Rostro" if item.get('type') == 'video' else "📷 Fotos Sin Rostro"
-        elif cat == 'Personas Sin Nombre' or 'desconocid' in cat_l or 'desconocid' in ident_l or 'persona' in ident_l or 'mascota nueva' in ident_l:
-            cat = "📋 Revisión / Por Organizar"
-            if 'persona nueva' in ident_l or 'persona #' in ident_l:
-                clean_num = ident.replace('👤', '').strip()
-                ident = f"👤 {clean_num}"
+        # Check if ident is a known person identity
+        clean_id_check = ident.replace('👤', '').replace('⚠️', '').replace('⏳', '').replace('❓', '').strip()
+        is_known_person = (
+            clean_id_check in ident_to_cat_map
+            or clean_id_check.startswith(('C.', 'C ', 'C_'))
+            or clean_id_check.startswith(('F.', 'F ', 'F_'))
+            or clean_id_check == 'YO' or clean_id_check.startswith('YO')
+            or clean_id_check.startswith(('P.', 'P ', 'Prof'))
+            or clean_id_check.startswith(('M.', 'M ', 'Mascota'))
+        )
+
+        if is_known_person:
+            # Force canonical category - NO person album ever lives in Review
+            canonical = ident_to_cat_map.get(clean_id_check)
+            if not canonical:
+                if clean_id_check.startswith(('C.', 'C ', 'C_')): canonical = 'Conocidos'
+                elif clean_id_check.startswith(('F.', 'F ', 'F_')): canonical = 'Familia'
+                elif clean_id_check == 'YO' or clean_id_check.startswith('YO'): canonical = 'YO'
+                elif clean_id_check.startswith(('P.', 'P ', 'Prof')): canonical = 'Profesores'
+                elif clean_id_check.startswith(('M.', 'M ', 'Mascota')) or clean_id_check in {'Perro', 'Gato', 'Ney', 'Sua'}: canonical = 'Mascotas'
+                else: canonical = 'Conocidos'
+            cat = canonical
+            ident = clean_id_check
+
+            # 3-Tier Classification for Person Albums
+            p_norm = p_l.replace('\\', '/')
+            is_dud = (
+                item.get('is_dudoso') 
+                or item.get('status') == 'Dudoso' 
+                or item.get('needs_confirmation')
+                or ('/_dudoso' in p_norm)
+                or ('/dudoso' in p_norm)
+                or (cat == "📋 Revisión / Por Organizar" and 'dudoso' in ident_l)
+            )
+            is_official = (
+                item.get('is_dataset')
+                or item.get('is_manual')
+                or 'Dataset' in str(item.get('source', ''))
+                or 'Manual' in str(item.get('source', ''))
+                or (item.get('status') == 'Clasificado' and not is_dud and float(item.get('confidence') or 0.0) >= 0.55)
+            )
+            if is_official and not is_dud:
+                item['album_section'] = 'official'
+                item['is_dudoso'] = False
+            elif is_dud:
+                item['album_section'] = 'review'
+                item['is_dudoso'] = True
             else:
-                ident = "❓ Desconocidos (Por Identificar)"
-        elif not is_person_album and cat in ['_Dudosos', 'Revision_Interactiva', 'Falsos_Positivos']:
-            cat = "📋 Revisión / Por Organizar"
-            ident = "⚠️ Dudosos / Baja Confianza"
+                item['album_section'] = 'suggestion'
+                item['is_dudoso'] = False
+        else:
+            is_person_album = (cat in KNOWN_CATEGORIES and not ident.startswith('⚠️') and not ident.startswith('⏳') and not ident.startswith('❓') and not ident.startswith('👤'))
+            if not is_person_album and ('_dudoso' in cat_l or '_dudoso' in ident_l or '_dudoso' in p_l or 'dudoso' in ident_l):
+                cat = "📋 Revisión / Por Organizar"
+                ident = "⚠️ Dudosos / Baja Confianza"
+            elif 'sin_rostro' in cat_l or 'sin_rostro' in ident_l or 'sin_rostro' in p_l:
+                cat = "📋 Revisión / Por Organizar"
+                ident = "🎬 Vídeos Sin Rostro" if item.get('type') == 'video' else "📷 Fotos Sin Rostro"
+            elif cat == 'Personas Sin Nombre' or 'desconocid' in cat_l or 'desconocid' in ident_l or 'persona' in ident_l or 'mascota nueva' in ident_l:
+                cat = "📋 Revisión / Por Organizar"
+                if 'persona nueva' in ident_l or 'persona #' in ident_l:
+                    clean_num = ident.replace('👤', '').strip()
+                    ident = f"👤 {clean_num}"
+                else:
+                    ident = "❓ Desconocidos (Por Identificar)"
+            elif not is_person_album and cat in ['_Dudosos', 'Revision_Interactiva', 'Falsos_Positivos']:
+                cat = "📋 Revisión / Por Organizar"
+                ident = "⚠️ Dudosos / Baja Confianza"
         
         if cat not in gallery: gallery[cat] = {}
         if ident not in gallery[cat]: gallery[cat][ident] = []
         k = (cat, ident, item['path'])
-        if k not in added_paths:
+        fname_k = (cat, ident, item['name'].lower())
+        if k not in added_paths and fname_k not in added_names:
             added_paths.add(k)
-            if item.get('name', '').startswith('!00_') or Path(item.get('path', '')).name.startswith('!00_'):
-                item['is_centroid_cover'] = True
-                gallery[cat][ident].insert(0, item)
-            else:
-                gallery[cat][ident].append(item)
+            added_names.add(fname_k)
+            gallery[cat][ident].append(item)
 
     for (cat, ident, filename), item in seen_files.items():
         # Items from smart album folders skip person indexing
@@ -388,21 +447,26 @@ def get_gallery():
         is_person_folder = (cat in KNOWN_CATEGORIES and not any(w in ident.lower() for w in ['conmigo', 'sin m\xc3\xad', 'sin mi', 'grupal', 'grupo']))
         
         if is_person_folder and not item.get('is_dataset'):
-            confirmed_ids = [
-                f_e.get('identity') for f_e in faces_in_file 
-                if f_e.get('identity') and not f_e.get('identity').startswith('Desconocid') 
-                and not f_e.get('identity').startswith('Falso_Positivo') 
-                and not f_e.get('identity').startswith('Ignorar')
-            ]
-            if confirmed_ids:
-                norm_ident = clean_ident.lower().replace('c. ', '').replace('f. ', '').strip()
-                owner_found = any(
-                    norm_ident in cid.lower().replace('c. ', '').replace('f. ', '').strip() or
-                    cid.lower().replace('c. ', '').replace('f. ', '').strip() in norm_ident
-                    for cid in confirmed_ids
-                )
-                if not owner_found:
-                    should_add_to_owner = False
+            norm_ident = clean_ident.lower().replace('c. ', '').replace('f. ', '').strip()
+            if faces_in_file:
+                confirmed_ids = [
+                    f_e.get('identity') for f_e in faces_in_file 
+                    if f_e.get('identity') and not f_e.get('identity').startswith('Desconocid') 
+                    and not f_e.get('identity').startswith('Falso_Positivo') 
+                    and not f_e.get('identity').startswith('Ignorar')
+                ]
+                if confirmed_ids:
+                    owner_found = any(
+                        norm_ident in cid.lower().replace('c. ', '').replace('f. ', '').strip() or
+                        cid.lower().replace('c. ', '').replace('f. ', '').strip() in norm_ident
+                        for cid in confirmed_ids
+                    )
+                    if not owner_found:
+                        should_add_to_owner = False
+            elif (file_k in faces_cache or item['path'] in faces_cache) and not item.get('is_dudoso'):
+                # Foto escaneada explicitamente sin caras detectadas: redirigir a Sin Rostro
+                should_add_to_owner = False
+                add_to_gallery("📋 Revisión / Por Organizar", "🎬 Vídeos Sin Rostro" if item.get('type') == 'video' else "📷 Fotos Sin Rostro", item)
 
         if should_add_to_owner:
             add_to_gallery(cat, clean_ident, item)
@@ -447,7 +511,7 @@ def get_gallery():
     # --- VIRTUAL ICLOUD PHOTOS INTEGRATION (apple_db.json) ---
     try:
         from app.services.apple_service import load_apple_db
-        apple_db = load_apple_db()
+        apple_db = load_apple_db(force_reload=True)
         for p_str, info in apple_db.items():
             if not info or info.get('deleted_locally'):
                 continue
@@ -456,7 +520,8 @@ def get_gallery():
                 cat = info.get('category', '📋 Revisión / Por Organizar')
                 ident = info.get('identity', '❓ Desconocidos (Por Identificar)')
                 k_check = (cat, ident, p_str)
-                if k_check in added_paths:
+                fname_check = (cat, ident, fname.lower())
+                if k_check in added_paths or fname_check in added_names:
                     continue
                 faces_in_file = info.get('faces', [])
                 num_f = info.get('num_faces', len(faces_in_file))
@@ -479,8 +544,84 @@ def get_gallery():
                     "dehydrated": True,
                     "faces": faces_in_file
                 }
-                if not is_group_album(ident):
-                    add_to_gallery(cat, ident, item_apple)
+                # Resolve canonical category if identity is known
+                canonical_cat = ident_to_cat_map.get(ident)
+                if not canonical_cat:
+                    if ident.startswith('C. ') or ident.startswith('C '):
+                        canonical_cat = 'Conocidos'
+                    elif ident.startswith('F. ') or ident.startswith('F '):
+                        canonical_cat = 'Familia'
+                    elif ident == 'YO':
+                        canonical_cat = 'YO'
+                    elif ident.startswith('P. ') or ident.startswith('Prof'):
+                        canonical_cat = 'Profesores'
+                    elif ident.startswith('M. ') or ident in {'Perro', 'Gato', 'Ney', 'Sua'}:
+                        canonical_cat = 'Mascotas'
+
+                if canonical_cat and (not cat or cat in {'📋 Revisión / Por Organizar', 'Dudosos', 'Personas Sin Nombre'}):
+                    cat = canonical_cat
+
+                clean_ident = sanitize_display_name(ident)
+                matching_faces_for_entry = [
+                    f for f in faces_in_file 
+                    if sanitize_display_name(f.get('identity', '').replace('IA (Pendiente): ', '').replace('IA: ', '').strip()) == clean_ident
+                ]
+                
+                # Only add primary entry if not a group and either no faces detected or at least one face matches clean_ident
+                if not is_group_album(ident) and (not faces_in_file or matching_faces_for_entry):
+                    item_entry = dict(item_apple)
+                    if matching_faces_for_entry:
+                        top_m_face = matching_faces_for_entry[0]
+                        f_raw = top_m_face.get('identity', '')
+                        is_pend = f_raw.startswith('IA (Pendiente):') or top_m_face.get('review_required') or top_m_face.get('status') == 'Dudoso'
+                        is_conf = top_m_face.get('is_manual') or top_m_face.get('confidence') == 100.0 or 'Manual' in str(top_m_face.get('confidence', '')) or (not is_pend and float(top_m_face.get('confidence') or 0.0) >= 65.0)
+                        if is_conf:
+                            item_entry['album_section'] = 'official'
+                            item_entry['is_dudoso'] = False
+                        elif is_pend:
+                            item_entry['album_section'] = 'review'
+                            item_entry['is_dudoso'] = True
+                            item_entry['needs_confirmation'] = True
+                        else:
+                            item_entry['album_section'] = 'suggestion'
+                            item_entry['is_dudoso'] = False
+                    add_to_gallery(cat, clean_ident, item_entry)
+
+                # Add to individual person albums for each recognized face in faces_in_file
+                for f in faces_in_file:
+                    f_raw = f.get('identity', '')
+                    if not f_raw:
+                        continue
+                    f_clean = f_raw.replace('IA (Pendiente): ', '').replace('IA: ', '').strip()
+                    if f_clean and not f_clean.startswith('Desconocid') and not f_clean.startswith('Falso_Positivo') and not f_clean.startswith('Ignorar') and not f_clean.startswith('Persona Nueva'):
+                        f_cat = ident_to_cat_map.get(f_clean)
+                        if not f_cat:
+                            if f_clean.startswith('C. ') or f_clean.startswith('C '):
+                                f_cat = 'Conocidos'
+                            elif f_clean.startswith('F. ') or f_clean.startswith('F '):
+                                f_cat = 'Familia'
+                            elif f_clean == 'YO':
+                                f_cat = 'YO'
+                            elif f_clean.startswith('P. '):
+                                f_cat = 'Profesores'
+                            else:
+                                f_cat = 'Conocidos'
+                        
+                        item_face = dict(item_apple)
+                        is_pend = f_raw.startswith('IA (Pendiente):') or f.get('review_required') or f.get('status') == 'Dudoso'
+                        is_conf = f.get('is_manual') or f.get('confidence') == 100.0 or 'Manual' in str(f.get('confidence', '')) or (not is_pend and float(f.get('confidence') or 0.0) >= 65.0)
+                        if is_conf:
+                            item_face['album_section'] = 'official'
+                            item_face['is_dudoso'] = False
+                        elif is_pend:
+                            item_face['album_section'] = 'review'
+                            item_face['is_dudoso'] = True
+                            item_face['needs_confirmation'] = True
+                        else:
+                            item_face['album_section'] = 'suggestion'
+                            item_face['is_dudoso'] = False
+                        add_to_gallery(f_cat, sanitize_display_name(f_clean), item_face)
+
                 albums = group_albums(faces_in_file, ident_to_cat_map)
                 for group_cat, group_ident in albums:
                     add_to_gallery(group_cat, group_ident, item_apple)
@@ -488,6 +629,17 @@ def get_gallery():
                     add_to_gallery('📋 Revisión / Por Organizar', '⚠️ Grupos por confirmar', item_apple)
     except Exception as e_app:
         print(f"[WARN] Error integrating apple_db virtual photos: {e_app}")
+
+    # Sort person album items by 3-tier sections: official -> suggestion -> review
+    section_order = {'official': 0, 'suggestion': 1, 'review': 2}
+    for c, idents in gallery.items():
+        if c in KNOWN_CATEGORIES:
+            for id_name, items in idents.items():
+                if isinstance(items, list):
+                    items.sort(key=lambda x: (
+                        section_order.get(x.get('album_section', 'suggestion'), 1),
+                        -(x.get('mtime') or 0)
+                    ))
 
     set_gallery_cache(gallery)
     result = dict(gallery)
@@ -892,16 +1044,6 @@ def api_person_avatar():
             RESULTADOS_DIR / cat / clean_ident,
             FOTOS_DIR / cat / ident,
             FOTOS_DIR / cat / clean_ident,
-            RESULTADOS_DIR / "Personas Sin Nombre" / ident,
-            RESULTADOS_DIR / "Personas Sin Nombre" / clean_ident,
-            FOTOS_DIR / "Personas Sin Nombre" / ident,
-            FOTOS_DIR / "Personas Sin Nombre" / clean_ident,
-            RESULTADOS_DIR / "Revision_Interactiva" / ident,
-            RESULTADOS_DIR / "Revision_Interactiva" / clean_ident,
-            RESULTADOS_DIR / "Conocidos" / ident,
-            RESULTADOS_DIR / "Conocidos" / clean_ident,
-            RESULTADOS_DIR / "Familia" / ident,
-            RESULTADOS_DIR / "Familia" / clean_ident,
         ]
         for base_dir in search_dirs:
             if base_dir.exists():
@@ -1109,10 +1251,13 @@ def api_person_avatar():
                 except Exception:
                     pass
                     
-        # If no face passed but we have a photo, use fallback center crop instead of blank SVG
+        # For people, NEVER fallback to a blind center crop of a random photo! Return SVG avatar.
         if best_crop is None or best_crop.size == 0:
-            if fallback_crop is not None and fallback_crop.size > 0:
-                best_crop = fallback_crop
+            if is_pet or is_group:
+                if fallback_crop is not None and fallback_crop.size > 0:
+                    best_crop = fallback_crop
+                else:
+                    return Response(default_svg, mimetype='image/svg+xml')
             else:
                 return Response(default_svg, mimetype='image/svg+xml')
 
@@ -1295,7 +1440,16 @@ def api_remove_from_folder():
                 p_obj = Path(relocated)
                 filepath = relocated
             else:
-                return jsonify({"error": "Archivo no encontrado en disco"}), 404
+                is_adb_virtual = False
+                try:
+                    from app.services.apple_service import load_apple_db
+                    adb = load_apple_db()
+                    if filepath in adb or (filepath and os.path.basename(filepath) in adb):
+                        is_adb_virtual = True
+                except Exception:
+                    pass
+                if not is_adb_virtual:
+                    return jsonify({"error": "Archivo no encontrado en disco"}), 404
 
         # Si el archivo está en Fotos/ (Dataset), moverlo primero a Resultados/
         # para que el Dataset solo tenga fotos 100% verificadas
@@ -1332,6 +1486,35 @@ def api_remove_from_folder():
         existing.append(exclusion_entry)
         overrides[file_key] = existing
         save_overrides(overrides)
+
+        # Actualizar apple_db.json si es foto de iCloud/Apple
+        try:
+            from app.services.apple_service import load_apple_db, save_apple_db
+            adb = load_apple_db()
+            norm_fp = os.path.normpath(filepath) if filepath else ''
+            matching_key = None
+            for k in adb.keys():
+                if os.path.normpath(k) == norm_fp or os.path.basename(k) == os.path.basename(filepath or ''):
+                    matching_key = k
+                    break
+            if matching_key:
+                entry = adb[matching_key]
+                if entry.get('identity') == ident:
+                    entry['identity'] = 'Desconocido'
+                    entry['status'] = 'Dudoso'
+                if 'faces' in entry and isinstance(entry['faces'], list):
+                    for f in entry['faces']:
+                        if f.get('identity') == ident or f.get('suggested_identity') == ident:
+                            f['identity'] = 'Desconocido'
+                            f['suggested_identity'] = None
+                            f['suggested_score'] = 0.0
+                            f['is_manual'] = False
+                if 'identities' in entry and isinstance(entry['identities'], list):
+                    entry['identities'] = [i for i in entry['identities'] if i != ident]
+                save_apple_db()
+                print(f"[APPLE DB] Removed {ident} from {matching_key}")
+        except Exception as e_adb:
+            print(f"[WARN] Error updating apple_db on remove_from_folder: {e_adb}")
 
         
         # Invalidar caché

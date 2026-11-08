@@ -11,8 +11,9 @@
         @keyframes pulse-avatar { 0%,100% { transform: scale(1); opacity:0.9; } 50% { transform: scale(1.15); opacity:1; } }
         @keyframes shimmer-bar { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
         @keyframes fade-in-up { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
+        @keyframes autoDismissOverlay { 0%, 70% { opacity:1; visibility:visible; } 95% { opacity:0; } 100% { opacity:0; visibility:hidden; pointer-events:none; } }
     </style>
-    <div id="library-loading-overlay" style="display:flex; opacity:1; visibility:visible; position:fixed; inset:0; background:radial-gradient(ellipse at center, #12131a 0%, #0c0d12 70%); z-index:99999; flex-direction:column; align-items:center; justify-content:center; color:white; transition:opacity 0.35s ease, visibility 0.35s ease;">
+    <div id="library-loading-overlay" onclick="this.style.display='none';" style="display:flex; opacity:1; visibility:visible; position:fixed; inset:0; background:radial-gradient(ellipse at center, #12131a 0%, #0c0d12 70%); z-index:99999; flex-direction:column; align-items:center; justify-content:center; color:white; transition:opacity 0.35s ease, visibility 0.35s ease; animation: autoDismissOverlay 2.2s forwards ease;">
         <div style="text-align:center; max-width:420px; padding:20px; animation: fade-in-up 0.6s ease;">
             <div style="font-size:3.5rem; margin-bottom:22px; animation: pulse-avatar 2s infinite ease-in-out; filter:drop-shadow(0 0 20px rgba(168,85,247,0.4));">🔮</div>
             <h2 style="font-size:1.4rem; font-weight:800; margin-bottom:6px; background:linear-gradient(135deg, #a855f7, #3b82f6, #06b6d4); -webkit-background-clip:text; -webkit-text-fill-color:transparent; background-size:200% auto;">Cargando Galería Inteligente</h2>
@@ -24,6 +25,32 @@
             <div id="loading-progress-percentage" style="font-size:12px; font-weight:700; color:rgba(168,85,247,0.9); letter-spacing:0.5px;">0%</div>
         </div>
     </div>
+    <script>
+        // Failsafe auto-dismiss: jamás bloquear la pantalla más de 2 segundos
+        (function() {
+            var safetyTimer = setTimeout(function() {
+                var ov = document.getElementById('library-loading-overlay');
+                if (ov && ov.style.display !== 'none') {
+                    ov.style.opacity = '0';
+                    setTimeout(function() {
+                        ov.style.visibility = 'hidden';
+                        ov.style.display = 'none';
+                    }, 300);
+                }
+            }, 2000);
+            window._dismissLoadingOverlay = function() {
+                clearTimeout(safetyTimer);
+                var ov = document.getElementById('library-loading-overlay');
+                if (ov && ov.style.display !== 'none') {
+                    ov.style.opacity = '0';
+                    setTimeout(function() {
+                        ov.style.visibility = 'hidden';
+                        ov.style.display = 'none';
+                    }, 300);
+                }
+            };
+        })();
+    </script>
 
     <!-- Main Content Area -->
     <main class="gallery-main" style="display: flex; flex-direction: column; height: 100vh; overflow: hidden; flex: 1; background: #0b0c0e;">
@@ -128,55 +155,65 @@
                     </div>
                 </div>
 
-                <!-- Right: Action Buttons, Density & Collapse Controls -->
-                <div style="display:flex; align-items:center; gap:6px; flex-wrap:wrap;">
-                    <!-- Grid Density Switcher (S, M, L) -->
-                    <div id="grid-density-controls" style="display:inline-flex; background:rgba(255,255,255,0.04); padding:2px; border-radius:8px; border:1px solid rgba(255,255,255,0.08); gap:2px;" title="Tamaño de las miniaturas">
-                        <button class="grid-density-btn" data-size="130" onclick="setGridDensity(130, this)" title="Miniaturas compactas">▫ Compacto</button>
-                        <button class="grid-density-btn active" data-size="180" onclick="setGridDensity(180, this)" title="Miniaturas normales">⊞ Normal</button>
-                        <button class="grid-density-btn" data-size="260" onclick="setGridDensity(260, this)" title="Miniaturas grandes">▦ Grande</button>
-                    </div>
-
-                    <!-- Action Buttons -->
-                    <button id="btn-toggle-multiselect" class="hud-action-btn" onclick="toggleMultiSelectMode()" style="background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.08); color:#e5e5ea; border-radius:8px; padding:5px 9px; font-size:12px; font-weight:600; cursor:pointer; display:flex; align-items:center; gap:5px;" title="Selección múltiple de fotos">
-                        <svg width="12" height="12" fill="currentColor" viewBox="0 0 16 16"><path d="M14 1a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1h12zM2 0a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V2a2 2 0 0 0-2-2H2z"/><path d="M10.97 4.97a.75.75 0 0 1 1.071 1.05l-3.992 4.99a.75.75 0 0 1-1.08.02L4.324 8.384a.75.75 0 1 1 1.06-1.06l2.094 2.093 3.473-4.425a.235.235 0 0 1 .02-.022z"/></svg>
+                <!-- Right: Sleek Header Controls with 3-Dots Dropdown Menu -->
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <!-- Multiselect Toggle Button -->
+                    <button id="btn-toggle-multiselect" class="hud-action-btn" onclick="toggleMultiSelectMode()" style="background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.1); color:#e5e5ea; border-radius:8px; padding:6px 11px; font-size:12px; font-weight:600; cursor:pointer; display:flex; align-items:center; gap:5px;" title="Selección múltiple de fotos">
+                        <svg width="13" height="13" fill="currentColor" viewBox="0 0 16 16"><path d="M14 1a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H2a1 1 0 0 1-1-1V2a1 1 0 0 1 1-1h12zM2 0a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V2a2 2 0 0 0-2-2H2z"/><path d="M10.97 4.97a.75.75 0 0 1 1.071 1.05l-3.992 4.99a.75.75 0 0 1-1.08.02L4.324 8.384a.75.75 0 1 1 1.06-1.06l2.094 2.093 3.473-4.425a.235.235 0 0 1 .02-.022z"/></svg>
                         <span>Seleccionar</span>
                     </button>
 
-                    <button id="btn-rename-group" class="hud-action-btn" onclick="renameCurrentGroup()" style="display:none; background:rgba(48,209,88,0.15); border:1px solid rgba(48,209,88,0.4); color:#30d158; border-radius:8px; padding:5px 9px; font-size:12px; font-weight:600; cursor:pointer;" title="Asignar un nombre o renombrar">
-                        <span>✏️ Renombrar</span>
-                    </button>
+                    <!-- 3-Dots More Options Menu Container -->
+                    <div style="position:relative;">
+                        <button id="btn-header-more" class="header-more-btn" onclick="toggleHeaderOptionsMenu(event)" style="background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.12); color:#fff; width:34px; height:34px; border-radius:50%; display:flex; align-items:center; justify-content:center; cursor:pointer; transition:all 0.15s ease;" title="Más opciones del álbum">
+                            <svg width="17" height="17" fill="currentColor" viewBox="0 0 16 16">
+                                <path d="M3 9.5a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zm5 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3zm5 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3z"/>
+                            </svg>
+                        </button>
 
-                    <button id="btn-merge-group" class="hud-action-btn" onclick="openMergeModal()" style="display:none; background:rgba(255,159,10,0.15); border:1px solid rgba(255,159,10,0.3); color:#ff9f0a; border-radius:8px; padding:5px 9px; font-size:12px; font-weight:600; cursor:pointer;" title="Fusionar esta persona con otra identidad">
-                        <span>🤝 Fusionar</span>
-                    </button>
+                        <!-- Sleek Dropdown Popover Menu -->
+                        <div id="header-options-dropdown" class="header-options-menu" style="display:none; position:absolute; top:calc(100% + 8px); right:0; min-width:230px; background:rgba(24, 25, 31, 0.98); backdrop-filter:blur(25px); -webkit-backdrop-filter:blur(25px); border:1px solid rgba(255,255,255,0.12); border-radius:12px; padding:8px; box-shadow:0 16px 36px rgba(0,0,0,0.7); z-index:1000;">
+                            <div style="font-size:10px; font-weight:700; color:#8e8e93; text-transform:uppercase; letter-spacing:0.5px; padding:4px 8px 6px 8px;">Tamaño de cuadrícula</div>
+                            <div id="grid-density-controls" style="display:flex; background:rgba(255,255,255,0.04); padding:2px; border-radius:8px; border:1px solid rgba(255,255,255,0.08); gap:2px; margin-bottom:6px;">
+                                <button class="grid-density-btn" data-size="130" onclick="setGridDensity(130, this); toggleHeaderOptionsMenu();" style="flex:1; text-align:center;">▫ Min</button>
+                                <button class="grid-density-btn active" data-size="180" onclick="setGridDensity(180, this); toggleHeaderOptionsMenu();" style="flex:1; text-align:center;">⊞ Normal</button>
+                                <button class="grid-density-btn" data-size="260" onclick="setGridDensity(260, this); toggleHeaderOptionsMenu();" style="flex:1; text-align:center;">▦ Grande</button>
+                            </div>
 
-                    <button id="btn-delete-group" class="hud-action-btn" onclick="deleteCurrentGroup()" style="display:none; background:rgba(255,69,58,0.15); border:1px solid rgba(255,69,58,0.4); color:#ff453a; border-radius:8px; padding:5px 9px; font-size:12px; font-weight:600; cursor:pointer;" title="Disolver este grupo">
-                        <span>🗑️ Disolver</span>
-                    </button>
+                            <div style="height:1px; background:rgba(255,255,255,0.08); margin:6px 0;"></div>
 
-                    <button id="btn-ignore-group" class="hud-action-btn" onclick="ignoreCurrentGroup()" style="display:none; background:rgba(255,159,10,0.15); border:1px solid rgba(255,159,10,0.4); color:#ff9f0a; border-radius:8px; padding:5px 9px; font-size:12px; font-weight:600; cursor:pointer;" title="Ignorar falso positivo">
-                        <span>🚫 Ignorar</span>
-                    </button>
+                            <button id="btn-rename-group" class="menu-action-item" onclick="renameCurrentGroup(); toggleHeaderOptionsMenu();" style="display:none;">
+                                <span>✏️ Renombrar persona</span>
+                            </button>
+                            <button id="btn-merge-group" class="menu-action-item" onclick="openMergeModal(); toggleHeaderOptionsMenu();" style="display:none;">
+                                <span>🤝 Fusionar con otra persona</span>
+                            </button>
+                            <button id="btn-delete-group" class="menu-action-item menu-action-danger" onclick="deleteCurrentGroup(); toggleHeaderOptionsMenu();" style="display:none;">
+                                <span>🗑️ Disolver grupo</span>
+                            </button>
+                            <button id="btn-ignore-group" class="menu-action-item" onclick="ignoreCurrentGroup(); toggleHeaderOptionsMenu();" style="display:none;">
+                                <span>🚫 Ignorar (Falso positivo)</span>
+                            </button>
+                            <button id="btn-export-zip" class="menu-action-item" onclick="exportCurrentAlbumZip(); toggleHeaderOptionsMenu();">
+                                <span>📦 Descargar álbum en ZIP</span>
+                            </button>
 
-                    <button id="btn-export-zip" class="hud-action-btn" onclick="exportCurrentAlbumZip()" style="background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.08); color:#e5e5ea; border-radius:8px; padding:5px 9px; font-size:12px; font-weight:600; cursor:pointer; display:flex; align-items:center; gap:4px;" title="Descargar este álbum en ZIP">
-                        <svg width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
-                        <span>ZIP</span>
-                    </button>
+                            <div style="height:1px; background:rgba(255,255,255,0.08); margin:6px 0;"></div>
 
-                    <!-- Collapse / Expand Header Toggle -->
-                    <button id="btn-toggle-header-collapse" class="header-collapse-toggle-btn" onclick="toggleHeaderCollapse()" title="Plegar / Desplegar barra de herramientas para maximizar fotos">
-                        <span id="header-collapse-icon">▲</span>
-                        <span id="header-collapse-label">Plegar</span>
-                    </button>
+                            <button id="btn-toggle-header-collapse" class="menu-action-item" onclick="toggleHeaderCollapse(); toggleHeaderOptionsMenu();">
+                                <span id="header-collapse-icon">▲</span>
+                                <span id="header-collapse-label">Plegar barra de filtros</span>
+                            </button>
+                        </div>
+                    </div>
                 </div>
             </div>
 
-            <!-- Row 2: Collapsible Details (Filters, Confidence Stats & Timeline) -->
-            <div class="gallery-header-collapsible" style="margin-top:8px; display:flex; flex-direction:column; gap:8px;">
-                <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+            <!-- Row 2: Collapsible Filters Track (Horizontally scrollable, sleek, compact) -->
+            <div class="gallery-header-collapsible" style="margin-top:6px; display:flex; flex-direction:column; gap:6px;">
+                <div class="gallery-filters-scroll-track" style="display:flex; align-items:center; gap:6px; overflow-x:auto; -webkit-overflow-scrolling:touch; scrollbar-width:none; padding:2px 0;">
                     <!-- Segmented Filter Control -->
-                    <div id="filter-toggle-container" style="display:inline-flex; background:rgba(255,255,255,0.04); padding:2px; border-radius:8px; border:1px solid rgba(255,255,255,0.06); gap:1px;">
+                    <div id="filter-toggle-container" style="display:inline-flex; background:rgba(255,255,255,0.04); padding:2px; border-radius:8px; border:1px solid rgba(255,255,255,0.06); gap:1px; flex-shrink:0;">
                         <button class="filter-toggle-btn active" onclick="setPhotoFilter('all', this)">Todas</button>
                         <button class="filter-toggle-btn" onclick="setPhotoFilter('solo', this)">En solitario</button>
                         <button class="filter-toggle-btn" onclick="setPhotoFilter('group', this)">En compañía</button>
@@ -191,15 +228,37 @@
                         </button>
                     </div>
 
+                    <!-- Person Album 3-Tier Filter Bar (🔒 Oficiales, ✨ Sugerencias IA, ⚠️ Por Confirmar) -->
+                    <div id="person-tier-filter-container" style="display:none; background:rgba(255,255,255,0.04); padding:2px; border-radius:8px; border:1px solid rgba(255,255,255,0.06); gap:1px; flex-shrink:0;">
+                        <button class="filter-toggle-btn active" id="filter-tier-all" onclick="setTierFilter('all', this)">Todas (<span id="tier-all-count">0</span>)</button>
+                        <button class="filter-toggle-btn" id="filter-tier-official" onclick="setTierFilter('official', this)" title="Dataset verificado y confirmadas manualmente" style="color:#30d158;">🔒 Oficiales (<span id="tier-official-count">0</span>)</button>
+                        <button class="filter-toggle-btn" id="filter-tier-suggestion" onclick="setTierFilter('suggestion', this)" title="Detecciones con alta probabilidad de la IA" style="color:#0a84ff;">✨ Sugerencias IA (<span id="tier-suggestion-count">0</span>)</button>
+                        <button class="filter-toggle-btn" id="filter-tier-review" onclick="setTierFilter('review', this)" title="Fotos por validar con 1 clic" style="color:#ff9f0a; display:none;">⚠️ Por Confirmar (<span id="tier-review-count">0</span>)</button>
+                    </div>
+
                     <!-- Device Origin Filter Control -->
-                    <div id="device-filter-container" style="display:inline-flex; background:rgba(255,255,255,0.04); padding:2px; border-radius:8px; border:1px solid rgba(255,255,255,0.06); gap:1px; margin-left:4px;">
+                    <div id="device-filter-container" style="display:inline-flex; background:rgba(255,255,255,0.04); padding:2px; border-radius:8px; border:1px solid rgba(255,255,255,0.06); gap:1px; flex-shrink:0;">
                         <button class="filter-toggle-btn active" id="filter-origin-all" onclick="setDeviceOriginFilter('all', this)" title="Mostrar todos los dispositivos">📱 Todos</button>
                         <button class="filter-toggle-btn" id="filter-origin-apple" onclick="setDeviceOriginFilter('apple', this)" title="Solo fotos de Apple iPhone / iCloud">🍎 Apple</button>
                         <button class="filter-toggle-btn" id="filter-origin-android" onclick="setDeviceOriginFilter('android', this)" title="Solo fotos de Android">🤖 Android</button>
                     </div>
 
+                    <!-- Screenshot Antiquity / Stale Filter Control (Visible on Capturas) -->
+                    <div id="screenshot-filter-container" style="display:none; background:rgba(255,159,10,0.07); padding:2px; border-radius:8px; border:1px solid rgba(255,159,10,0.25); gap:2px; flex-shrink:0; align-items:center;">
+                        <span style="font-size:11px; font-weight:700; color:#ff9f0a; padding:3px 7px; display:inline-flex; align-items:center; gap:3px;">
+                            <span>⏱️ Antigüedad:</span>
+                        </span>
+                        <button class="filter-toggle-btn active" id="filter-ss-all" onclick="setScreenshotAgeFilter('all', this)">Todas</button>
+                        <button class="filter-toggle-btn" id="filter-ss-3m" onclick="setScreenshotAgeFilter('3m', this)" title="Capturas de hace más de 3 meses">⏳ > 3m</button>
+                        <button class="filter-toggle-btn" id="filter-ss-6m" onclick="setScreenshotAgeFilter('6m', this)" title="Capturas de hace más de 6 meses">📅 > 6m</button>
+                        <button class="filter-toggle-btn" id="filter-ss-1y" onclick="setScreenshotAgeFilter('1y', this)" title="Capturas olvidadas de hace más de 1 año" style="color:#ff453a; font-weight:700;">🗄️ > 1 año</button>
+                        <button class="filter-toggle-btn" id="btn-ss-select-stale" onclick="selectStaleScreenshots()" style="background:rgba(255,69,58,0.18); border:1px solid rgba(255,69,58,0.45); color:#ff453a; border-radius:6px; font-weight:700; padding:2px 8px; margin-left:3px; display:inline-flex; align-items:center; gap:4px;" title="Seleccionar las capturas filtradas para gestionar o limpiar">
+                            <span>🧹 Seleccionar</span> (<span id="stale-ss-count">0</span>)
+                        </button>
+                    </div>
+
                     <!-- Album Stats Badges Container -->
-                    <div id="gallery-stats-container" style="display:flex; align-items:center; gap:6px;">
+                    <div id="gallery-stats-container" style="display:inline-flex; align-items:center; gap:6px; flex-shrink:0;">
                         <!-- Injected dynamically by renderGrid -->
                     </div>
                 </div>
@@ -334,6 +393,6 @@
         </div>
     </div>
     <!-- Load modules -->
-    <script src="{{ url_for('static', filename='dist/app.js') }}?v=20261105_v23"></script>
+    <script src="{{ url_for('static', filename='dist/app.js') }}?v=20261108_v44_purged_disambiguated"></script>
 
 {% endblock %}
