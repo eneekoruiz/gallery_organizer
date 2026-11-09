@@ -70,5 +70,8 @@ except ImportError:
     engine = None
     SessionLocal = None
     Base = None
+    FileState = None
+    SyncLog = None
+    UserModel = None
     def init_db(): pass
     def get_db(): yield None

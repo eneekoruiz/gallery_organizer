@@ -1,9 +1,12 @@
 import os, time
-from apscheduler.schedulers.background import BackgroundScheduler
 from notifier import send_notification
 from db import SessionLocal, FileState, SyncLog
 
-scheduler = BackgroundScheduler()
+try:
+    from apscheduler.schedulers.background import BackgroundScheduler
+    scheduler = BackgroundScheduler()
+except ImportError:
+    scheduler = None
 
 def run_weekly_reconciliation_audit():
     """
@@ -41,6 +44,9 @@ def run_weekly_reconciliation_audit():
         db.close()
 
 def start_cron_scheduler():
+    if not scheduler:
+        print("⏰ [Cron Scheduler] APScheduler no disponible. Planificador omitido.")
+        return
     # Programado para ejecutarse los Domingos a las 03:00 AM
     scheduler.add_job(run_weekly_reconciliation_audit, 'cron', day_of_week='sun', hour=3, minute=0)
     scheduler.start()
