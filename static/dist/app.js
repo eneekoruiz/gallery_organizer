@@ -172,37 +172,42 @@ window.toggleHeaderCollapse = function() {
 
 };
 
-window.toggleHeaderOptionsMenu = function(e) {
-    if (e) {
-        e.stopPropagation();
-        e.preventDefault();
-    }
-    const menu = document.getElementById('header-options-dropdown');
-    const btn = document.getElementById('btn-header-more');
-    if (!menu) return;
-    const isVisible = menu.style.display !== 'none';
-    if (isVisible) {
-        menu.style.display = 'none';
-        if (btn) btn.classList.remove('active');
-        return;
-    }
-    menu.style.display = 'block';
-    if (btn) btn.classList.add('active');
-
-    // Auto-clamp position to NEVER clip on mobile viewports
-    menu.style.left = 'auto';
-    menu.style.right = '0';
-    var rect = menu.getBoundingClientRect();
-    var vw = window.innerWidth;
-    if (rect.left < 10) {
-        var shiftRight = 10 - rect.left;
-        menu.style.right = '-' + Math.round(shiftRight) + 'px';
-    } else if (rect.right > vw - 10) {
-        var shiftLeft = rect.right - (vw - 10);
-        menu.style.right = Math.round(shiftLeft) + 'px';
-    }
-};
-// Auto-close menu when tapping outside
+window.toggleHeaderOptionsMenu = function(e) {
+    if (e) {
+        e.stopPropagation();
+        e.preventDefault();
+    }
+    const menu = document.getElementById('header-options-dropdown');
+    const btn = document.getElementById('btn-header-more');
+    if (!menu) return;
+    const isVisible = menu.style.display !== 'none';
+    if (isVisible) {
+        menu.style.display = 'none';
+        if (btn) btn.classList.remove('active');
+        return;
+    }
+    menu.style.display = 'block';
+    if (btn) btn.classList.add('active');
+
+    // Bulletproof fixed clamp: NEVER cuts off or overflows on mobile
+    if (btn) {
+        const btnRect = btn.getBoundingClientRect();
+        const vw = window.innerWidth;
+        const menuWidth = Math.min(250, vw - 24);
+        menu.style.position = 'fixed';
+        menu.style.width = menuWidth + 'px';
+        menu.style.maxWidth = 'calc(100vw - 24px)';
+        menu.style.boxSizing = 'border-box';
+        menu.style.top = (btnRect.bottom + 8) + 'px';
+        let leftPos = btnRect.left;
+        if (leftPos + menuWidth > vw - 12) {
+            leftPos = Math.max(12, vw - menuWidth - 12);
+        }
+        if (leftPos < 12) leftPos = 12;
+        menu.style.left = Math.round(leftPos) + 'px';
+        menu.style.right = 'auto';
+    }
+};
 document.addEventListener('click', (e) => {
     const menu = document.getElementById('header-options-dropdown');
     const btn = document.getElementById('btn-header-more');

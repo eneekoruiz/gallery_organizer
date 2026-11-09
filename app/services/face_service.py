@@ -1375,6 +1375,14 @@ def api_rename_group():
                             moved_count += 1
                         except Exception:
                             pass
+            elif apple_count > 0:
+                clear_gallery_cache()
+                try:
+                    from app.utils.faces import clear_identities_cache
+                    clear_identities_cache()
+                except Exception:
+                    pass
+                return jsonify({"success": True, "count": apple_count})
             elif (RESULTADOS_DIR / c_new_cat / c_new_name).exists() or (FOTOS_DIR / c_new_cat / c_new_name).exists():
                 # Idempotencia: el grupo ya fue fusionado previamente (evita error 404 por doble clic)
                 clear_gallery_cache()
