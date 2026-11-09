@@ -570,8 +570,8 @@ def get_gallery(force_reload=False):
                     if sanitize_display_name(f.get('identity', '').replace('IA (Pendiente): ', '').replace('IA: ', '').strip()) == clean_ident
                 ]
                 
-                # Only add primary entry if not a group and either no faces detected or at least one face matches clean_ident
-                if not is_group_album(ident) and (not faces_in_file or matching_faces_for_entry):
+                # Add primary entry if classified by Apple Photos for this person/album
+                if not is_group_album(ident):
                     item_entry = dict(item_apple)
                     if matching_faces_for_entry:
                         top_m_face = matching_faces_for_entry[0]
@@ -588,7 +588,18 @@ def get_gallery(force_reload=False):
                         else:
                             item_entry['album_section'] = 'suggestion'
                             item_entry['is_dudoso'] = False
-                    add_to_gallery(cat, clean_ident, item_entry)
+                        add_to_gallery(cat, clean_ident, item_entry)
+                    elif clean_ident and not clean_ident.startswith(('Desconocid', 'Falso_Positivo', 'Ignorar', 'Persona Nueva')):
+                        # Foto sugerida por la IA de Apple Photos / iPhone para esta persona
+                        is_pend = (info.get('status') == 'Dudoso' or info.get('review_required'))
+                        if is_pend:
+                            item_entry['album_section'] = 'review'
+                            item_entry['is_dudoso'] = True
+                            item_entry['needs_confirmation'] = True
+                        else:
+                            item_entry['album_section'] = 'suggestion'
+                            item_entry['is_dudoso'] = False
+                        add_to_gallery(cat, clean_ident, item_entry)
 
                 # Add to individual person albums for each recognized face in faces_in_file
                 for f in faces_in_file:
