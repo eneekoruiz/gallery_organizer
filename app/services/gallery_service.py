@@ -412,6 +412,9 @@ def get_gallery(force_reload=False):
             elif 'sin_rostro' in cat_l or 'sin_rostro' in ident_l or 'sin_rostro' in p_l:
                 cat = "📋 Revisión / Por Organizar"
                 ident = "🎬 Vídeos Sin Rostro" if item.get('type') == 'video' else "📷 Fotos Sin Rostro"
+            elif 'aislada' in ident_l or 'ocasiona' in ident_l:
+                cat = "📋 Revisión / Por Organizar"
+                ident = "👥 Caras Aisladas / Ocasionales"
             elif cat == 'Personas Sin Nombre' or 'desconocid' in cat_l or 'desconocid' in ident_l or 'persona' in ident_l or 'mascota nueva' in ident_l:
                 cat = "📋 Revisión / Por Organizar"
                 if 'persona nueva' in ident_l or 'persona #' in ident_l:

@@ -146,6 +146,8 @@ def get_vectorized_centroids():
 def api_analyze():
     data = request.json or {}
     filepath = data.get('path')
+    current_cat = data.get('current_cat')
+    current_ident = data.get('current_ident')
     if not filepath or not os.path.exists(filepath):
         real_p = find_relocated_file(filepath) if filepath else None
         if not real_p:
@@ -413,14 +415,22 @@ def api_analyze():
                                         best_score = yo_score
                                         clean_bm = 'YO'
                                 
-                                # Priorización Contextual del Dueño del Álbum / Familia (Multi-Centroide)
+                                                                # Priorización Contextual del Dueño del Álbum / Familia (Multi-Centroide)
                                 current_folder = path_obj.parent.name
-                                owner_folder = path_obj.parent.parent.name if current_folder == "_Dudosos" else current_folder
-                                owner_entry = known_faces.get(owner_folder) or known_faces.get((path_obj.parent.parent.name, owner_folder)) or {}
-                                if clean_bm != "YO" and not is_smart_relationship_album(owner_folder) and owner_folder not in ["_Dudosos", "Personas Sin Nombre", "Resultados", "Fotos", "Para Revisar", "Por Organizar"]:
+                                raw_owner = current_ident or (path_obj.parent.parent.name if current_folder == "_Dudosos" else current_folder)
+                                owner_folder = raw_owner if raw_owner not in ["_Dudosos", "Personas Sin Nombre", "Resultados", "Fotos", "Para Revisar", "Por Organizar", "Photos", "iCloud Photos"] else None
+                                
+                                if owner_folder and clean_bm != "YO" and not is_smart_relationship_album(owner_folder):
+                                    owner_entry = (
+                                        known_faces.get(owner_folder) or
+                                        known_faces.get((current_cat or path_obj.parent.parent.name, owner_folder)) or
+                                        known_faces.get(('Conocidos', owner_folder)) or
+                                        known_faces.get(('Familia', owner_folder)) or
+                                        {}
+                                    )
                                     if owner_folder not in claimed_identities and f"? {owner_folder}" not in claimed_identities:
                                         owner_sim = match_face_to_identity(feat_norm, owner_entry)
-                                        if owner_sim >= 0.35 and (best_score - owner_sim) < 0.15:
+                                        if owner_sim >= 0.38 and (best_score - owner_sim) < 0.14:
                                             best_match = owner_folder
                                             best_score = owner_sim
                                             clean_bm = owner_folder
@@ -447,17 +457,19 @@ def api_analyze():
                                         else:
                                             confidence_str = f"🤖 IA ({(best_score * 100):.1f}%)"
                                             tag_type = "ai"
-                                elif best_match and best_score >= 0.20:
-                                    current_folder = path_obj.parent.name
-                                    owner_folder = path_obj.parent.parent.name if current_folder == "_Dudosos" else current_folder
-                                    if best_match == owner_folder and not is_smart_relationship_album(owner_folder) and best_score >= 0.38:
+                                elif best_match and best_score >= 0.48:
+                                    if owner_folder and clean_bm == owner_folder:
                                         identity_name = f"? {clean_bm}"
-                                        confidence_str = f"⚠️ Dudoso ({(best_score * 100):.1f}%)"
+                                        confidence_str = f"⚠️ Sugerencia Álbum ({(best_score * 100):.1f}%)"
                                         tag_type = "doubtful"
                                     else:
                                         identity_name = clean_bm
                                         confidence_str = f"🤖 Sugerencia: {clean_bm} ({(best_score * 100):.1f}%)"
                                         tag_type = "ai_suggestion"
+                                else:
+                                    # Debajo de 0.48 se considera ruido y no se emiten sugerencias erróneas
+                                    clean_bm = None
+                                    best_match = None
                         except Exception: pass
                     
                     # Mutual Exclusion: Claim identity so no other face in this photo takes it
@@ -466,7 +478,7 @@ def api_analyze():
                         claimed_identities.add(clean_claim)
                         claimed_identities.add(identity_name)
 
-                    sug_id = clean_bm if (best_match and best_score >= 0.18 and clean_bm not in claimed_identities and clean_bm != 'Desconocido' and not is_smart_relationship_album(clean_bm)) else None
+                    sug_id = clean_bm if (best_match and best_score >= 0.48 and clean_bm not in claimed_identities and clean_bm != 'Desconocido' and not is_smart_relationship_album(clean_bm)) else None
 
                     faces_data.append({
                         "x": x, "y": y, "width": w, "height": h,
@@ -1214,9 +1226,38 @@ def api_rename_group():
             c_new_name = 'YO'
 
         from app.services.apple_service import rename_apple_group
-        rename_apple_group(cat, ident, c_new_cat, c_new_name)
-        if c_ident != ident or c_cat != cat:
-            rename_apple_group(c_cat, c_ident, c_new_cat, c_new_name)
+        apple_count = rename_apple_group(cat, ident, c_new_cat, c_new_name)
+        if (c_ident != ident or c_cat != cat) and apple_count == 0:
+            apple_count += rename_apple_group(c_cat, c_ident, c_new_cat, c_new_name)
+
+        # Migrate centroid in memory and disk for the renamed group
+        try:
+            from app.globals import known_faces, cache_lock, CACHE_FILE
+            from pathlib import Path
+            centroid_file = APP_DIR / 'centroids.pkl'
+            if centroid_file.exists():
+                with open(centroid_file, 'rb') as f_c:
+                    c_dict = pickle.load(f_c)
+                old_vec = None
+                for candidate_k in [(cat, ident), (c_cat, c_ident), ident, c_ident]:
+                    if candidate_k in c_dict and c_dict[candidate_k] is not None:
+                        old_vec = c_dict[candidate_k]
+                        break
+                if old_vec is not None:
+                    c_dict[(c_new_cat, c_new_name)] = old_vec
+                    c_dict[c_new_name] = old_vec
+                    with open(centroid_file, 'wb') as f_c:
+                        pickle.dump(c_dict, f_c)
+            if CACHE_FILE.exists():
+                with open(CACHE_FILE, 'rb') as f_sf:
+                    sf_dict = pickle.load(f_sf)
+                old_sf = sf_dict.pop(ident, None) or sf_dict.pop(c_ident, None)
+                if old_sf is not None:
+                    sf_dict[c_new_name] = old_sf
+                    with open(CACHE_FILE, 'wb') as f_sf:
+                        pickle.dump(sf_dict, f_sf)
+        except Exception as e_mig:
+            print(f"[RENAME] Error migrating centroids: {e_mig}")
 
         src_dirs_res = []
         src_dirs_fotos = []
@@ -1255,7 +1296,7 @@ def api_rename_group():
         # Si no se encontró en las raíces primarias y NO estamos en test:
         import app.globals as g_module
         is_testing = getattr(g_module, 'TESTING', False) or os.environ.get('TESTING') == '1'
-        if not src_dirs_res and not is_testing:
+        if not src_dirs_res and not is_testing and apple_count == 0:
             secondary_roots = [
                 FOTOS_DIR.parent if hasattr(FOTOS_DIR, 'parent') else None,
                 RESULTADOS_DIR.parent if hasattr(RESULTADOS_DIR, 'parent') else None,
@@ -1391,7 +1432,7 @@ def api_rename_group():
             clear_identities_cache()
         except Exception:
             pass
-        return jsonify({"success": True, "count": moved_count})
+        return jsonify({"success": True, "count": moved_count + apple_count})
     except Exception as e:
         import traceback
         traceback.print_exc()

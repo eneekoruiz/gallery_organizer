@@ -120,26 +120,72 @@ def mark_apple_photo_deleted_icloud(path_str):
     db[path_str]['deleted_icloud'] = True
     save_apple_db()
 
+def clean_apple_str(s):
+    if not s: return ""
+    res = str(s).strip()
+    for prefix in ['👤', '📋', '📁', '❓', '🔍', '✨', '📸', '⚡', '🎉', '🏷️', '👥', '🧑', '👧', '👦', '⚠️', '⏳']:
+        if res.startswith(prefix):
+            res = res[len(prefix):].strip()
+    return res.lower()
+
 def rename_apple_group(old_cat, old_ident, new_cat, new_ident):
     db = load_apple_db()
     changed = False
+    updated_count = 0
+    clean_target_id = clean_apple_str(old_ident)
+    clean_target_cat = clean_apple_str(old_cat)
+
     for p, info in db.items():
-        if info.get('category') == old_cat and info.get('identity') == old_ident:
+        cur_id = info.get('identity', '')
+        cur_cat = info.get('category', '')
+
+        # Match either exact or emoji-stripped
+        id_match = (cur_id == old_ident or clean_apple_str(cur_id) == clean_target_id)
+        cat_match = (not old_cat or cur_cat == old_cat or clean_apple_str(cur_cat) == clean_target_cat or clean_target_cat in clean_apple_str(cur_cat))
+
+        if id_match and cat_match:
             info['category'] = new_cat
             info['identity'] = new_ident
+            info['status'] = 'Clasificado'
+            info['is_dudoso'] = False
+            if 'faces' in info and isinstance(info['faces'], list):
+                for f in info['faces']:
+                    f_id = f.get('identity', '')
+                    if not f_id or f_id == old_ident or clean_apple_str(f_id) == clean_target_id or f_id in ['Desconocido', 'Persona Nueva']:
+                        f['identity'] = new_ident
+                        f['category'] = new_cat
+                        f['confidence'] = 100.0
+                        f['is_manual'] = True
+                        f['suggested_identity'] = None
+                        f['suggested_score'] = 0.0
+            updated_count += 1
             changed = True
+
     if changed:
         save_apple_db()
+        print(f"[APPLE DB] Renamed group '{old_cat}/{old_ident}' -> '{new_cat}/{new_ident}' ({updated_count} photos)")
+    return updated_count
 
 def delete_apple_group(cat, ident):
     db = load_apple_db()
     changed = False
     keys_to_delete = []
+    clean_target_id = clean_apple_str(ident)
+    clean_target_cat = clean_apple_str(cat)
+
     for p, info in db.items():
-        if info.get('category') == cat and info.get('identity') == ident:
+        cur_id = info.get('identity', '')
+        cur_cat = info.get('category', '')
+        id_match = (cur_id == ident or clean_apple_str(cur_id) == clean_target_id)
+        cat_match = (not cat or cur_cat == cat or clean_apple_str(cur_cat) == clean_target_cat)
+        if id_match and cat_match:
             keys_to_delete.append(p)
+
     for k in keys_to_delete:
         del db[k]
         changed = True
+
     if changed:
         save_apple_db()
+        print(f"[APPLE DB] Deleted group '{cat}/{ident}' ({len(keys_to_delete)} photos)")
+    return len(keys_to_delete)
