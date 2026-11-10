@@ -1437,10 +1437,16 @@ def api_rename_group():
                         while target_file.exists():
                             target_file = target_dir_res / f"{p.stem}_{counter}{p.suffix}"
                             counter += 1
-                        try:
-                            safe_move_file(p, target_file)
-                            moved_count += 1
-                        except Exception:
+                        try:
+                            from app.services.apple_service import is_apple_photo
+                            import shutil
+                            p_str = str(p).replace(chr(92), '/').lower()
+                            if 'icloud photos' in p_str or is_apple_photo(str(p)):
+                                shutil.copy2(str(p), str(target_file))
+                            else:
+                                safe_move_file(p, target_file)
+                            moved_count += 1
+                        except Exception:
                             pass
             elif apple_count > 0:
                 update_gallery_cache_for_rename(cat, ident, c_new_cat, c_new_name)
