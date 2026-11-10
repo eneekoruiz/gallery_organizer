@@ -1,4 +1,4 @@
-﻿import os
+import os
 import hashlib
 import logging
 import re
@@ -471,7 +471,7 @@ def _run_icloud_worker(batch_size=None):
                                         new_person_sim = sim
                                         matched_new_person = id_tup
 
-                            if matched_new_person and new_person_sim >= 0.52:
+                            if matched_new_person and new_person_sim >= 0.66:
                                 face_identity = matched_new_person[1]
                                 face_confidence = round(new_person_sim * 100, 1)
                                 if new_person_sim > best_photo_match_sim:
