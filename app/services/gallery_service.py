@@ -1721,10 +1721,10 @@ def api_delete():
                 return jsonify({"success": True})
                 
         # Flujo Android normal
-        import send2trash
         try:
+            import send2trash
             send2trash.send2trash(path)
-        except Exception as e:
+        except Exception:
             os.remove(path)
             
         if path in faces_cache:
@@ -1847,6 +1847,166 @@ def api_delete_group():
             pass
 
         return jsonify({"success": True, "message": f"Grupo '{ident}' disuelto correctamente ({moved_count} fotos movidas a revisión)."})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+def api_batch_delete():
+    from app.globals import faces_cache, FACES_CACHE_FILE, clear_gallery_cache, cache_lock, known_faces, CACHE_FILE
+    from app.services.apple_service import is_apple_photo, mark_apple_photo_deleted_locally, delete_apple_group
+    import pickle
+    try:
+        import send2trash
+    except ImportError:
+        send2trash = None
+
+    try:
+        data = request.json or {}
+        paths = data.get('paths') or data.get('files') or []
+        cat = str(data.get('cat', '')).strip()
+        ident = str(data.get('ident', '')).strip()
+        is_entire_album = bool(data.get('entire_album', False))
+
+        def clean_val(v):
+            if not v: return ""
+            s = str(v).strip()
+            for prefix in ['👤', '📋', '📁', '❓', '🔍', '✨', '📸', '⚡', '🎉', '🏷️', '👥', '🧑', '👧', '👦', '⚠️', '⏳']:
+                if s.startswith(prefix):
+                    s = s[len(prefix):].strip()
+            return s
+
+        c_ident = clean_val(ident)
+        c_cat = clean_val(cat)
+
+        file_paths = []
+        for item in paths:
+            if isinstance(item, str) and item:
+                file_paths.append(item)
+            elif isinstance(item, dict) and item.get('path'):
+                file_paths.append(item['path'])
+
+        # If entire_album or no paths provided, resolve all photos of this album
+        if (is_entire_album or not file_paths) and ident:
+            from app.globals import get_gallery_cache
+            cache = get_gallery_cache()
+            if not cache:
+                from app.services.gallery_service import get_gallery
+                cache = get_gallery()
+
+            album_items = []
+            if cache and cat in cache and ident in cache[cat]:
+                album_items = cache[cat][ident]
+            elif cache and c_cat in cache and c_ident in cache[c_cat]:
+                album_items = cache[c_cat][c_ident]
+            elif cache:
+                for c, idents in cache.items():
+                    if ident in idents:
+                        album_items = idents[ident]
+                        break
+                    if c_ident in idents:
+                        album_items = idents[c_ident]
+                        break
+
+            for it in album_items:
+                p = it.get('path') if isinstance(it, dict) else str(it)
+                if p and p not in file_paths:
+                    file_paths.append(p)
+
+        if not file_paths and not ident:
+            return jsonify({"error": "No se indicaron fotos ni álbum para eliminar"}), 400
+
+        trashed_count = 0
+        cache_dirty = False
+
+        for p in file_paths:
+            try:
+                if is_apple_photo(p):
+                    mark_apple_photo_deleted_locally(p)
+                    trashed_count += 1
+                elif os.path.exists(p):
+                    try:
+                        if send2trash:
+                            send2trash.send2trash(p)
+                        else:
+                            os.remove(p)
+                    except Exception:
+                        try:
+                            os.remove(p)
+                        except Exception:
+                            pass
+                    trashed_count += 1
+
+                if p in faces_cache:
+                    del faces_cache[p]
+                    cache_dirty = True
+            except Exception as e:
+                print(f"[BATCH DELETE ERROR] Error eliminando {p}: {e}")
+
+        if cache_dirty:
+            try:
+                with open(FACES_CACHE_FILE, 'wb') as f:
+                    pickle.dump(faces_cache, f)
+            except Exception:
+                pass
+
+        if is_entire_album and ident:
+            candidates = [
+                RESULTADOS_DIR / cat / ident,
+                RESULTADOS_DIR / c_cat / c_ident,
+                RESULTADOS_DIR / "Personas Sin Nombre" / c_ident,
+                RESULTADOS_DIR / "Personas Sin Nombre" / ident,
+                RESULTADOS_DIR / "Conocidos" / c_ident,
+                RESULTADOS_DIR / "Conocidos" / ident,
+                FOTOS_DIR / cat / ident,
+                FOTOS_DIR / c_cat / c_ident,
+                FOTOS_DIR / "Personas Sin Nombre" / c_ident,
+                FOTOS_DIR / "Personas Sin Nombre" / ident,
+                FOTOS_DIR / "Conocidos" / c_ident,
+                FOTOS_DIR / "Conocidos" / ident,
+            ]
+            valid_exts = {".jpg", ".jpeg", ".png", ".webp", ".mp4", ".mov", ".avi"}
+            for d in candidates:
+                if d.exists() and d.is_dir():
+                    try:
+                        has_media = any(f.suffix.lower() in valid_exts for f in d.iterdir() if f.is_file())
+                        if not has_media:
+                            shutil.rmtree(str(d), ignore_errors=True)
+                    except Exception:
+                        pass
+
+            delete_apple_group(cat, ident)
+            if c_ident != ident or c_cat != cat:
+                delete_apple_group(c_cat, c_ident)
+
+            try:
+                with cache_lock:
+                    for k in [ident, c_ident]:
+                        if k in known_faces:
+                            del known_faces[k]
+                    with open(CACHE_FILE, 'wb') as f_cache:
+                        pickle.dump(known_faces, f_cache)
+            except Exception:
+                pass
+
+            overrides = load_overrides()
+            keys_to_del = [k for k, v in overrides.items() if ident in str(v) or c_ident in str(v)]
+            if keys_to_del:
+                for k in keys_to_del:
+                    del overrides[k]
+                save_overrides(overrides)
+
+        clear_gallery_cache(unlink_file=True)
+        try:
+            from app.utils.faces import clear_identities_cache
+            clear_identities_cache()
+        except Exception:
+            pass
+
+        return jsonify({
+            "success": True,
+            "count": trashed_count,
+            "message": f"{trashed_count} foto(s) enviadas a la Papelera"
+        })
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 

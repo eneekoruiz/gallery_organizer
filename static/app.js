@@ -1630,6 +1630,8 @@ async function filterTimeline(year) {
 
         let selectedFiles = new Set();
 
+        window.selectedFiles = selectedFiles;
+
 
 
         function toggleMultiSelectMode() {
@@ -1638,17 +1640,33 @@ async function filterTimeline(year) {
 
             const btn = document.getElementById('btn-toggle-multiselect');
 
+            const bar = document.getElementById('batch-action-bar');
+
             if (btn) {
 
-                btn.style.background = isMultiSelectMode ? "#30d158" : "#5e5ce6";
+                btn.style.background = isMultiSelectMode ? "#30d158" : "rgba(255,255,255,0.06)";
 
-                btn.textContent = isMultiSelectMode ? "✅ Selección Activa" : "☑️ Selección Múltiple";
+                btn.style.color = isMultiSelectMode ? "#000" : "#e5e5ea";
+
+                btn.textContent = isMultiSelectMode ? "✅ Seleccionando" : "☑️ Seleccionar";
 
             }
 
             if (!isMultiSelectMode) {
 
                 clearBatchSelection();
+
+                if (bar) bar.style.display = 'none';
+
+            } else {
+
+                if (bar) {
+
+                    bar.style.display = 'flex';
+
+                    updateBatchBar();
+
+                }
 
             }
 
@@ -1710,31 +1728,23 @@ async function filterTimeline(year) {
 
             const countEl = document.getElementById('batch-count');
 
-            if (selectedFiles.size > 0) {
+            const selectAllBtn = document.getElementById('btn-batch-select-all');
+
+            if (!bar) return;
+
+            if (isMultiSelectMode) {
 
                 bar.style.display = 'flex';
 
-                countEl.textContent = `${selectedFiles.size} foto(s) seleccionada(s)`;
+                const count = (window.selectedFiles && window.selectedFiles.size) || 0;
 
-                
+                if (countEl) countEl.textContent = `${count} seleccionada(s)`;
 
-                const select = document.getElementById('batch-target-select');
+                if (selectAllBtn && window.currentFolderItems && window.currentFolderItems.length > 0) {
 
-                if (select && select.options.length <= 1 && typeof identitiesList !== 'undefined' && identitiesList.length > 0) {
+                    const allSelected = (count === window.currentFolderItems.length);
 
-                    select.innerHTML = '<option value="">Seleccionar carpeta destino...</option>';
-
-                    identitiesList.forEach(id => {
-
-                        const opt = document.createElement('option');
-
-                        opt.value = JSON.stringify(id);
-
-                        opt.textContent = `${id.categoria} > ${id.identidad}`;
-
-                        select.appendChild(opt);
-
-                    });
+                    selectAllBtn.textContent = allSelected ? "☒ Desmarcar todas" : "☑ Seleccionar todas";
 
                 }
 
@@ -1745,6 +1755,250 @@ async function filterTimeline(year) {
             }
 
         }
+
+        function toggleSelectAllAlbumPhotos() {
+
+            const items = (window.currentFolderItems && window.currentFolderItems.length) ? window.currentFolderItems : ((typeof currentFolderItems !== 'undefined' && currentFolderItems.length) ? currentFolderItems : []);
+
+            if (!items || !items.length) {
+
+                showToast("No hay fotos en el álbum actual");
+
+                return;
+
+            }
+
+            window.selectedFiles = window.selectedFiles || new Set();
+
+            selectedFiles = selectedFiles || window.selectedFiles || new Set();
+
+            window.selectedFiles = selectedFiles;
+
+            const allSelected = (selectedFiles.size === items.length);
+
+            if (allSelected) {
+
+                clearBatchSelection();
+
+            } else {
+
+                items.forEach(it => {
+
+                    const p = it.path || it;
+
+                    if (p) window.selectedFiles.add(p);
+
+                });
+
+                document.querySelectorAll('.media-card').forEach(card => {
+
+                    card.classList.add('selected-card');
+
+                    card.style.border = '3px solid #30d158';
+
+                    card.style.boxShadow = '0 0 15px rgba(48,209,88,0.5)';
+
+                    const chk = card.querySelector('.card-checkbox');
+
+                    if (chk) chk.checked = true;
+
+                });
+
+                updateBatchBar();
+
+            }
+
+        }
+
+        window.toggleSelectAllAlbumPhotos = toggleSelectAllAlbumPhotos;
+
+        async function trashSelectedPhotos() {
+
+            if (!window.selectedFiles || window.selectedFiles.size === 0) {
+
+                showToast("⚠️ Selecciona al menos una foto para enviar a la papelera");
+
+                return;
+
+            }
+
+            const count = window.selectedFiles.size;
+
+            const isEntire = Boolean(window.currentFolderItems && count === window.currentFolderItems.length);
+
+            const msg = isEntire
+
+                ? `¿Seguro que deseas enviar las ${count} fotos de "${currentIdent}" a la Papelera de reciclaje?\n\nLas fotos podrán recuperarse desde la papelera si cambias de opinión.`
+
+                : `¿Seguro que deseas enviar las ${count} fotos seleccionadas a la Papelera de reciclaje?\n\nLas fotos podrán recuperarse desde la papelera si cambias de opinión.`;
+
+            if (!confirm(msg)) return;
+
+            showToast(`⏳ Enviando ${count} foto(s) a la Papelera...`);
+
+            try {
+
+                const res = await fetch('/api/batch_delete', {
+
+                    method: 'POST',
+
+                    headers: {'Content-Type': 'application/json'},
+
+                    body: JSON.stringify({
+
+                        paths: Array.from(window.selectedFiles),
+
+                        cat: currentCat,
+
+                        ident: currentIdent,
+
+                        entire_album: isEntire
+
+                    })
+
+                });
+
+                const data = await res.json();
+
+                if (data.success) {
+
+                    showToast(`🗑️ ${data.count || count} foto(s) enviadas a la Papelera correctamente.`);
+
+                    clearBatchSelection();
+
+                    if (isMultiSelectMode) toggleMultiSelectMode();
+
+                    if (isEntire) {
+
+                        if (typeof loadGallery === 'function') await loadGallery();
+
+                        if (typeof renderTree === 'function') renderTree();
+
+                        const grid = document.getElementById('grid-container');
+
+                        if (grid) grid.innerHTML = `<div style="text-align:center; padding:60px 20px; color:#8e8e93;"><div style="font-size:40px; margin-bottom:12px;">🗑️</div><div style="font-size:1.1rem; color:#fff; font-weight:600;">Álbum vacío</div><div>Todas las fotos se han movido a la Papelera de reciclaje.</div></div>`;
+
+                        const titleEl = document.getElementById('gallery-title');
+
+                        if (titleEl) titleEl.textContent = "Álbum vacío";
+
+                        const subEl = document.getElementById('gallery-subtitle');
+
+                        if (subEl) subEl.textContent = "0 elementos";
+
+                    } else {
+
+                        if (typeof loadGallery === 'function') await loadGallery();
+
+                        if (currentCat && currentIdent) renderGrid(currentCat, currentIdent);
+
+                    }
+
+                } else {
+
+                    showToast(`❌ Error: ${data.error || "No se pudieron eliminar las fotos"}`, 'error');
+
+                }
+
+            } catch (e) {
+
+                showToast(`❌ Error al conectar con el servidor: ${e}`, 'error');
+
+            }
+
+        }
+
+        window.trashSelectedPhotos = trashSelectedPhotos;
+
+        async function trashCurrentAlbumPhotos() {
+
+            if (!currentIdent || currentIdent === 'Todas las Fotos') {
+
+                showToast("⚠️ No hay un álbum seleccionado");
+
+                return;
+
+            }
+
+            const count = (window.currentFolderItems && window.currentFolderItems.length) || 0;
+
+            const countStr = count > 0 ? `${count} fotos` : "todas las fotos";
+
+            const msg = `¿Seguro que deseas enviar ${countStr} de "${currentIdent}" a la Papelera de reciclaje?\n\nLas fotos podrán recuperarse desde la papelera de reciclaje si cambias de opinión.`;
+
+            if (!confirm(msg)) return;
+
+            showToast(`⏳ Enviando ${countStr} de "${currentIdent}" a la Papelera...`);
+
+            try {
+
+                const paths = window.currentFolderItems ? window.currentFolderItems.map(it => it.path || it) : [];
+
+                const res = await fetch('/api/batch_delete', {
+
+                    method: 'POST',
+
+                    headers: {'Content-Type': 'application/json'},
+
+                    body: JSON.stringify({
+
+                        cat: currentCat,
+
+                        ident: currentIdent,
+
+                        entire_album: true,
+
+                        paths: paths
+
+                    })
+
+                });
+
+                const data = await res.json();
+
+                if (data.success) {
+
+                    showToast(`🗑️ ${data.count || count} foto(s) enviadas a la Papelera correctamente.`);
+
+                    clearBatchSelection();
+
+                    if (isMultiSelectMode) toggleMultiSelectMode();
+
+                    if (typeof loadGallery === 'function') await loadGallery();
+
+                    if (typeof renderTree === 'function') renderTree();
+
+                    const grid = document.getElementById('grid-container');
+
+                    if (grid) grid.innerHTML = `<div style="text-align:center; padding:60px 20px; color:#8e8e93;"><div style="font-size:40px; margin-bottom:12px;">🗑️</div><div style="font-size:1.1rem; color:#fff; font-weight:600;">Álbum vacío</div><div>Todas las fotos de "${currentIdent}" se han movido a la Papelera.</div></div>`;
+
+                    const titleEl = document.getElementById('gallery-title');
+
+                    if (titleEl) titleEl.textContent = "Álbum vacío";
+
+                    const subEl = document.getElementById('gallery-subtitle');
+
+                    if (subEl) subEl.textContent = "0 elementos";
+
+                    const moreBtn = document.getElementById('btn-header-more');
+
+                    if (moreBtn) moreBtn.style.display = 'none';
+
+                } else {
+
+                    showToast(`❌ Error: ${data.error || "No se pudieron eliminar las fotos"}`, 'error');
+
+                }
+
+            } catch (e) {
+
+                showToast(`❌ Error al conectar con el servidor: ${e}`, 'error');
+
+            }
+
+        }
+
+        window.trashCurrentAlbumPhotos = trashCurrentAlbumPhotos;
 
 
 
@@ -3824,6 +4078,8 @@ async function filterTimeline(year) {
             }
             currentFolderItems = fullGallery[cat][ident] || [];
 
+            window.currentFolderItems = currentFolderItems;
+
 
 
             // ── Compute album stats ──────────────────────────────────
@@ -4046,6 +4302,8 @@ async function filterTimeline(year) {
 
             const deleteBtn = document.getElementById('btn-delete-group');
 
+            const trashAlbumBtn = document.getElementById('btn-trash-album-photos');
+
 
 
             const isUnnamedOrNew = (
@@ -4071,6 +4329,8 @@ async function filterTimeline(year) {
             if (renameBtn) renameBtn.style.display  = showMerge ? 'inline-flex' : 'none';
 
             if (deleteBtn) deleteBtn.style.display  = showMerge ? 'inline-flex' : 'none';
+
+            if (trashAlbumBtn) trashAlbumBtn.style.display = (ident && ident !== 'Todas las Fotos') ? 'inline-flex' : 'none';
 
             if (ignoreBtn) ignoreBtn.style.display  = showMerge ? 'inline-flex' : 'none';
 
@@ -4694,7 +4954,7 @@ async function filterTimeline(year) {
 
             // Hide action buttons
 
-            ['btn-merge-group','btn-rename-group','btn-ignore-group','btn-delete-group'].forEach(id => {
+            ['btn-merge-group','btn-rename-group','btn-ignore-group','btn-delete-group','btn-trash-album-photos'].forEach(id => {
 
                 const el = document.getElementById(id);
 

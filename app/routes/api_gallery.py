@@ -150,6 +150,14 @@ def api_delete_route():
 def api_delete_group_route():
     return api_delete_group()
 
+@api_gallery_bp.route('/batch_delete', methods=['POST'])
+def api_batch_delete_route():
+    return api_batch_delete()
+
+@api_gallery_bp.route('/delete_album_photos', methods=['POST'])
+def api_delete_album_photos_route():
+    return api_batch_delete()
+
 @api_gallery_bp.route('/batch_move', methods=['POST'])
 def api_batch_move_route():
     return api_batch_move()

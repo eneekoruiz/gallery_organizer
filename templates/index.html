@@ -191,6 +191,9 @@
                             <button id="btn-delete-group" class="menu-action-item menu-action-danger" onclick="deleteCurrentGroup(); toggleHeaderOptionsMenu();" style="display:none;">
                                 <span>🗑️ Disolver grupo</span>
                             </button>
+                            <button id="btn-trash-album-photos" class="menu-action-item menu-action-danger" onclick="trashCurrentAlbumPhotos(); toggleHeaderOptionsMenu();" style="display:none;">
+                                <span>🗑️ Eliminar todas las fotos (Papelera)</span>
+                            </button>
                             <button id="btn-ignore-group" class="menu-action-item" onclick="ignoreCurrentGroup(); toggleHeaderOptionsMenu();" style="display:none;">
                                 <span>🚫 Ignorar (Falso positivo)</span>
                             </button>
@@ -392,7 +395,26 @@
             </div>
         </div>
     </div>
+
+    <!-- Floating Batch Action Bar for Multiselect Mode -->
+    <div id="batch-action-bar" style="display:none; position:fixed; bottom:20px; left:50%; transform:translateX(-50%); width:calc(100% - 24px); max-width:500px; background:rgba(24,25,31,0.96); backdrop-filter:blur(25px); -webkit-backdrop-filter:blur(25px); border:1px solid rgba(255,255,255,0.15); border-radius:14px; padding:8px 12px; box-shadow:0 12px 36px rgba(0,0,0,0.7); z-index:8500; align-items:center; justify-content:space-between; gap:8px; box-sizing:border-box;">
+        <div style="display:flex; align-items:center; gap:8px; min-width:0;">
+            <button id="btn-batch-select-all" onclick="toggleSelectAllAlbumPhotos()" style="background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.14); color:#fff; border-radius:8px; padding:6px 10px; font-size:12px; font-weight:600; cursor:pointer; white-space:nowrap; transition:all 0.15s;">
+                ☑ Seleccionar todas
+            </button>
+            <span id="batch-count" style="font-size:12px; font-weight:600; color:#e5e5ea; white-space:nowrap; text-overflow:ellipsis; overflow:hidden;">0 seleccionadas</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:6px; flex-shrink:0;">
+            <button id="btn-batch-trash" onclick="trashSelectedPhotos()" style="background:rgba(255,69,58,0.2); border:1px solid rgba(255,69,58,0.45); color:#ff453a; border-radius:8px; padding:6px 12px; font-size:12px; font-weight:600; cursor:pointer; display:flex; align-items:center; gap:4px; white-space:nowrap; transition:all 0.15s;">
+                <span>🗑️ Enviar a Papelera</span>
+            </button>
+            <button id="btn-batch-cancel" onclick="toggleMultiSelectMode()" style="background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.1); color:#8e8e93; border-radius:8px; padding:6px 10px; font-size:12px; cursor:pointer;" title="Salir de selección múltiple">
+                ✕
+            </button>
+        </div>
+    </div>
+
     <!-- Load modules -->
-    <script src="{{ url_for('static', filename='dist/app.js') }}?v=20261109_v47_mobile_menu_clamp_merge_audit"></script>
+    <script src="{{ url_for('static', filename='dist/app.js') }}?v=20261110_v48_delete_all_photos"></script>
 
 {% endblock %}
