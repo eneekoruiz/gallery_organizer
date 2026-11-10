@@ -228,6 +228,15 @@ def get_gallery(force_reload=False):
             
             is_dataset_file = bool(is_orig_dataset or re.match(r'^(Foto|Fotos|Video|Videos|Vídeo|Vídeos)\b', file_name, re.IGNORECASE) or ('/Fotos/' in abs_p.replace('\\', '/')))
             is_manual_file = is_genuine_manual_override(overrides.get(file_key))
+            if is_manual_file:
+                is_dudoso = False
+                ov_faces = overrides.get(file_key, [])
+                valid_ids = [ov.get('identity') for ov in ov_faces if ov.get('identity') and not str(ov.get('identity')).startswith(('Desconocid', 'Falso_Positivo', 'Excluid', 'Ignorar'))]
+                if valid_ids and (cat == "📋 Revisión / Por Organizar" or folder_dudoso):
+                    target_id = valid_ids[0]
+                    ident = target_id
+                    cat = ident_to_cat_map.get(target_id) or ('Conocidos' if target_id.startswith(('C.', 'C ')) else 'Familia' if target_id.startswith(('F.', 'F ')) else 'YO' if target_id == 'YO' else 'Profesores' if target_id.startswith('P.') else 'Mascotas' if target_id.startswith('M.') else 'Conocidos')
+                    key = (cat, ident, file_name)
             
             labels = ["Dataset"] if is_dataset_file else ["IA"]
             if is_manual_file:

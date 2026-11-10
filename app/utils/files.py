@@ -277,7 +277,33 @@ def get_file_key(filepath):
         st = os.stat(path_str)
         return f"{Path(path_str).name}_{st.st_size}_{int(st.st_mtime)}"
     except Exception:
+        fname = Path(str(filepath)).name if filepath else ''
+        try:
+            reloc = _RELOCATED_CACHE.get(fname) or _RELOCATED_CACHE.get(str(filepath))
+            if reloc and os.path.exists(reloc):
+                st = os.stat(reloc)
+                return f"{Path(reloc).name}_{st.st_size}_{int(st.st_mtime)}"
+        except Exception:
+            pass
         return str(filepath)
+
+
+def get_override_for_file(filepath, overrides=None):
+    if overrides is None:
+        overrides = load_overrides()
+    fk = get_file_key(filepath)
+    if fk in overrides:
+        return fk, overrides[fk]
+    if str(filepath) in overrides:
+        return str(filepath), overrides[str(filepath)]
+    fname = Path(str(filepath)).name if filepath else ''
+    if fname:
+        prefix = f"{fname}_"
+        for k, v in overrides.items():
+            if k.startswith(prefix) or k == fname:
+                return k, v
+    return fk, []
+
 
 
 

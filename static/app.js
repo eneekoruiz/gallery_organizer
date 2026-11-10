@@ -12583,7 +12583,8 @@ function isPersonAlbum(cat, ident) {
     if (l.includes('dudoso') || l.includes('desconocid') || l.includes('sin rostro') ||
         l.includes('pendiente') || l.includes('grupos por confirmar') || l.includes('caras aisladas') ||
         l.includes('excluid') || l.includes('falso_positivo') || l.includes('ignorar') ||
-        l.includes('baja confianza') || l.includes('por identificar') || l.includes('por organizar')) {
+        l.includes('baja confianza') || l.includes('por identificar') || l.includes('por organizar') ||
+        l.includes('revisión') || l.includes('revision')) {
         return false;
     }
     if (cat) {
@@ -14299,7 +14300,7 @@ async function runAnalysis(force=false) {
 
 
 
-            ['tl', 'tr', 'bl', 'br'].forEach(corner => {
+            ['tl', 'tr', 'bl', 'br', 't', 'b', 'l', 'r'].forEach(corner => {
 
 
 
@@ -15007,842 +15008,267 @@ async function runAnalysis(force=false) {
 
 
         function makeBoxInteractive(box, face, faceNum, intrinsicWidth, intrinsicHeight, mediaEl) {
-
-
-
-            let isDragging = false;
-
-
-
-            let isResizing = false;
-
-
-
-            let currentHandle = null;
-
-
-
-            let startX, startY, startLeft, startTop, startW, startH;
-
-
-
-            const container = document.getElementById('lb-media-container');
-
-
-
-
-
-
-
-            // Arrastrar Posición
-
-
-
-            box.addEventListener('mousedown', (e) => {
-
-
-
-                if (e.target.classList.contains('resize-handle')) return;
-
-
-
-                if (e.target.tagName === 'SELECT' || e.target.tagName === 'OPTION' || e.target.tagName === 'BUTTON') return;
-
-
-
-                
-
-
-
-                e.stopPropagation();
-
-
-
-                isDragging = true;
-
-
-
-                startX = e.clientX;
-
-
-
-                startY = e.clientY;
-
-
-
-                const popup = box.querySelector('.lb-box-popup');
-
-
-
-                if (popup) popup.style.display = 'none';
-
-
-
-                const rect = box.getBoundingClientRect();
-
-
-
-                if (popup) popup.style.display = 'flex';
-
-
-
-                const containerRect = container.getBoundingClientRect();
-
-
-
-                let containerW = containerRect.width;
-
-
-
-                let containerH = containerRect.height;
-
-
-
-                let containerLeft = containerRect.left;
-
-
-
-                let containerTop = containerRect.top;
-
-
-
-                if (containerW < 50) {
-
-
-
-                    const mediaRect = mediaEl.getBoundingClientRect();
-
-
-
-                    containerW = mediaRect.width;
-
-
-
-                    containerH = mediaRect.height;
-
-
-
-                    containerLeft = mediaRect.left;
-
-
-
-                    containerTop = mediaRect.top;
-
-
-
+        let isDragging = false;
+        let isResizing = false;
+        let currentHandle = null;
+        let startX, startY, startLeft, startTop, startW, startH;
+        let startFace = { x: face.x, y: face.y, width: face.width, height: face.height };
+        let lastActionTime = 0;
+        const container = document.getElementById('lb-media-container');
+
+        // Dragging Box
+        function startDrag(e) {
+            if (e.target.classList.contains('resize-handle')) return;
+            if (e.target.tagName === 'SELECT' || e.target.tagName === 'OPTION' || e.target.tagName === 'BUTTON') return;
+            if (Date.now() - lastActionTime < 60) return;
+            lastActionTime = Date.now();
+
+            e.stopPropagation();
+            isDragging = true;
+            startX = e.clientX;
+            startY = e.clientY;
+            startFace = { x: face.x, y: face.y, width: face.width, height: face.height };
+
+            const popup = box.querySelector('.lb-box-popup');
+            if (popup) popup.style.display = 'none';
+            const rect = box.getBoundingClientRect();
+            if (popup) popup.style.display = 'flex';
+
+            const containerRect = container.getBoundingClientRect();
+            let containerW = containerRect.width;
+            let containerH = containerRect.height;
+            let containerLeft = containerRect.left;
+            let containerTop = containerRect.top;
+
+            if (containerW < 50) {
+                const mediaRect = mediaEl.getBoundingClientRect();
+                containerW = mediaRect.width;
+                containerH = mediaRect.height;
+                containerLeft = mediaRect.left;
+                containerTop = mediaRect.top;
+            }
+
+            startLeft = rect.left - containerLeft;
+            startTop = rect.top - containerTop;
+
+            let isDragTicking = false;
+            const onMove = (ev) => {
+                if (!isDragging) return;
+                const dx = ev.clientX - startX;
+                const dy = ev.clientY - startY;
+
+                if (Math.abs(dx) > 3 || Math.abs(dy) > 3) box.dataset.wasDragged = 'true';
+
+                const newLeft = startLeft + dx;
+                const newTop = startTop + dy;
+
+                if (!isDragTicking) {
+                    window.requestAnimationFrame(() => {
+                        box.style.left = `${(newLeft / containerW) * 100}%`;
+                        box.style.top = `${(newTop / containerH) * 100}%`;
+                        isDragTicking = false;
+                    });
+                    isDragTicking = true;
                 }
-
-
-
-                startLeft = rect.left - containerLeft;
-
-
-
-                startTop = rect.top - containerTop;
-
-
-
-
-
-
-
-                let isDragTicking = false;
-
-
-
-                const onMouseMove = (ev) => {
-
-
-
-                    if (!isDragging) return;
-
-
-
-                    const dx = ev.clientX - startX;
-
-
-
-                    const dy = ev.clientY - startY;
-
-
-
-                    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) box.dataset.wasDragged = 'true';
-
-
-
-                    const newLeft = startLeft + dx;
-
-
-
-                    const newTop = startTop + dy;
-
-
-
-                    if (!isDragTicking) {
-
-
-
-                        window.requestAnimationFrame(() => {
-
-
-
-                            box.style.left = `${(newLeft / containerW) * 100}%`;
-
-
-
-                            box.style.top = `${(newTop / containerH) * 100}%`;
-
-
-
-                            isDragTicking = false;
-
-
-
-                        });
-
-
-
-                        isDragTicking = true;
-
-
-
-                    }
-
-
-
-                };
-
-
-
-
-
-
-
-                const onMouseUp = () => {
-
-
-
-                    if (isDragging) {
-
-
-
-                        isDragging = false;
-
-
-
-                        document.removeEventListener('mousemove', onMouseMove);
-
-
-
-                        document.removeEventListener('mouseup', onMouseUp);
-
-
-
-                        saveBoxDimensions(box, face, faceNum, intrinsicWidth, intrinsicHeight, mediaEl);
-
-
-
-                    }
-
-
-
-                };
-
-
-
-
-
-
-
-                document.addEventListener('mousemove', onMouseMove);
-
-
-
-                document.addEventListener('mouseup', onMouseUp);
-
-
-
-            });
-
-
-
-
-
-
-
-            // Redimensionar Tamaño desde cualquier esquina
-
-
-
-            const handles = box.querySelectorAll('.resize-handle');
-
-
-
-            handles.forEach(handle => {
-
-
-
-                handle.addEventListener('mousedown', (e) => {
-
-
-
-                    e.stopPropagation();
-
-
-
-                    isResizing = true;
-
-
-
-                    currentHandle = handle.dataset.corner;
-
-
-
-                    startX = e.clientX;
-
-
-
-                    startY = e.clientY;
-
-
-
-                    const popup = box.querySelector('.lb-box-popup');
-
-
-
-                if (popup) popup.style.display = 'none';
-
-
-
-                const rect = box.getBoundingClientRect();
-
-
-
-                if (popup) popup.style.display = 'flex';
-
-
-
-                    const containerRect = container.getBoundingClientRect();
-
-
-
-                    let containerW = containerRect.width;
-
-
-
-                    let containerH = containerRect.height;
-
-
-
-                    let containerLeft = containerRect.left;
-
-
-
-                    let containerTop = containerRect.top;
-
-
-
-                    if (containerW < 50) {
-
-
-
-                        const mediaRect = mediaEl.getBoundingClientRect();
-
-
-
-                        containerW = mediaRect.width;
-
-
-
-                        containerH = mediaRect.height;
-
-
-
-                        containerLeft = mediaRect.left;
-
-
-
-                        containerTop = mediaRect.top;
-
-
-
-                    }
-
-
-
-                    startLeft = rect.left - containerLeft;
-
-
-
-                    startTop = rect.top - containerTop;
-
-
-
-                    startW = rect.width;
-
-
-
-                    startH = rect.height;
-
-
-
-
-
-
-
-                    let isResizeTicking = false;
-
-
-
-                    const onMouseMove = (ev) => {
-
-
-
-                        if (!isResizing) return;
-
-
-
-                        box.dataset.wasDragged = 'true';
-
-
-
-                        const dx = ev.clientX - startX;
-
-
-
-                        const dy = ev.clientY - startY;
-
-
-
-                        let newW = startW;
-
-
-
-                        let newH = startH;
-
-
-
-                        let newLeft = startLeft;
-
-
-
-                        let newTop = startTop;
-
-
-
-
-
-
-
-                        if (currentHandle.includes('r')) {
-
-
-
-                            newW = Math.max(20, startW + dx);
-
-
-
-                        } else if (currentHandle.includes('l')) {
-
-
-
-                            newW = Math.max(20, startW - dx);
-
-
-
-                            if (newW > 20) newLeft = startLeft + dx;
-
-
-
-                        }
-
-
-
-
-
-
-
-                        if (currentHandle.includes('b')) {
-
-
-
-                            newH = Math.max(20, startH + dy);
-
-
-
-                        } else if (currentHandle.includes('t')) {
-
-
-
-                            newH = Math.max(20, startH - dy);
-
-
-
-                            if (newH > 20) newTop = startTop + dy;
-
-
-
-                        }
-
-
-
-
-
-
-
-                        if (!isResizeTicking) {
-
-
-
-                            window.requestAnimationFrame(() => {
-
-
-
-                                box.style.width = `${(newW / containerW) * 100}%`;
-
-
-
-                                box.style.height = `${(newH / containerH) * 100}%`;
-
-
-
-                                box.style.left = `${(newLeft / containerW) * 100}%`;
-
-
-
-                                box.style.top = `${(newTop / containerH) * 100}%`;
-
-
-
-                                isResizeTicking = false;
-
-
-
-                            });
-
-
-
-                            isResizeTicking = true;
-
-
-
-                        }
-
-
-
-                    };
-
-
-
-
-
-
-
-                    const onMouseUp = () => {
-
-
-
-                        if (isResizing) {
-
-
-
-                            isResizing = false;
-
-
-
-                            document.removeEventListener('mousemove', onMouseMove);
-
-
-
-                            document.removeEventListener('mouseup', onMouseUp);
-
-
-
-                            saveBoxDimensions(box, face, faceNum, intrinsicWidth, intrinsicHeight, mediaEl);
-
-
-
-                        }
-
-
-
-                    };
-
-
-
-
-
-
-
-                    document.addEventListener('mousemove', onMouseMove);
-
-
-
-                    document.addEventListener('mouseup', onMouseUp);
-
-
-
-                });
-
-
-
-            });
-
-
-
+            };
+
+            const onEnd = () => {
+                if (isDragging) {
+                    isDragging = false;
+                    document.removeEventListener('pointermove', onMove);
+                    document.removeEventListener('pointerup', onEnd);
+                    document.removeEventListener('mousemove', onMove);
+                    document.removeEventListener('mouseup', onEnd);
+                    saveBoxDimensions(box, face, faceNum, intrinsicWidth, intrinsicHeight, mediaEl, startFace);
+                }
+            };
+
+            document.addEventListener('pointermove', onMove);
+            document.addEventListener('pointerup', onEnd);
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('mouseup', onEnd);
         }
 
+        box.addEventListener('pointerdown', startDrag);
+        box.addEventListener('mousedown', startDrag);
 
+        // Resizing Box from any of the 8 handles
+        function startResize(e, corner) {
+            e.stopPropagation();
+            if (Date.now() - lastActionTime < 60) return;
+            lastActionTime = Date.now();
 
+            isResizing = true;
+            currentHandle = corner;
+            startX = e.clientX;
+            startY = e.clientY;
+            startFace = { x: face.x, y: face.y, width: face.width, height: face.height };
 
+            const popup = box.querySelector('.lb-box-popup');
+            if (popup) popup.style.display = 'none';
+            const rect = box.getBoundingClientRect();
+            if (popup) popup.style.display = 'flex';
 
+            const containerRect = container.getBoundingClientRect();
+            let containerW = containerRect.width;
+            let containerH = containerRect.height;
+            let containerLeft = containerRect.left;
+            let containerTop = containerRect.top;
 
-
-        function saveBoxDimensions(box, face, faceNum, intrinsicWidth, intrinsicHeight, mediaEl) {
-
-
-
-            const leftPct = parseFloat(box.style.left) / 100;
-
-
-
-            const topPct = parseFloat(box.style.top) / 100;
-
-
-
-            const widthPct = parseFloat(box.style.width) / 100;
-
-
-
-            const heightPct = parseFloat(box.style.height) / 100;
-
-
-
-
-
-
-
-            if (isNaN(leftPct) || isNaN(topPct) || isNaN(widthPct) || isNaN(heightPct) || widthPct <= 0 || heightPct <= 0) {
-
-
-
-                return;
-
-
-
+            if (containerW < 50) {
+                const mediaRect = mediaEl.getBoundingClientRect();
+                containerW = mediaRect.width;
+                containerH = mediaRect.height;
+                containerLeft = mediaRect.left;
+                containerTop = mediaRect.top;
             }
 
-
-
-
-
-
-
-            face.x = Math.max(0, Math.round(leftPct * intrinsicWidth));
-
-
-
-            face.y = Math.max(0, Math.round(topPct * intrinsicHeight));
-
-
-
-            face.width = Math.min(intrinsicWidth - face.x, Math.round(widthPct * intrinsicWidth));
-
-
-
-            face.height = Math.min(intrinsicHeight - face.y, Math.round(heightPct * intrinsicHeight));
-
-
-
-
-
-
-
-            if (face.width < 25 || face.height < 25) {
-
-
-
-                return;
-
-
-
-            }
-
-
-
-
-
-
-
-            // Actualizar avatar en sidebar
-
-
-
-            const avatarImg = document.getElementById(`pavatar-${faceNum}`);
-
-
-
-            if (avatarImg) {
-
-
-
-                avatarImg.src = updateAvatarCrop(mediaEl, face);
-
-
-
-            }
-
-
-
-
-
-
-
-            // Guardar permanentemente en backend y activar Reaprendizaje Activo
-
-
-
-            if (face.identity && face.identity !== "Desconocido") {
-
-
-
-                let pathParts3 = currentFileObj.path.split(/[\\/]/);
-
-
-
-                let folderName = pathParts3.slice(-2, -1)[0];
-
-
-
-                let categoryName = pathParts3.slice(-3, -2)[0];
-
-
-
-                if (folderName === '_Dudosos') {
-
-
-
-                    folderName = pathParts3.slice(-3, -2)[0];
-
-
-
-                    categoryName = pathParts3.slice(-4, -3)[0];
-
-
-
+            startLeft = rect.left - containerLeft;
+            startTop = rect.top - containerTop;
+            startW = rect.width;
+            startH = rect.height;
+
+            let isResizeTicking = false;
+            const onResizeMove = (ev) => {
+                if (!isResizing) return;
+                box.dataset.wasDragged = 'true';
+
+                const dx = ev.clientX - startX;
+                const dy = ev.clientY - startY;
+
+                let newW = startW;
+                let newH = startH;
+                let newLeft = startLeft;
+                let newTop = startTop;
+
+                if (currentHandle.includes('r')) {
+                    newW = Math.max(25, startW + dx);
+                } else if (currentHandle.includes('l')) {
+                    newW = Math.max(25, startW - dx);
+                    if (newW > 25) newLeft = startLeft + dx;
                 }
 
-
-
-                
-
-
-
-                fetch('/api/correct', {
-
-
-
-                    method: 'POST',
-
-
-
-                    headers: {'Content-Type': 'application/json'},
-
-
-
-                    body: JSON.stringify({
-
-
-
-                        path: currentFileObj.path,
-
-
-
-                        new_categoria: categoryName,
-
-
-
-                        new_identidad: face.identity,
-
-
-
-                        face: {x: face.x, y: face.y, width: face.width, height: face.height},
-
-
-
-                        apply_to_duplicates: true
-
-
-
-                    })
-
-
-
-                }).then(r => r.json()).then(data => {
-
-
-
-                    if (data.success) {
-
-
-
-                        showToast('Recuadro guardado correctamente.');
-
-
-
-                        if (data.new_path) {
-
-
-
-                            if (currentFileObj) currentFileObj.path = data.new_path.replace(/\\/g, '/');
-
-
-
-                        }
-
-
-
-                        // loadGallery() omitido para evitar congelar visor
-
-
-
-                        // Mantener visor abierto en vídeo para seguir editando caras
-
-
-
-                    } else if (data.error) {
-
-
-
-                        alert("Error: " + data.error);
-
-
-
-                    }
-
-
-
-                });
-
-
-
-            }
-
-
-
+                if (currentHandle.includes('b')) {
+                    newH = Math.max(25, startH + dy);
+                } else if (currentHandle.includes('t')) {
+                    newH = Math.max(25, startH - dy);
+                    if (newH > 25) newTop = startTop + dy;
+                }
+
+                if (!isResizeTicking) {
+                    window.requestAnimationFrame(() => {
+                        box.style.width = `${(newW / containerW) * 100}%`;
+                        box.style.height = `${(newH / containerH) * 100}%`;
+                        box.style.left = `${(newLeft / containerW) * 100}%`;
+                        box.style.top = `${(newTop / containerH) * 100}%`;
+                        isResizeTicking = false;
+                    });
+                    isResizeTicking = true;
+                }
+            };
+
+            const onResizeEnd = () => {
+                if (isResizing) {
+                    isResizing = false;
+                    document.removeEventListener('pointermove', onResizeMove);
+                    document.removeEventListener('pointerup', onResizeEnd);
+                    document.removeEventListener('mousemove', onResizeMove);
+                    document.removeEventListener('mouseup', onResizeEnd);
+                    saveBoxDimensions(box, face, faceNum, intrinsicWidth, intrinsicHeight, mediaEl, startFace);
+                }
+            };
+
+            document.addEventListener('pointermove', onResizeMove);
+            document.addEventListener('pointerup', onResizeEnd);
+            document.addEventListener('mousemove', onResizeMove);
+            document.addEventListener('mouseup', onResizeEnd);
         }
 
+        const handles = box.querySelectorAll('.resize-handle');
+        handles.forEach(handle => {
+            const corner = handle.dataset.corner;
+            handle.addEventListener('pointerdown', (e) => startResize(e, corner));
+            handle.addEventListener('mousedown', (e) => startResize(e, corner));
+        });
+    }
 
+    function saveBoxDimensions(box, face, faceNum, intrinsicWidth, intrinsicHeight, mediaEl, oldFace) {
+        const leftPct = parseFloat(box.style.left) / 100;
+        const topPct = parseFloat(box.style.top) / 100;
+        const widthPct = parseFloat(box.style.width) / 100;
+        const heightPct = parseFloat(box.style.height) / 100;
 
+        if (isNaN(leftPct) || isNaN(topPct) || isNaN(widthPct) || isNaN(heightPct) || widthPct <= 0 || heightPct <= 0) {
+            return;
+        }
 
+        face.x = Math.max(0, Math.round(leftPct * intrinsicWidth));
+        face.y = Math.max(0, Math.round(topPct * intrinsicHeight));
+        face.width = Math.min(intrinsicWidth - face.x, Math.round(widthPct * intrinsicWidth));
+        face.height = Math.min(intrinsicHeight - face.y, Math.round(heightPct * intrinsicHeight));
 
+        if (face.width < 20 || face.height < 20) {
+            return;
+        }
 
+        // Update dataset coordinates on the element
+        box.dataset.faceX = face.x;
+        box.dataset.faceY = face.y;
+        box.dataset.faceW = face.width;
+        box.dataset.faceH = face.height;
 
+        // Clean any duplicate box elements with same id in DOM
+        const duplicateBoxes = document.querySelectorAll(`.lb-bounding-box#bbox-${faceNum}`);
+        if (duplicateBoxes.length > 1) {
+            duplicateBoxes.forEach(b => {
+                if (b !== box) b.remove();
+            });
+        }
 
+        // Update avatar in sidebar
+        const avatarImg = document.getElementById(`pavatar-${faceNum}`);
+        if (avatarImg) {
+            avatarImg.src = updateAvatarCrop(mediaEl, face);
+        }
 
+        // Guardar permanentemente en backend y activar Reaprendizaje Activo
+        if (face.identity && face.identity !== "Desconocido") {
+            let pathParts3 = currentFileObj.path.split(/[\\/]/);
+            let folderName = pathParts3.slice(-2, -1)[0];
+            let categoryName = pathParts3.slice(-3, -2)[0];
+            if (folderName === '_Dudosos') {
+                folderName = pathParts3.slice(-3, -2)[0];
+                categoryName = pathParts3.slice(-4, -3)[0];
+            }
 
+            fetch('/api/correct', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    path: currentFileObj.path,
+                    new_categoria: categoryName,
+                    new_identidad: face.identity,
+                    face: {x: face.x, y: face.y, width: face.width, height: face.height},
+                    old_face: oldFace || null,
+                    face_num: faceNum || 1,
+                    apply_to_duplicates: true
+                })
+            }).then(r => r.json()).then(data => {
+                if (data.success) {
+                    showToast('Recuadro guardado correctamente.');
+                    if (data.new_path) {
+                        if (currentFileObj) currentFileObj.path = data.new_path.replace(/\\/g, '/');
+                    }
+                } else if (data.error) {
+                    alert("Error: " + data.error);
+                }
+            }).catch(err => {
+                console.error("Error guardando dimensiones de recuadro:", err);
+            });
+        }
+    }
 
-        async function ignoreUnconfirmedFaces() {
+    async function ignoreUnconfirmedFaces() {
 
 
 

@@ -146,7 +146,7 @@ from app.globals import (
 
 from app.utils.faces import get_cosine_similarity, iou, ios, is_duplicate_box
 
-from app.utils.files import safe_move, load_overrides, save_overrides, find_relocated_file, get_file_key, safe_move_file, safe_remove_file
+from app.utils.files import safe_move, load_overrides, save_overrides, find_relocated_file, get_file_key, safe_move_file, safe_remove_file, get_override_for_file
 
 
 
@@ -540,7 +540,8 @@ def api_analyze():
 
             file_key = get_file_key(filepath)
 
-            file_overrides = [ov for ov in overrides.get(file_key, []) if ov.get('provenance') == HUMAN]
+            found_ov = get_override_for_file(filepath) or overrides.get(file_key, [])
+            file_overrides = [ov for ov in found_ov if ov.get('provenance') == HUMAN]
 
             claimed_identities = set()
 
@@ -1439,7 +1440,7 @@ def api_analyze():
 
 
 
-def apply_correction_to_file(filepath, new_categoria, new_identidad, face_data, *, provenance='prediction'):
+def apply_correction_to_file(filepath, new_categoria, new_identidad, face_data, *, provenance='prediction', old_face=None, face_num=None):
 
     if provenance != HUMAN:
 
@@ -1514,49 +1515,83 @@ def apply_correction_to_file(filepath, new_categoria, new_identidad, face_data, 
     try:
 
         from app.services.apple_service import load_apple_db, save_apple_db
-
         apple_db = load_apple_db()
-
         norm_fp = os.path.normpath(filepath) if filepath else ''
-
         matching_key = None
-
         for k in apple_db.keys():
-
             if os.path.normpath(k) == norm_fp or os.path.basename(k) == os.path.basename(filepath or ''):
-
                 matching_key = k
-
                 break
-
         if matching_key:
-
             entry = apple_db[matching_key]
-
             entry['category'] = new_categoria
-
             entry['identity'] = new_identidad
-
             entry['status'] = 'Clasificado'
-
             entry['is_dudoso'] = False
+            if 'identities' not in entry or not isinstance(entry['identities'], list):
+                entry['identities'] = [new_identidad]
+            elif new_identidad not in entry['identities']:
+                entry['identities'].append(new_identidad)
 
-            if 'faces' in entry and isinstance(entry['faces'], list):
+            if 'faces' in entry and isinstance(entry['faces'], list) and face_data:
+                fx = safe_float(face_data.get('x'), 0.0)
+                fy = safe_float(face_data.get('y'), 0.0)
+                fw = safe_float(face_data.get('width'), 100.0)
+                fh = safe_float(face_data.get('height'), 100.0)
+                face_box = [fx, fy, fw, fh]
+                old_box = None
+                if old_face and isinstance(old_face, dict):
+                    old_box = [safe_float(old_face.get('x'), fx), safe_float(old_face.get('y'), fy), safe_float(old_face.get('width'), fw), safe_float(old_face.get('height'), fh)]
 
+                f_updated = False
+                best_adb_idx = -1
+                best_adb_iou = -1.0
+                for idx, f in enumerate(entry['faces']):
+                    fb = [safe_float(f.get('x')), safe_float(f.get('y')), safe_float(f.get('width')), safe_float(f.get('height'))]
+                    if sum(fb) == 0 and 'box' in f:
+                        fb = [safe_float(f['box'][0]), safe_float(f['box'][1]), safe_float(f['box'][2]), safe_float(f['box'][3])]
+                    miou = max(iou(old_box, fb) if old_box else 0.0, iou(face_box, fb))
+                    if miou > best_adb_iou:
+                        best_adb_iou = miou
+                        best_adb_idx = idx
+                if best_adb_idx >= 0 and best_adb_iou > 0.15:
+                    entry['faces'][best_adb_idx].update({
+                        'identity': new_identidad, 'confidence': 100.0, 'is_manual': True,
+                        'x': fx, 'y': fy, 'width': fw, 'height': fh, 'box': [fx, fy, fw, fh]
+                    })
+                    f_updated = True
+                else:
+                    for f in entry['faces']:
+                        if f.get('identity') == new_identidad or len(entry['faces']) == 1:
+                            f.update({
+                                'identity': new_identidad, 'confidence': 100.0, 'is_manual': True,
+                                'x': fx, 'y': fy, 'width': fw, 'height': fh, 'box': [fx, fy, fw, fh]
+                            })
+                            f_updated = True
+                            break
+                if not f_updated:
+                    entry['faces'].append({
+                        'x': fx, 'y': fy, 'width': fw, 'height': fh, 'box': [fx, fy, fw, fh],
+                        'identity': new_identidad, 'confidence': 100.0, 'is_manual': True
+                    })
+                # Deduplicate faces in apple_db entry
+                deduped_adb = []
                 for f in entry['faces']:
-
-                    f['identity'] = new_identidad
-
-                    f['confidence'] = 100.0
-
-                    f['is_manual'] = True
-
+                    fb = [safe_float(f.get('x')), safe_float(f.get('y')), safe_float(f.get('width')), safe_float(f.get('height'))]
+                    fid = f.get('identity')
+                    is_dup = False
+                    for df in deduped_adb:
+                        dfb = [safe_float(df.get('x')), safe_float(df.get('y')), safe_float(df.get('width')), safe_float(df.get('height'))]
+                        if (df.get('identity') == fid and fid not in ('Desconocido',)) or (sum(fb) > 0 and sum(dfb) > 0 and iou(fb, dfb) > 0.4):
+                            df.update(f)
+                            is_dup = True
+                            break
+                    if not is_dup:
+                        deduped_adb.append(f)
+                entry['faces'] = deduped_adb
             save_apple_db()
-
             print(f'[APPLE DB] Confirmed photo {matching_key} -> {new_categoria} / {new_identidad}')
-
     except Exception as e_adb:
-
         print(f'[WARN] Error updating apple_db for photo confirmation: {e_adb}')
 
 
@@ -1760,135 +1795,145 @@ def apply_correction_to_file(filepath, new_categoria, new_identidad, face_data, 
 
 
     overrides = load_overrides()
-
     file_key = get_file_key(filepath)
-
-    
+    if file_key not in overrides:
+        fname = Path(filepath).name if filepath else ''
+        for k in overrides:
+            if k == filepath or (fname and k.startswith(f"{fname}_")):
+                file_key = k
+                break
 
     if face_data:
-
         if file_key not in overrides: overrides[file_key] = []
-
         updated = False
-
         fx = safe_float(face_data.get('x'), 0.0)
-
         fy = safe_float(face_data.get('y'), 0.0)
-
         fw = safe_float(face_data.get('width'), 100.0)
-
         fh = safe_float(face_data.get('height'), 100.0)
-
         face_box = [fx, fy, fw, fh]
 
-        for ov in overrides.get(file_key, []):
+        old_box = None
+        if old_face and isinstance(old_face, dict):
+            old_box = [safe_float(old_face.get('x'), fx), safe_float(old_face.get('y'), fy), safe_float(old_face.get('width'), fw), safe_float(old_face.get('height'), fh)]
 
+        # Find best match in overrides
+        best_ov_idx = -1
+        best_ov_iou = -1.0
+        for idx, ov in enumerate(overrides.get(file_key, [])):
             ov_box = [safe_float(ov.get('x')), safe_float(ov.get('y')), safe_float(ov.get('width')), safe_float(ov.get('height'))]
+            if sum(ov_box) == 0: continue
+            cur_iou = max(iou(old_box, ov_box) if old_box else 0.0, iou(face_box, ov_box))
+            if cur_iou > best_ov_iou:
+                best_ov_iou = cur_iou
+                best_ov_idx = idx
 
-            if iou(face_box, ov_box) > 0.4:
-
-                ov['identity'] = new_identidad
-
-                ov['provenance'] = HUMAN
-
-                ov['x'] = fx
-
-                ov['y'] = fy
-
-                ov['width'] = fw
-
-                ov['height'] = fh
-
-                updated = True
-
-                break
+        if best_ov_idx >= 0 and best_ov_iou > 0.15:
+            ov = overrides[file_key][best_ov_idx]
+            ov['identity'] = new_identidad
+            ov['provenance'] = HUMAN
+            ov['x'] = fx; ov['y'] = fy; ov['width'] = fw; ov['height'] = fh
+            updated = True
+        else:
+            for ov in overrides.get(file_key, []):
+                if ov.get('identity') == new_identidad or len(overrides[file_key]) == 1:
+                    ov['identity'] = new_identidad
+                    ov['provenance'] = HUMAN
+                    ov['x'] = fx; ov['y'] = fy; ov['width'] = fw; ov['height'] = fh
+                    updated = True
+                    break
 
         if not updated:
-
             overrides[file_key].append({
-
-                'x': fx, 'y': fy, 
-
-                'width': fw, 'height': fh,
-
+                'x': fx, 'y': fy, 'width': fw, 'height': fh,
                 'identity': new_identidad, 'provenance': HUMAN
-
             })
 
+        # Deduplicate overrides for file_key (never allow duplicate boxes for same identity or high mutual overlap)
+        deduped = []
+        for ov in overrides[file_key]:
+            ov_b = [safe_float(ov.get('x')), safe_float(ov.get('y')), safe_float(ov.get('width')), safe_float(ov.get('height'))]
+            ov_id = ov.get('identity')
+            is_dup = False
+            for d in deduped:
+                d_b = [safe_float(d.get('x')), safe_float(d.get('y')), safe_float(d.get('width')), safe_float(d.get('height'))]
+                if (d.get('identity') == ov_id and ov_id not in ('Desconocido', 'Falso_Positivo', 'Excluido')) or (sum(ov_b) > 0 and sum(d_b) > 0 and iou(ov_b, d_b) > 0.4):
+                    d.update(ov)
+                    is_dup = True
+                    break
+            if not is_dup:
+                deduped.append(ov)
+        overrides[file_key] = deduped
         save_overrides(overrides)
 
-        
-
-        if file_key not in faces_cache:
-
-            faces_cache[get_file_key(filepath)] = []
-
-            
-
+        # Update faces_cache in-place and deduplicate
+        fk = get_file_key(filepath)
+        if fk not in faces_cache:
+            faces_cache[fk] = []
         updated_cache = False
-
-        for c_face in faces_cache.get(get_file_key(filepath), []):
-
-            if 'x' not in c_face or 'y' not in c_face or 'width' not in c_face or 'height' not in c_face:
-
-                continue
-
+        best_fc_idx = -1
+        best_fc_iou = -1.0
+        for idx, c_face in enumerate(faces_cache.get(fk, [])):
             c_box = [safe_float(c_face.get('x')), safe_float(c_face.get('y')), safe_float(c_face.get('width')), safe_float(c_face.get('height'))]
+            if sum(c_box) == 0 and 'box' in c_face:
+                c_box = [safe_float(c_face['box'][0]), safe_float(c_face['box'][1]), safe_float(c_face['box'][2]), safe_float(c_face['box'][3])]
+            cur_iou = max(iou(old_box, c_box) if old_box else 0.0, iou(face_box, c_box))
+            if cur_iou > best_fc_iou:
+                best_fc_iou = cur_iou
+                best_fc_idx = idx
 
-            if iou(face_box, c_box) > 0.4:
-
-                c_face['identity'] = new_identidad
-
-                c_face['confidence'] = 0.0 if new_identidad == 'Desconocido' else 1.0
-
-                if new_identidad == 'Desconocido':
-
-                    c_face['suggested_identity'] = None
-
-                    c_face['suggested_score'] = 0.0
-
-                c_face['is_manual'] = True
-
-                c_face['provenance'] = HUMAN
-
-                updated_cache = True
-
-                break
-
-                
+        if best_fc_idx >= 0 and best_fc_iou > 0.15:
+            cf = faces_cache[fk][best_fc_idx]
+            cf.update({
+                'x': fx, 'y': fy, 'width': fw, 'height': fh, 'box': [fx, fy, fw, fh],
+                'identity': new_identidad, 'confidence': (0.0 if new_identidad == 'Desconocido' else 1.0),
+                'is_manual': True, 'provenance': HUMAN
+            })
+            if new_identidad == 'Desconocido':
+                cf['suggested_identity'] = None
+                cf['suggested_score'] = 0.0
+            updated_cache = True
+        else:
+            for c_face in faces_cache.get(fk, []):
+                if c_face.get('identity') == new_identidad or len(faces_cache[fk]) == 1:
+                    c_face.update({
+                        'x': fx, 'y': fy, 'width': fw, 'height': fh, 'box': [fx, fy, fw, fh],
+                        'identity': new_identidad, 'confidence': (0.0 if new_identidad == 'Desconocido' else 1.0),
+                        'is_manual': True, 'provenance': HUMAN
+                    })
+                    updated_cache = True
+                    break
 
         if not updated_cache:
-
-            faces_cache[get_file_key(filepath)].append({
-
-                'x': fx, 'y': fy,
-
-                'width': fw, 'height': fh,
-
+            faces_cache[fk].append({
+                'x': fx, 'y': fy, 'width': fw, 'height': fh, 'box': [fx, fy, fw, fh],
                 'identity': new_identidad, 'confidence': 1.0, 'is_manual': True, 'provenance': HUMAN
-
             })
 
-            
+        # Deduplicate faces_cache[fk]
+        deduped_fc = []
+        for c_f in faces_cache[fk]:
+            cb = [safe_float(c_f.get('x')), safe_float(c_f.get('y')), safe_float(c_f.get('width')), safe_float(c_f.get('height'))]
+            cid = c_f.get('identity')
+            is_dup = False
+            for dfc in deduped_fc:
+                dfcb = [safe_float(dfc.get('x')), safe_float(dfc.get('y')), safe_float(dfc.get('width')), safe_float(dfc.get('height'))]
+                if (dfc.get('identity') == cid and cid not in ('Desconocido',)) or (sum(cb) > 0 and sum(dfcb) > 0 and iou(cb, dfcb) > 0.4):
+                    dfc.update(c_f)
+                    is_dup = True
+                    break
+            if not is_dup:
+                deduped_fc.append(c_f)
+        faces_cache[fk] = deduped_fc
 
         # Save faces_cache to disk in background (non-blocking)
-
         def _save_faces_cache():
-
             try:
-
                 with cache_lock:
-
                     with open(FACES_CACHE_FILE, 'wb') as f:
-
                         pickle.dump(faces_cache, f)
-
             except Exception:
-
                 pass
-
         import threading
-
         threading.Thread(target=_save_faces_cache, daemon=True).start()
 
 
@@ -2094,6 +2139,8 @@ def api_correct():
     new_identidad = data.get('new_identidad')
 
     face_data = data.get('face')
+    old_face = data.get('old_face')
+    face_num = data.get('face_num')
 
     
 
@@ -2161,7 +2208,7 @@ def api_correct():
 
     try:
 
-        target_path = apply_correction_to_file(filepath, new_categoria, new_identidad, face_data, provenance=HUMAN)
+        target_path = apply_correction_to_file(filepath, new_categoria, new_identidad, face_data, provenance=HUMAN, old_face=old_face, face_num=face_num)
 
         
 
