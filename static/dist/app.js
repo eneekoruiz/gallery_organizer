@@ -7296,126 +7296,39 @@ async function filterTimeline(year) {
 
 
 
-                // 3. Descarga asincrona en segundo plano para poblar cache y linea temporal sin bloquear
-
-                fetch('/api/gallery')
-
-                    .then(r => r.ok ? r.json() : null)
-
-                    .then(data => {
-
-                        if (data) {
-
-                            window.fullGallery = data;
-
-                            fullGallery = data;
-
-                            if (currentCat && currentIdent && Array.isArray(fullGallery[currentCat]?.[currentIdent])) {
-
-                                renderGrid(currentCat, currentIdent);
-
-                            }
-
+                // 3. Inicializacion ultra-ligera de capsulas temporales (~50 bytes)
+                async function updateTimelineCapsules() {
+                    try {
+                        const res = await fetch('/api/gallery/years');
+                        if (!res.ok) return;
+                        const yearsArr = await res.json();
+                        const timelineContainer = document.getElementById('timeline-years-container');
+                        if (timelineContainer && Array.isArray(yearsArr) && yearsArr.length > 0) {
+                            timelineContainer.innerHTML = '';
+                            yearsArr.forEach(year => {
+                                const btn = document.createElement('button');
+                                btn.className = 'timeline-year-btn';
+                                btn.textContent = year;
+                                btn.style.cssText = "padding: 6px 14px; border-radius: 20px; border: 1px solid rgba(255,255,255,0.15); background: rgba(255,255,255,0.06); color: #e5e5ea; cursor: pointer; font-size: 11px; font-weight: 600; transition: all 0.2s; white-space: nowrap;";
+                                btn.onclick = () => {
+                                    document.querySelectorAll('.timeline-year-btn').forEach(b => {
+                                        b.style.background = 'rgba(255,255,255,0.06)';
+                                        b.style.borderColor = 'rgba(255,255,255,0.15)';
+                                        b.style.color = '#e5e5ea';
+                                    });
+                                    btn.style.background = '#0a84ff';
+                                    btn.style.borderColor = '#0a84ff';
+                                    btn.style.color = '#fff';
+                                    filterTimeline(year);
+                                };
+                                timelineContainer.appendChild(btn);
+                            });
                         }
-
-                    })
-
-                    .catch(() => {});
-
-
-
-                
-
-
-
-                // Extract unique years from fullGallery
-
-                function updateTimelineCapsules() {
-
-                    let availableYears = new Set();
-
-                    for (let cat in fullGallery) {
-
-                        for (let ident in fullGallery[cat]) {
-
-                            const items = fullGallery[cat][ident];
-
-                            if (Array.isArray(items)) {
-
-                                items.forEach(item => {
-
-                                    if (item && item.mtime) {
-
-                                        const yr = new Date(item.mtime * 1000).getFullYear();
-
-                                        if (yr && yr >= 2000 && yr <= 2030) {
-
-                                            availableYears.add(yr);
-
-                                        }
-
-                                    }
-
-                                });
-
-                            }
-
-                        }
-
+                    } catch (e) {
+                        console.warn("Aviso al cargar cápsulas temporales:", e);
                     }
-
-                    
-
-                    const yearsArr = Array.from(availableYears).sort((a, b) => b - a);
-
-                    const timelineContainer = document.getElementById('timeline-years-container');
-
-                    if (timelineContainer && yearsArr.length > 0) {
-
-                        timelineContainer.innerHTML = '';
-
-                        yearsArr.forEach(year => {
-
-                            const btn = document.createElement('button');
-
-                            btn.className = 'timeline-year-btn';
-
-                            btn.textContent = year;
-
-                            btn.style.cssText = "padding: 6px 14px; border-radius: 20px; border: 1px solid rgba(255,255,255,0.15); background: rgba(255,255,255,0.06); color: #e5e5ea; cursor: pointer; font-size: 11px; font-weight: 600; transition: all 0.2s; white-space: nowrap;";
-
-                            btn.onclick = () => {
-
-                                document.querySelectorAll('.timeline-year-btn').forEach(b => {
-
-                                    b.style.background = 'rgba(255,255,255,0.06)';
-
-                                    b.style.borderColor = 'rgba(255,255,255,0.15)';
-
-                                    b.style.color = '#e5e5ea';
-
-                                });
-
-                                btn.style.background = '#0a84ff';
-
-                                btn.style.borderColor = '#0a84ff';
-
-                                btn.style.color = '#fff';
-
-                                filterTimeline(year);
-
-                            };
-
-                            timelineContainer.appendChild(btn);
-
-                        });
-
-                    }
-
                 }
-
                 window.updateTimelineCapsules = updateTimelineCapsules;
-
                 updateTimelineCapsules();
 
 
@@ -8080,7 +7993,7 @@ async function filterTimeline(year) {
 
             const currentVal = fullGallery && fullGallery[cat] ? fullGallery[cat][ident] : null;
 
-            if (!Array.isArray(currentVal) || currentVal.length === 0) {
+            if (!Array.isArray(currentVal)) {
 
                 const grid = document.getElementById('grid-container');
 
@@ -24891,6 +24804,12 @@ window.executeQuickMerge = function(source, target, targetCat) {
             loadIdentities().catch(() => {});
         }
 
+        if (window.fullGallery && window.fullGallery[targetCat || 'Conocidos']) {
+            delete window.fullGallery[targetCat || 'Conocidos'][target];
+        }
+        if (window.fullGallery && window.fullGallery[currentCat || '📋 Revisión / Por Organizar']) {
+            delete window.fullGallery[currentCat || '📋 Revisión / Por Organizar'][source];
+        }
         if (typeof renderGrid === 'function') {
             await renderGrid(targetCat || 'Conocidos', target);
         } else if (typeof loadAlbumsHome === 'function') {

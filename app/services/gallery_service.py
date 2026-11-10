@@ -542,6 +542,17 @@ def get_gallery(force_reload=False):
                 if k_check in added_paths or fname_check in added_names:
                     continue
                 faces_in_file = info.get('faces', [])
+                clean_faces = [
+                    {
+                        "box": f.get("box") or [f.get("x", 0), f.get("y", 0), f.get("width", 0), f.get("height", 0)],
+                        "identity": f.get("identity", "Desconocido"),
+                        "confidence": f.get("confidence", f.get("score", 0)),
+                        "is_manual": f.get("is_manual", False),
+                        "review_required": f.get("review_required", False),
+                        "status": f.get("status")
+                    }
+                    for f in faces_in_file
+                ]
                 num_f = info.get('num_faces', len(faces_in_file))
                 ids_in_file = [f.get('identity') for f in faces_in_file if f.get('identity')]
                 item_apple = {
@@ -560,7 +571,7 @@ def get_gallery(force_reload=False):
                     "device_origin": "apple",
                     "is_virtual": True,
                     "dehydrated": True,
-                    "faces": faces_in_file
+                    "faces": clean_faces
                 }
                 # Resolve canonical category if identity is known
                 canonical_cat = ident_to_cat_map.get(ident)

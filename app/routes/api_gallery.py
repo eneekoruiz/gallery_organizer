@@ -1,5 +1,5 @@
 from flask import Blueprint, jsonify, request, Response, send_file
-from app.services.gallery_service import *
+from app.services.gallery_service import get_gallery, api_identities, api_metadata, api_stats, api_person_avatar, api_thumbnail, api_timeline, api_person_evolution, api_map_locations, api_events_timeline
 
 api_gallery_bp = Blueprint('api_gallery', __name__)
 
@@ -11,13 +11,43 @@ def api_identities_route():
 def get_gallery_route():
     cat = request.args.get('cat') or request.args.get('category')
     ident = request.args.get('ident') or request.args.get('identity')
+    from app.globals import get_gallery_cache
     if cat and ident:
-        from app.globals import get_gallery_cache
         cache = get_gallery_cache()
+        if cache is None:
+            get_gallery()
+            cache = get_gallery_cache()
         if cache and cat in cache and ident in cache[cat]:
             return jsonify({cat: {ident: cache[cat][ident]}})
         return jsonify({cat: {ident: []}})
     return get_gallery()
+
+@api_gallery_bp.route('/gallery/years')
+def get_gallery_years_route():
+    """Return list of distinct years available in gallery in descending order (~50 bytes)."""
+    from app.globals import get_gallery_cache
+    import datetime
+    cache = get_gallery_cache()
+    if not cache:
+        get_gallery()
+        cache = get_gallery_cache()
+    years = set()
+    if cache:
+        for cat, idents in cache.items():
+            if cat == '__smart_album__':
+                continue
+            for ident, items in idents.items():
+                if isinstance(items, list):
+                    for it in items:
+                        mt = it.get('mtime')
+                        if mt:
+                            try:
+                                yr = datetime.datetime.fromtimestamp(mt).year
+                                if 2000 <= yr <= 2030:
+                                    years.add(yr)
+                            except Exception:
+                                pass
+    return jsonify(sorted(list(years), reverse=True))
 
 @api_gallery_bp.route('/gallery/preview')
 def get_gallery_preview_route():

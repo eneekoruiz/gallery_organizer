@@ -52,7 +52,7 @@ def create_app(config=None):
             try:
                 data = response.get_data()
                 if len(data) > 1024:
-                    compressed = gzip.compress(data, compresslevel=6)
+                    compressed = gzip.compress(data, compresslevel=1)
                     response.set_data(compressed)
                     response.headers['Content-Encoding'] = 'gzip'
                     response.headers['Content-Length'] = len(compressed)
