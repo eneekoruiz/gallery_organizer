@@ -17,7 +17,8 @@ _GALLERY_SCAN_LOCK = _threading.Lock()
 import app.globals as g
 from app.utils.storage_adapters import get_adapter
 from app.utils.faces import get_all_identities, sanitize_display_name
-from app.utils.files import process_pending_deletions, load_overrides, find_relocated_file, get_file_key, generate_thumbnail, save_overrides, safe_remove_file
+from app.utils.files import process_pending_deletions, load_overrides, find_relocated_file, get_file_key, generate_thumbnail, save_overrides, safe_remove_file, get_override_for_file
+from app.utils.file_ops import is_icloud_file
 
 
 def is_genuine_manual_override(ov_list):
@@ -227,10 +228,11 @@ def get_gallery(force_reload=False):
             file_key = f"{file_name}_{st.st_size}_{int(st.st_mtime)}"
             
             is_dataset_file = bool(is_orig_dataset or re.match(r'^(Foto|Fotos|Video|Videos|Vídeo|Vídeos)\b', file_name, re.IGNORECASE) or ('/Fotos/' in abs_p.replace('\\', '/')))
-            is_manual_file = is_genuine_manual_override(overrides.get(file_key))
+            found_ov = get_override_for_file(abs_p) or overrides.get(file_key)
+            is_manual_file = is_genuine_manual_override(found_ov)
             if is_manual_file:
                 is_dudoso = False
-                ov_faces = overrides.get(file_key, [])
+                ov_faces = found_ov or []
                 valid_ids = [ov.get('identity') for ov in ov_faces if ov.get('identity') and not str(ov.get('identity')).startswith(('Desconocid', 'Falso_Positivo', 'Excluid', 'Ignorar'))]
                 if valid_ids and (cat == "📋 Revisión / Por Organizar" or folder_dudoso):
                     target_id = valid_ids[0]
@@ -1085,6 +1087,13 @@ def api_person_avatar():
         FOTOS_DIR / "Conocidos" / clean_ident,
         FOTOS_DIR / "Familia" / clean_ident,
         FOTOS_DIR / clean_ident,
+        APP_DIR / "Fotos" / cat / ident,
+        APP_DIR / "Fotos" / clean_cat / clean_ident,
+        APP_DIR / "Fotos" / "Conocidos" / clean_ident,
+        APP_DIR / "Fotos" / "Familia" / clean_ident,
+        APP_DIR / "Fotos" / clean_ident,
+        APP_DIR / "Resultados" / cat / ident,
+        APP_DIR / "Resultados" / "Conocidos" / clean_ident,
     ]
     for base_dir in search_dirs:
         if base_dir.exists() and base_dir.is_dir():
@@ -1322,7 +1331,7 @@ def api_person_avatar():
                                 if sim_yo >= sim_target or (sim_yo > 0.45 and sim_target < sim_yo + 0.08):
                                     continue
                                     
-                            if target_norm is not None and sim_target < 0.45:
+                            if target_norm is not None and sim_target < 0.55:
                                 continue
                                 
                             sim = sim_target
@@ -1340,7 +1349,16 @@ def api_person_avatar():
                     sharpness_score = min(lap_var / 350.0, 1.0)
                     size_score = min(np.sqrt(w * h) / 160.0, 1.0)
                     
-                    quality = 0.60 * sim + 0.25 * sharpness_score + 0.15 * size_score
+                    is_alone = (len(detected_faces) == 1)
+                    is_dataset = ("fotos" in str(c_path).lower() and "icloud" not in str(c_path).lower())
+                    is_explicit = ("_00_centroide_" in str(c_path).lower())
+                    quality = 0.50 * sim + 0.20 * sharpness_score + 0.10 * size_score
+                    if is_alone:
+                        quality += 0.35  # Prioridad decisiva para fotos en solitario sin ambiguedad
+                    if is_dataset:
+                        quality += 0.25  # Certeza absoluta de pertenecer al dataset oficial
+                    if is_explicit:
+                        quality += 1.00  # Prioridad maxima incontestable del centroide oficial
                     
                     if quality > best_quality:
                         best_quality = quality
@@ -1809,7 +1827,7 @@ def api_delete():
         return jsonify({"error": "Archivo no encontrado"}), 404
         
     try:
-        if is_apple_photo(path):
+        if is_apple_photo(path) or is_icloud_file(path):
             if delete_mode == 'local':
                 mark_apple_photo_deleted_locally(path)
                 return jsonify({"success": True})
@@ -2017,7 +2035,7 @@ def api_batch_delete():
 
         for p in file_paths:
             try:
-                if is_apple_photo(p):
+                if is_apple_photo(p) or is_icloud_file(p):
                     mark_apple_photo_deleted_locally(p)
                     trashed_count += 1
                 elif os.path.exists(p):
@@ -2147,7 +2165,7 @@ def api_batch_move():
             
             if p and os.path.exists(p):
                 # Si es foto de Apple, actualizamos BD en vez de mover
-                if is_apple_photo(p):
+                if is_apple_photo(p) or is_icloud_file(p):
                     update_apple_photo_mapping(p, target_cat, target_ident)
                     moved_count += 1
                     continue

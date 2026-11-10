@@ -13324,7 +13324,15 @@ async function openLightbox(item) {
 
         if (cardsContainer) {
 
-            const isPerson = typeof isPersonAlbum === 'function' ? isPersonAlbum(currentCat, currentIdent) : false;
+            const isSystemFolder = !currentIdent ||
+                currentIdent.includes('Dudosos') ||
+                currentIdent.includes('Baja Confianza') ||
+                currentIdent.includes('Desconocid') ||
+                currentIdent.includes('Sin Rostro') ||
+                currentIdent.includes('Caras Aisladas') ||
+                currentIdent.includes('Pendiente') ||
+                (currentCat && (currentCat.includes('Revisión') || currentCat.includes('Organizar')));
+            const isPerson = (!isSystemFolder && typeof isPersonAlbum === 'function') ? isPersonAlbum(currentCat, currentIdent) : false;
 
             const hasManualEdit = Boolean(
                 currentFileObj && (
@@ -13706,7 +13714,7 @@ async function runAnalysis(force=false) {
                 (data && data.faces && data.faces.some(f => f.is_manual || (f.identity === currentIdent && f.confidence >= 0.99)))
             );
 
-            if (isPerson && !hasManualEdit && currentFileObj && (currentFileObj.is_dudoso || currentFileObj.status === 'Dudoso' || currentFileObj.album_section === 'review' || (currentFileObj.source && currentFileObj.source.includes('Por Confirmar')))) {
+            if (isPerson && !isSystemFolder && !hasManualEdit && currentFileObj && (currentFileObj.is_dudoso || currentFileObj.status === 'Dudoso' || currentFileObj.album_section === 'review' || (currentFileObj.source && currentFileObj.source.includes('Por Confirmar')))) {
 
 
 
@@ -13810,6 +13818,7 @@ async function runAnalysis(force=false) {
 
 
 
+                document.querySelectorAll('.lb-bounding-box').forEach(b => b.remove());
                 data.faces.forEach((face, idx) => {
 
 
@@ -14200,6 +14209,8 @@ async function runAnalysis(force=false) {
 
 
 
+            const existingBox = document.getElementById(`bbox-${faceNum}`);
+            if (existingBox) existingBox.remove();
             const box = document.createElement('div');
 
 
@@ -15020,6 +15031,10 @@ async function runAnalysis(force=false) {
         function startDrag(e) {
             if (e.target.classList.contains('resize-handle')) return;
             if (e.target.tagName === 'SELECT' || e.target.tagName === 'OPTION' || e.target.tagName === 'BUTTON') return;
+            if (e.cancelable) e.preventDefault();
+            e.stopPropagation();
+            if (e.pointerId !== undefined && typeof box.setPointerCapture === 'function') { try { box.setPointerCapture(e.pointerId); } catch(err){} }
+
             if (Date.now() - lastActionTime < 60) return;
             lastActionTime = Date.now();
 
@@ -15095,6 +15110,9 @@ async function runAnalysis(force=false) {
         // Resizing Box from any of the 8 handles
         function startResize(e, corner) {
             e.stopPropagation();
+            if (e.cancelable) e.preventDefault();
+            if (e.pointerId !== undefined && typeof e.target.setPointerCapture === 'function') { try { e.target.setPointerCapture(e.pointerId); } catch(err){} }
+
             if (Date.now() - lastActionTime < 60) return;
             lastActionTime = Date.now();
 

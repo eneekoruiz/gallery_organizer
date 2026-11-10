@@ -122,7 +122,7 @@ def supervise_and_adapt_decision(path_str, info, centroids, *, learn=True):
                             centroids[target_key] = updated_c
                             _SUPERVISOR_STATE["learning_adaptations"] += 1
 
-    # 3. Regla Anti-fragmentación de Persona Nueva (fusión con pureza facial estricta >=0.66)
+    # 3. Regla Anti-fragmentación de Persona Nueva (fusión con pureza facial estricta >=0.74)
     if "Persona Nueva" in ident and len(faces) == 1:
         for f in faces:
             feat = f.get("feature")
@@ -135,7 +135,7 @@ def supervise_and_adapt_decision(path_str, info, centroids, *, learn=True):
                     if np_name != ident:
                         np_norm = np_vec.flatten() / (np.linalg.norm(np_vec) + 1e-10)
                         sim = float(np.dot(f_norm, np_norm))
-                        if sim >= 0.66 and ident.rpartition("#")[2].isdigit() and np_name.rpartition("#")[2].isdigit():
+                        if sim >= 0.74 and ident.rpartition("#")[2].isdigit() and np_name.rpartition("#")[2].isdigit():
                             target_name = min(ident, np_name, key=lambda x: int(x.split("#")[-1]) if "#" in x else 9999)
                             if target_name == ident:
                                 continue
