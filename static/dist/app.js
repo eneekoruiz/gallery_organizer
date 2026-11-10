@@ -10897,7 +10897,7 @@ async function filterTimeline(year) {
 
             const avatarEl = document.getElementById('gallery-avatar');
             if (avatarEl) {
-                avatarEl.src = `/api/person_avatar?cat=${encodeURIComponent(targetCat)}&ident=${encodeURIComponent(targetName)}`;
+                avatarEl.src = `/api/person_avatar?cat=${encodeURIComponent(targetCat)}&ident=${encodeURIComponent(targetName)}&t=${Date.now()}`;
             }
 
             // Actualizar metadatos de los elementos en memoria
@@ -10907,19 +10907,49 @@ async function filterTimeline(year) {
             });
 
             // Actualizar fullGallery en memoria
-            if (window.fullGallery) {
-                if (window.fullGallery[oldCat] && window.fullGallery[oldCat][oldIdent]) {
-                    delete window.fullGallery[oldCat][oldIdent];
-                }
-                window.fullGallery[targetCat] = window.fullGallery[targetCat] || {};
-                window.fullGallery[targetCat][targetName] = window.fullGallery[targetCat][targetName] || [];
-                const existPaths = new Set(window.fullGallery[targetCat][targetName].map(p => p.path));
-                oldItems.forEach(it => {
-                    if (!existPaths.has(it.path)) {
-                        window.fullGallery[targetCat][targetName].push(it);
+            window.fullGallery = window.fullGallery || {};
+            window.fullGallery[targetCat] = window.fullGallery[targetCat] || {};
+
+            let destItems = window.fullGallery[targetCat][targetName] || [];
+
+            // Si el destino no tenía las fotos en memoria, cargarlas bajo demanda del servidor
+            if (!Array.isArray(destItems) || destItems.length === 0) {
+                try {
+                    const r = await fetch(`/api/gallery?cat=${encodeURIComponent(targetCat)}&ident=${encodeURIComponent(targetName)}`);
+                    if (r.ok) {
+                        const albumData = await r.json();
+                        destItems = (albumData && albumData[targetCat] && albumData[targetCat][targetName]) ? albumData[targetCat][targetName] : [];
                     }
-                });
+                } catch (e) {
+                    console.warn("No se pudieron precargar fotos preexistentes de destino:", e);
+                }
             }
+
+            // Unificar fotos preexistentes del destino + fotos recién fusionadas (sin duplicados)
+            const seenPaths = new Set();
+            const unifiedItems = [];
+            for (const it of destItems) {
+                if (it && it.path && !seenPaths.has(it.path)) {
+                    seenPaths.add(it.path);
+                    unifiedItems.push(it);
+                }
+            }
+            for (const it of oldItems) {
+                if (it && it.path && !seenPaths.has(it.path)) {
+                    seenPaths.add(it.path);
+                    it.category = targetCat;
+                    it.identity = targetName;
+                    unifiedItems.push(it);
+                }
+            }
+
+            window.fullGallery[targetCat][targetName] = unifiedItems;
+            if (window.fullGallery[oldCat] && window.fullGallery[oldCat][oldIdent]) {
+                delete window.fullGallery[oldCat][oldIdent];
+            }
+
+            // Actualizar currentFolderItems con la lista unificada completa
+            currentFolderItems = unifiedItems;
 
             // Actualizar galleryStructure en memoria
             if (window.galleryStructure) {
@@ -10927,7 +10957,13 @@ async function filterTimeline(year) {
                     delete window.galleryStructure[oldCat][oldIdent];
                 }
                 window.galleryStructure[targetCat] = window.galleryStructure[targetCat] || {};
-                window.galleryStructure[targetCat][targetName] = (window.galleryStructure[targetCat][targetName] || 0) + oldItems.length;
+                window.galleryStructure[targetCat][targetName] = unifiedItems.length;
+            }
+
+            // Actualizar contador del encabezado
+            const countEl = document.getElementById('gallery-count');
+            if (countEl) {
+                countEl.textContent = `${unifiedItems.length} elementos • ${unifiedItems.length} fotos`;
             }
 
             // Actualizar filas de drilldown del sidebar inmediatamente
@@ -10938,6 +10974,11 @@ async function filterTimeline(year) {
                     row.remove();
                 }
             });
+
+            // Renderizar la cuadrícula con TODAS las fotos unificadas
+            if (typeof renderGrid === 'function') {
+                await renderGrid(targetCat, targetName);
+            }
 
             // 4. NOTIFICACIÓN FLOTANTE NO BLOQUEANTE (Sincronización en segundo plano)
             showToast(`🔄 Fusionando '${oldIdent}' con '${targetName}' en segundo plano...`);
@@ -10958,6 +10999,10 @@ async function filterTimeline(year) {
                 .then(data => {
                     if (data && data.success) {
                         showToast(`🎉 ¡Fusión con '${targetName}' completada con éxito!`);
+                        const av = document.getElementById('gallery-avatar');
+                        if (av) {
+                            av.src = `/api/person_avatar?cat=${encodeURIComponent(targetCat)}&ident=${encodeURIComponent(targetName)}&t=${Date.now()}`;
+                        }
                         if (typeof loadIdentities === 'function') {
                             loadIdentities().catch(() => {});
                         }

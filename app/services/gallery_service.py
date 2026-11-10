@@ -1025,16 +1025,18 @@ def api_person_avatar():
     clean_ident_clean = re.sub(r'[^a-zA-Z0-9_\-]', '_', str(clean_ident))
     cat_clean = re.sub(r'[^a-zA-Z0-9_\-]', '_', str(cat))
 
-    for folder_dir in [THUMBNAILS_DIR, APP_DIR / "cache" / "thumbnails"]:
-        for c_cand, i_cand in [
-            (cat_clean, ident_clean),
-            (cat_clean, clean_ident_clean)
-        ]:
-            avatar_cache_file = folder_dir / f"av_{c_cand}_{i_cand}.webp"
-            if avatar_cache_file.exists() and avatar_cache_file.stat().st_size > 200:
-                res = send_file(str(avatar_cache_file), mimetype='image/webp')
-                res.headers['Cache-Control'] = 'public, max-age=604800, immutable'
-                return res
+    bypass_cache = bool(request.args.get('refresh') or request.args.get('t') or request.args.get('nocache'))
+    if not bypass_cache:
+        for folder_dir in [THUMBNAILS_DIR, APP_DIR / "cache" / "thumbnails"]:
+            for c_cand, i_cand in [
+                (cat_clean, ident_clean),
+                (cat_clean, clean_ident_clean)
+            ]:
+                avatar_cache_file = folder_dir / f"av_{c_cand}_{i_cand}.webp"
+                if avatar_cache_file.exists() and avatar_cache_file.stat().st_size > 200:
+                    res = send_file(str(avatar_cache_file), mimetype='image/webp')
+                    res.headers['Cache-Control'] = 'public, max-age=3600, must-revalidate'
+                    return res
 
     default_svg = '''<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 24 24" fill="#666"><circle cx="12" cy="8" r="4"/><path d="M12 14c-6.1 0-8 4-8 4v2h16v-2s-1.9-4-8-4z"/></svg>'''
 
@@ -1042,30 +1044,61 @@ def api_person_avatar():
     
     items = []
     g_cache = get_gallery_cache()
+    clean_cat = re.sub(r'^[👤📋📁❓🔍✨📸⚡🎉🏷️👥🧑👧👦\s]+', '', str(cat)).strip()
+    clean_ident_base = clean_ident.replace('C. ', '').replace('F. ', '').replace('P. ', '').replace('M. ', '').strip()
+
     if g_cache:
-        if cat in g_cache and ident in g_cache[cat]:
-            items = g_cache[cat][ident]
-        elif cat in g_cache and clean_ident in g_cache[cat]:
-            items = g_cache[cat][clean_ident]
-        elif "Personas Sin Nombre" in g_cache and clean_ident in g_cache["Personas Sin Nombre"]:
-            items = g_cache["Personas Sin Nombre"][clean_ident]
-        
+        for c_k, c_idents in g_cache.items():
+            c_k_clean = re.sub(r'^[👤📋📁❓🔍✨📸⚡🎉🏷️👥🧑👧👦\s]+', '', str(c_k)).strip()
+            if c_k == cat or c_k_clean == clean_cat or not cat:
+                for i_k, i_items in c_idents.items():
+                    i_k_clean = re.sub(r'^[👤📋📁❓🔍✨📸⚡🎉🏷️👥🧑👧👦\s]+', '', str(i_k)).strip()
+                    i_k_base = i_k_clean.replace('C. ', '').replace('F. ', '').replace('P. ', '').replace('M. ', '').strip()
+                    if i_k == ident or i_k_clean == clean_ident or i_k_base == clean_ident_base or i_k_clean.lower() == clean_ident.lower():
+                        items.extend(i_items)
+
     candidate_paths = [it.get('path') for it in items if it.get('path') and Path(it.get('path')).suffix.lower() in valid_exts and os.path.exists(it.get('path'))]
-    
-    if not candidate_paths:
-        search_dirs = [
-            RESULTADOS_DIR / cat / ident,
-            RESULTADOS_DIR / cat / clean_ident,
-            FOTOS_DIR / cat / ident,
-            FOTOS_DIR / cat / clean_ident,
-        ]
-        for base_dir in search_dirs:
-            if base_dir.exists():
-                for p in base_dir.iterdir():
-                    if p.suffix.lower() in valid_exts and p.is_file():
-                        candidate_paths.append(str(p))
-                if candidate_paths:
-                    break
+
+    # Also search disk in all known candidate directories
+    search_dirs = [
+        RESULTADOS_DIR / cat / ident,
+        RESULTADOS_DIR / clean_cat / clean_ident,
+        RESULTADOS_DIR / "Personas Sin Nombre" / ident,
+        RESULTADOS_DIR / "Personas Sin Nombre" / clean_ident,
+        RESULTADOS_DIR / "Conocidos" / clean_ident,
+        RESULTADOS_DIR / "Familia" / clean_ident,
+        FOTOS_DIR / cat / ident,
+        FOTOS_DIR / clean_cat / clean_ident,
+        FOTOS_DIR / "Conocidos" / clean_ident,
+        FOTOS_DIR / "Familia" / clean_ident,
+        FOTOS_DIR / clean_ident,
+    ]
+    for base_dir in search_dirs:
+        if base_dir.exists() and base_dir.is_dir():
+            for p in base_dir.iterdir():
+                if p.suffix.lower() in valid_exts and p.is_file():
+                    candidate_paths.append(str(p))
+
+    # Also inspect apple_db.json for iCloud / virtual photos belonging to this person
+    try:
+        import json
+        apple_db_path = APP_DIR / 'apple_db.json'
+        if apple_db_path.exists():
+            with open(apple_db_path, 'r', encoding='utf-8') as f_adb:
+                adb = json.load(f_adb)
+            clean_ident_lower = clean_ident.lower()
+            clean_base_lower = clean_ident_base.lower()
+            for p_path, meta in adb.items():
+                m_ident = str(meta.get('identity', '')).strip()
+                m_clean = re.sub(r'^[👤📋📁❓🔍✨📸⚡🎉🏷️👥🧑👧👦\s]+', '', m_ident).lower()
+                m_base = m_clean.replace('c. ', '').replace('f. ', '').replace('p. ', '').replace('m. ', '').strip()
+                if m_clean == clean_ident_lower or m_base == clean_base_lower or m_ident == ident:
+                    if Path(p_path).suffix.lower() in valid_exts and os.path.exists(p_path):
+                        candidate_paths.append(p_path)
+    except Exception:
+        pass
+
+    candidate_paths = list(dict.fromkeys(candidate_paths))
 
     if not candidate_paths:
         video_exts = {".mp4", ".mov", ".avi"}
@@ -1110,8 +1143,26 @@ def api_person_avatar():
         from app.globals import detector, recognizer
         target_save_file = THUMBNAILS_DIR / f"av_{cat_clean}_{ident_clean}.webp"
         
-        # Sort candidate paths so ground-truth/dataset photos come first
-        candidate_paths.sort(key=lambda x: (0 if re.match(r'^(Foto|Video|Vídeo)\b', Path(x).name, re.I) else 1, -os.path.getsize(x)))
+        # Sort candidate paths with highest precision:
+        # Priority 0: Exact filename match to person name (e.g. Martín Sánchez.jpg) or _00_CENTROIDE_
+        # Priority 1: Photos inside FOTOS_DIR (dataset ground-truth)
+        # Priority 2: Photos from person's own directory
+        # Priority 3: Photos from iCloud / apple_db
+        clean_ident_lower = clean_ident.lower()
+        clean_base_lower = clean_ident_base.lower()
+        def get_avatar_prio(p_str):
+            p = Path(p_str)
+            stem_lower = p.stem.lower()
+            if stem_lower == clean_ident_lower or stem_lower == clean_base_lower or '_00_centroide_' in stem_lower:
+                return (0, -os.path.getsize(p_str))
+            p_str_low = p_str.lower()
+            if 'fotos' in p_str_low and 'icloud' not in p_str_low:
+                return (1, -os.path.getsize(p_str))
+            if clean_ident_lower in p_str_low or clean_base_lower in p_str_low:
+                return (2, -os.path.getsize(p_str))
+            return (3, -os.path.getsize(p_str))
+
+        candidate_paths.sort(key=get_avatar_prio)
         
         # Special Case 1: Pets (Mascotas) and Group Albums (Familia conmigo, etc.)
         # These should NEVER use a single human face detector! Use a smart center crop of the best photo!
@@ -1136,7 +1187,7 @@ def api_person_avatar():
                     except Exception: pass
                     _, buf = cv2.imencode('.webp', avatar_img, [cv2.IMWRITE_WEBP_QUALITY, 92])
                     res = Response(buf.tobytes(), mimetype='image/webp')
-                    res.headers['Cache-Control'] = 'public, max-age=604800, immutable'
+                    res.headers['Cache-Control'] = 'public, max-age=3600, must-revalidate'
                     return res
 
         # Load centroids from centroids.pkl
@@ -1149,14 +1200,37 @@ def api_person_avatar():
             except Exception:
                 pass
 
-        target_centroid = centroids_map.get((cat, ident))
+        target_centroid = None
+        for cand_k in [
+            (cat, ident), (cat, clean_ident),
+            (clean_cat, clean_ident),
+            ident, clean_ident,
+            clean_ident_base,
+            f"C. {clean_ident_base}", f"F. {clean_ident_base}",
+            f"👤 {clean_ident}"
+        ]:
+            if cand_k in centroids_map and centroids_map[cand_k] is not None:
+                target_centroid = centroids_map[cand_k]
+                break
+
         if target_centroid is None:
+            clean_target_lower = clean_ident.lower()
+            clean_target_base = clean_ident_base.lower()
             for k, v in centroids_map.items():
-                if k[1].lower() == ident.lower():
+                if v is None: continue
+                if isinstance(k, (tuple, list)) and len(k) > 1:
+                    k_ident = str(k[1]).lower()
+                else:
+                    k_ident = str(k).lower()
+                k_clean = re.sub(r'^[👤📋📁❓🔍✨📸⚡🎉🏷️👥🧑👧👦\s]+', '', k_ident).strip()
+                k_base = k_clean.replace('c. ', '').replace('f. ', '').replace('p. ', '').replace('m. ', '').strip()
+                if k_clean == clean_target_lower or k_base == clean_target_base or k_ident == clean_target_lower:
                     target_centroid = v
                     break
 
         yo_centroid = centroids_map.get(('YO', 'YO'))
+        if yo_centroid is None:
+            yo_centroid = centroids_map.get('YO')
         yo_norm = yo_centroid / (np.linalg.norm(yo_centroid) + 1e-10) if yo_centroid is not None else None
         target_norm = target_centroid / (np.linalg.norm(target_centroid) + 1e-10) if target_centroid is not None else None
 
@@ -1164,7 +1238,7 @@ def api_person_avatar():
         best_quality = -1.0
         fallback_crop = None
         
-        for c_path in candidate_paths[:15]:
+        for c_path in candidate_paths[:25]:
             if not c_path or not os.path.exists(c_path): continue
             file_bytes = np.fromfile(c_path, dtype=np.uint8)
             img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)

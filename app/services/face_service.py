@@ -3021,14 +3021,25 @@ def api_rename_group():
         update_gallery_cache_for_rename(cat, ident, c_new_cat, c_new_name)
 
         try:
-
             from app.utils.faces import clear_identities_cache
-
             clear_identities_cache()
-
         except Exception:
-
             pass
+
+        # Invalidate avatar caches so fresh avatars are generated from the unified album
+        try:
+            for n_to_del in [ident, c_ident, new_name, c_new_name]:
+                if not n_to_del: continue
+                clean_n = re.sub(r'[^a-zA-Z0-9_\-]', '_', str(n_to_del))
+                for f_dir in [THUMBNAILS_DIR, APP_DIR / "cache" / "thumbnails"]:
+                    if f_dir and f_dir.exists():
+                        for av_file in f_dir.glob(f"av_*{clean_n}*.webp"):
+                            try:
+                                av_file.unlink(missing_ok=True)
+                            except Exception:
+                                pass
+        except Exception as e_av_del:
+            print(f"[RENAME] Error purging avatar caches: {e_av_del}")
 
         return jsonify({"success": True, "count": moved_count + apple_count})
 
