@@ -217,12 +217,23 @@
                 <div class="gallery-filters-scroll-track" style="display:flex; align-items:center; gap:6px; overflow-x:auto; -webkit-overflow-scrolling:touch; scrollbar-width:none; padding:2px 0;">
                     <!-- Segmented Filter Control -->
                     <div id="filter-toggle-container" style="display:inline-flex; background:rgba(255,255,255,0.04); padding:2px; border-radius:8px; border:1px solid rgba(255,255,255,0.06); gap:1px; flex-shrink:0;">
-                        <button class="filter-toggle-btn active" onclick="setPhotoFilter('all', this)">Todas</button>
-                        <button class="filter-toggle-btn" onclick="setPhotoFilter('solo', this)">En solitario</button>
-                        <button class="filter-toggle-btn" onclick="setPhotoFilter('group', this)">En compañía</button>
-                        <button class="filter-toggle-btn" onclick="setPhotoFilter('with_me', this)">Conmigo</button>
-                        <button class="filter-toggle-btn" onclick="setPhotoFilter('without_me', this)">Sin mí</button>
-                        <div style="width: 1px; background: rgba(255,255,255,0.1); margin: 2px 3px;"></div>
+                        <!-- Compact Presence Menu for Confirmed Person Albums -->
+                        <div id="person-presence-menu-wrapper" style="position:relative; display:none;">
+                            <button id="btn-person-presence-menu" class="filter-toggle-btn active" onclick="togglePresenceMenu(event)" style="display:inline-flex; align-items:center; gap:5px; font-weight:600;">
+                                <span id="person-presence-current-label">👥 Todas</span>
+                                <span style="font-size:0.75em; opacity:0.7;">▼</span>
+                            </button>
+                            <div id="person-presence-dropdown" class="header-options-menu" style="display:none; position:absolute; top:calc(100% + 6px); left:0; width:170px; z-index:1100; padding:6px; box-shadow:0 12px 32px rgba(0,0,0,0.7);">
+                                <button class="menu-action-item" onclick="selectPresenceFilter('all')"><span>👥 Todas</span></button>
+                                <button class="menu-action-item" onclick="selectPresenceFilter('solo')"><span>👤 En solitario</span></button>
+                                <button class="menu-action-item" onclick="selectPresenceFilter('group')"><span>👥 En compañía</span></button>
+                                <button class="menu-action-item" onclick="selectPresenceFilter('with_me')"><span>🤝 Conmigo</span></button>
+                                <button class="menu-action-item" onclick="selectPresenceFilter('without_me')"><span>🚫 Sin mí</span></button>
+                            </div>
+                        </div>
+
+                        <div id="presence-divider" style="display:none; width: 1px; background: rgba(255,255,255,0.1); margin: 2px 3px;"></div>
+
                         <button class="filter-toggle-btn" id="filter-blurry-btn" onclick="toggleHideBlurry(this)" style="color: #ff9f0a;">
                             <span>✨ Borrosas</span>
                         </button>
@@ -415,6 +426,6 @@
     </div>
 
     <!-- Load modules -->
-    <script src="{{ url_for('static', filename='dist/app.js') }}?v=20261110_v55_interactive_purity"></script>
+    <script src="{{ url_for('static', filename='dist/app.js') }}?v=20261110_v56_compact_filters_centroid_avatar"></script>
 
 {% endblock %}

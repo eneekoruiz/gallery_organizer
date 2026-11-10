@@ -1256,6 +1256,81 @@ def api_person_avatar():
         yo_norm = yo_centroid / (np.linalg.norm(yo_centroid) + 1e-10) if yo_centroid is not None else None
         target_norm = target_centroid / (np.linalg.norm(target_centroid) + 1e-10) if target_centroid is not None else None
 
+        # Prioritize true centroid face from apple_db.json if available
+        try:
+            apple_db_path = APP_DIR / 'apple_db.json'
+            if apple_db_path.exists():
+                with open(apple_db_path, 'r', encoding='utf-8') as f_adb:
+                    adb_data = json.load(f_adb)
+                clean_target_lower = clean_ident.lower()
+                clean_target_base = clean_ident_base.lower()
+                adb_matching_faces = []
+                for p_p, p_meta in adb_data.items():
+                    m_id = str(p_meta.get('identity', '')).strip()
+                    m_ids = [str(x).strip() for x in p_meta.get('identities', [])]
+                    all_ids = [m_id] + m_ids
+                    matches_ident = any(
+                        i == ident or i == clean_ident or
+                        re.sub(r'^[👤📋📁❓🔍✨📸⚡🎉🏷️👥🧑👧👦\s]+', '', i).lower() in (clean_target_lower, clean_target_base)
+                        for i in all_ids if i
+                    )
+                    if matches_ident and os.path.exists(p_p) and Path(p_p).suffix.lower() in valid_exts:
+                        for f_idx, fc in enumerate(p_meta.get('faces', [])):
+                            fc_id = str(fc.get('identity', '')).strip()
+                            fc_match = (
+                                fc_id == ident or fc_id == clean_ident or
+                                re.sub(r'^[👤📋📁❓🔍✨📸⚡🎉🏷️👥🧑👧👦\s]+', '', fc_id).lower() in (clean_target_lower, clean_target_base)
+                            )
+                            if fc_match and fc.get('feature') and fc.get('box'):
+                                adb_matching_faces.append((p_p, fc))
+
+                if target_norm is None and adb_matching_faces:
+                    all_feats = [np.array(fc['feature'], dtype=np.float32) for _, fc in adb_matching_faces]
+                    target_centroid = np.mean(all_feats, axis=0)
+                    target_norm = target_centroid / (np.linalg.norm(target_centroid) + 1e-10)
+
+                if adb_matching_faces and target_norm is not None:
+                    best_adb_crop = None
+                    best_adb_score = -1.0
+                    for p_p, fc in adb_matching_faces:
+                        feat = np.array(fc['feature'], dtype=np.float32)
+                        fn = feat / (np.linalg.norm(feat) + 1e-10)
+                        sim_target = float(np.dot(target_norm, fn))
+                        if sim_target < 0.65:
+                            continue
+                        if cat != 'YO' and yo_norm is not None:
+                            sim_yo = float(np.dot(yo_norm, fn))
+                            if sim_yo >= sim_target:
+                                continue
+                        box = fc['box']
+                        x, y, w, h = int(box[0]), int(box[1]), int(box[2]), int(box[3])
+                        if w < 24 or h < 24: continue
+                        score = (sim_target ** 3) * 10.0 + (min(w * h, 40000) / 40000.0) * 0.2
+                        if score > best_adb_score:
+                            file_bytes = np.fromfile(p_p, dtype=np.uint8)
+                            img = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+                            if img is not None:
+                                h_img, w_img = img.shape[:2]
+                                pad_x = int(min(w * 0.15, x, w_img - (x + w)))
+                                pad_y = int(min(h * 0.15, y, h_img - (y + h)))
+                                crop = img[max(0, y - pad_y):min(h_img, y + h + pad_y), max(0, x - pad_x):min(w_img, x + w + pad_x)]
+                                if crop.size > 0:
+                                    best_adb_crop = crop
+                                    best_adb_score = score
+                    if best_adb_crop is not None:
+                        avatar_img = cv2.resize(best_adb_crop, (160, 160), interpolation=cv2.INTER_LANCZOS4)
+                        for folder_dir in [THUMBNAILS_DIR, APP_DIR / "cache" / "thumbnails"]:
+                            try:
+                                folder_dir.mkdir(parents=True, exist_ok=True)
+                                cv2.imwrite(str(folder_dir / f"av_{cat_clean}_{ident_clean}.webp"), avatar_img, [cv2.IMWRITE_WEBP_QUALITY, 92])
+                            except Exception: pass
+                        _, buf = cv2.imencode('.webp', avatar_img, [cv2.IMWRITE_WEBP_QUALITY, 92])
+                        res = Response(buf.tobytes(), mimetype='image/webp')
+                        res.headers['Cache-Control'] = 'public, max-age=3600, must-revalidate'
+                        return res
+        except Exception:
+            pass
+
         best_crop = None
         best_quality = -1.0
         fallback_crop = None
@@ -1331,7 +1406,7 @@ def api_person_avatar():
                                 if sim_yo >= sim_target or (sim_yo > 0.45 and sim_target < sim_yo + 0.08):
                                     continue
                                     
-                            if target_norm is not None and sim_target < 0.55:
+                            if target_norm is not None and sim_target < 0.65:
                                 continue
                                 
                             sim = sim_target
@@ -1352,13 +1427,13 @@ def api_person_avatar():
                     is_alone = (len(detected_faces) == 1)
                     is_dataset = ("fotos" in str(c_path).lower() and "icloud" not in str(c_path).lower())
                     is_explicit = ("_00_centroide_" in str(c_path).lower())
-                    quality = 0.50 * sim + 0.20 * sharpness_score + 0.10 * size_score
+                    quality = (sim ** 3) * 10.0 + 0.20 * sharpness_score + 0.10 * size_score
                     if is_alone:
-                        quality += 0.35  # Prioridad decisiva para fotos en solitario sin ambiguedad
+                        quality += 0.05  # Desempate leve para fotos en solitario
                     if is_dataset:
-                        quality += 0.25  # Certeza absoluta de pertenecer al dataset oficial
+                        quality += 0.20  # Preferencia de dataset oficial
                     if is_explicit:
-                        quality += 1.00  # Prioridad maxima incontestable del centroide oficial
+                        quality += 5.00  # Prioridad maxima incontestable del centroide oficial
                     
                     if quality > best_quality:
                         best_quality = quality

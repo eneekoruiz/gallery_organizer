@@ -8359,8 +8359,29 @@ async function filterTimeline(year) {
 
 
             const tierFilterContainer = document.getElementById('person-tier-filter-container');
+            const presenceMenuWrapper = document.getElementById('person-presence-menu-wrapper');
+            const presenceDivider = document.getElementById('presence-divider');
+            const cleanCat = (cat || '').replace(/^[👥🧑👧👦👤📋📁❓🔍✨📸⚡🎉🏷️\s]+/, '').trim();
+            const cleanIdent = (ident || '').replace(/^[👥🧑👧👦👤📋📁❓🔍✨📸⚡🎉🏷️\s]+/, '').trim().toLowerCase();
+            const isPersonAlbum = ['Conocidos', 'Familia', 'YO', 'Profesores', 'Mascotas'].includes(cleanCat) && !cleanIdent.includes('conmigo') && !cleanIdent.includes('sin mí') && !cleanIdent.includes('grupal');
 
-            const isPersonAlbum = ['Conocidos', 'Familia', 'YO', 'Profesores', 'Mascotas'].includes(cat) && !ident.includes('conmigo') && !ident.includes('sin mí') && !ident.includes('grupal');
+            if (presenceMenuWrapper) {
+                if (isPersonAlbum) {
+                    presenceMenuWrapper.style.display = 'inline-flex';
+                    if (presenceDivider) presenceDivider.style.display = 'block';
+                } else {
+                    presenceMenuWrapper.style.display = 'none';
+                    if (presenceDivider) presenceDivider.style.display = 'none';
+                    currentPhotoFilterMode = 'all';
+                    const lbl = document.getElementById('person-presence-current-label');
+                    if (lbl) lbl.textContent = '👥 Todas';
+                    const btnMenu = document.getElementById('btn-person-presence-menu');
+                    if (btnMenu) {
+                        btnMenu.style.background = 'transparent';
+                        btnMenu.style.color = '#aaa';
+                    }
+                }
+            }
 
             
 
@@ -13324,7 +13345,15 @@ async function openLightbox(item) {
 
         if (cardsContainer) {
 
-            const isPerson = typeof isPersonAlbum === 'function' ? isPersonAlbum(currentCat, currentIdent) : false;
+            const isSystemFolder = !currentIdent ||
+                currentIdent.includes('Dudosos') ||
+                currentIdent.includes('Baja Confianza') ||
+                currentIdent.includes('Desconocid') ||
+                currentIdent.includes('Sin Rostro') ||
+                currentIdent.includes('Caras Aisladas') ||
+                currentIdent.includes('Pendiente') ||
+                (currentCat && (currentCat.includes('Revisión') || currentCat.includes('Organizar')));
+            const isPerson = (!isSystemFolder && typeof isPersonAlbum === 'function') ? isPersonAlbum(currentCat, currentIdent) : false;
 
             const hasManualEdit = Boolean(
                 currentFileObj && (
@@ -13706,7 +13735,7 @@ async function runAnalysis(force=false) {
                 (data && data.faces && data.faces.some(f => f.is_manual || (f.identity === currentIdent && f.confidence >= 0.99)))
             );
 
-            if (isPerson && !hasManualEdit && currentFileObj && (currentFileObj.is_dudoso || currentFileObj.status === 'Dudoso' || currentFileObj.album_section === 'review' || (currentFileObj.source && currentFileObj.source.includes('Por Confirmar')))) {
+            if (isPerson && !isSystemFolder && !hasManualEdit && currentFileObj && (currentFileObj.is_dudoso || currentFileObj.status === 'Dudoso' || currentFileObj.album_section === 'review' || (currentFileObj.source && currentFileObj.source.includes('Por Confirmar')))) {
 
 
 
@@ -13810,6 +13839,7 @@ async function runAnalysis(force=false) {
 
 
 
+                document.querySelectorAll('.lb-bounding-box').forEach(b => b.remove());
                 data.faces.forEach((face, idx) => {
 
 
@@ -14200,6 +14230,8 @@ async function runAnalysis(force=false) {
 
 
 
+            const existingBox = document.getElementById(`bbox-${faceNum}`);
+            if (existingBox) existingBox.remove();
             const box = document.createElement('div');
 
 
@@ -15020,6 +15052,10 @@ async function runAnalysis(force=false) {
         function startDrag(e) {
             if (e.target.classList.contains('resize-handle')) return;
             if (e.target.tagName === 'SELECT' || e.target.tagName === 'OPTION' || e.target.tagName === 'BUTTON') return;
+            if (e.cancelable) e.preventDefault();
+            e.stopPropagation();
+            if (e.pointerId !== undefined && typeof box.setPointerCapture === 'function') { try { box.setPointerCapture(e.pointerId); } catch(err){} }
+
             if (Date.now() - lastActionTime < 60) return;
             lastActionTime = Date.now();
 
@@ -15095,6 +15131,9 @@ async function runAnalysis(force=false) {
         // Resizing Box from any of the 8 handles
         function startResize(e, corner) {
             e.stopPropagation();
+            if (e.cancelable) e.preventDefault();
+            if (e.pointerId !== undefined && typeof e.target.setPointerCapture === 'function') { try { e.target.setPointerCapture(e.pointerId); } catch(err){} }
+
             if (Date.now() - lastActionTime < 60) return;
             lastActionTime = Date.now();
 
@@ -17693,28 +17732,73 @@ let currentDeviceOriginFilter = 'all';
 
 
 
+window.togglePresenceMenu = function(e) {
+    if (e) {
+        if (e.cancelable) e.preventDefault();
+        e.stopPropagation();
+    }
+    const dropdown = document.getElementById('person-presence-dropdown');
+    if (!dropdown) return;
+    dropdown.style.display = (dropdown.style.display === 'block') ? 'none' : 'block';
+};
+
+window.selectPresenceFilter = function(mode) {
+    const dropdown = document.getElementById('person-presence-dropdown');
+    if (dropdown) dropdown.style.display = 'none';
+    const labels = {
+        'all': '👥 Todas',
+        'solo': '👤 En solitario',
+        'group': '👥 En compañía',
+        'with_me': '🤝 Conmigo',
+        'without_me': '🚫 Sin mí'
+    };
+    const lbl = document.getElementById('person-presence-current-label');
+    if (lbl) lbl.textContent = labels[mode] || '👥 Todas';
+    const btnMenu = document.getElementById('btn-person-presence-menu');
+    setPhotoFilter(mode, btnMenu);
+};
+
+document.addEventListener('click', function(e) {
+    const dropdown = document.getElementById('person-presence-dropdown');
+    const btn = document.getElementById('btn-person-presence-menu');
+    if (dropdown && dropdown.style.display === 'block') {
+        if (!dropdown.contains(e.target) && !btn.contains(e.target)) {
+            dropdown.style.display = 'none';
+        }
+    }
+});
+
 function setPhotoFilter(mode, btnEl) {
-
     currentPhotoFilterMode = mode;
-
-    document.querySelectorAll('#filter-toggle-container .filter-toggle-btn').forEach(b => {
-
-        b.style.background = 'transparent';
-
-        b.style.color = '#aaa';
-
-        b.style.fontWeight = 'normal';
-
-    });
-
-    if (btnEl) {
-
-        btnEl.style.background = '#0a84ff';
-
-        btnEl.style.color = 'white';
-
-        btnEl.style.fontWeight = 'bold';
-
+    const btnMenu = document.getElementById('btn-person-presence-menu');
+    const lbl = document.getElementById('person-presence-current-label');
+    if (['all', 'solo', 'group', 'with_me', 'without_me'].includes(mode)) {
+        const labels = {
+            'all': '👥 Todas',
+            'solo': '👤 En solitario',
+            'group': '👥 En compañía',
+            'with_me': '🤝 Conmigo',
+            'without_me': '🚫 Sin mí'
+        };
+        if (lbl) lbl.textContent = labels[mode] || '👥 Todas';
+        if (btnMenu) {
+            btnMenu.style.background = '#0a84ff';
+            btnMenu.style.color = 'white';
+            btnMenu.style.fontWeight = 'bold';
+        }
+    } else {
+        document.querySelectorAll('#filter-toggle-container .filter-toggle-btn').forEach(b => {
+            if (b !== btnMenu) {
+                b.style.background = 'transparent';
+                b.style.color = '#aaa';
+                b.style.fontWeight = 'normal';
+            }
+        });
+        if (btnEl && btnEl !== btnMenu) {
+            btnEl.style.background = '#0a84ff';
+            btnEl.style.color = 'white';
+            btnEl.style.fontWeight = 'bold';
+        }
     }
 
 
