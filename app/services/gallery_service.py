@@ -228,7 +228,15 @@ def get_gallery(force_reload=False):
             file_key = f"{file_name}_{st.st_size}_{int(st.st_mtime)}"
             
             is_dataset_file = bool(is_orig_dataset or re.match(r'^(Foto|Fotos|Video|Videos|Vídeo|Vídeos)\b', file_name, re.IGNORECASE) or ('/Fotos/' in abs_p.replace('\\', '/')))
-            found_ov = get_override_for_file(abs_p) or overrides.get(file_key)
+            ov_res = get_override_for_file(abs_p, overrides=overrides)
+            if isinstance(ov_res, tuple) and len(ov_res) == 2:
+                found_ov = ov_res[1]
+            elif isinstance(ov_res, list):
+                found_ov = ov_res
+            else:
+                found_ov = overrides.get(file_key, [])
+            if not isinstance(found_ov, list):
+                found_ov = [found_ov] if isinstance(found_ov, dict) else []
             is_manual_file = is_genuine_manual_override(found_ov)
             if is_manual_file:
                 is_dudoso = False
@@ -537,6 +545,36 @@ def get_gallery(force_reload=False):
                 fname = os.path.basename(p_str)
                 cat = info.get('category', '📋 Revisión / Por Organizar')
                 ident = info.get('identity', '❓ Desconocidos (Por Identificar)')
+
+                ov_res = get_override_for_file(p_str, overrides=overrides)
+                if isinstance(ov_res, tuple) and len(ov_res) == 2:
+                    file_ovs = ov_res[1]
+                elif isinstance(ov_res, list):
+                    file_ovs = ov_res
+                else:
+                    file_ovs = overrides.get(p_str, [])
+                if not isinstance(file_ovs, list):
+                    file_ovs = [file_ovs] if isinstance(file_ovs, dict) else []
+
+                excluded_idents = set()
+                manual_confirmed_idents = set()
+                for ov in file_ovs:
+                    if isinstance(ov, dict):
+                        ex = ov.get('excluded_from')
+                        if ex:
+                            excluded_idents.add(sanitize_display_name(ex).lower())
+                        if ov.get('identity') == 'Excluido' and ex:
+                            excluded_idents.add(sanitize_display_name(ex).lower())
+                        if (ov.get('is_manual') or ov.get('provenance') in ('human', 'human_confirmed')) and ov.get('identity'):
+                            ov_id = ov.get('identity')
+                            if not ov_id.startswith(('Desconocid', 'Falso_Positivo', 'Excluid', 'Ignorar')):
+                                manual_confirmed_idents.add(sanitize_display_name(ov_id))
+
+                if manual_confirmed_idents:
+                    primary_manual_id = list(manual_confirmed_idents)[0]
+                    ident = primary_manual_id
+                    cat = ident_to_cat_map.get(primary_manual_id) or ('Conocidos' if primary_manual_id.startswith(('C.', 'C ')) else 'Familia' if primary_manual_id.startswith(('F.', 'F ')) else 'YO' if primary_manual_id == 'YO' else 'Profesores' if primary_manual_id.startswith('P.') else 'Mascotas' if primary_manual_id.startswith('M.') else 'Conocidos')
+
                 k_check = (cat, ident, p_str)
                 fname_check = (cat, ident, fname.lower())
                 if k_check in added_paths or fname_check in added_names:
@@ -561,7 +599,7 @@ def get_gallery(force_reload=False):
                     "status": info.get('status', 'Clasificado'),
                     "source": "iCloud Photos (Virtual)",
                     "is_dataset": False,
-                    "is_manual": False,
+                    "is_manual": bool(manual_confirmed_idents) or info.get('is_manual', False),
                     "type": "video" if fname.lower().endswith(('.mp4', '.mov', '.avi')) else "image",
                     "num_faces": num_f,
                     "has_yo": ('YO' in ids_in_file),
@@ -597,7 +635,9 @@ def get_gallery(force_reload=False):
                 ]
                 
                 # Add primary entry if classified by Apple Photos for this person/album
-                if not is_group_album(ident):
+                if clean_ident.lower() in excluded_idents:
+                    pass
+                elif not is_group_album(ident):
                     item_entry = dict(item_apple)
                     if matching_faces_for_entry:
                         top_m_face = matching_faces_for_entry[0]
@@ -628,39 +668,52 @@ def get_gallery(force_reload=False):
                         add_to_gallery(cat, clean_ident, item_entry)
 
                 # Add to individual person albums for each recognized face in faces_in_file
+                is_file_confirmed = bool(manual_confirmed_idents) or info.get('is_manual') is True or (info.get('status') == 'Clasificado' and clean_ident and not clean_ident.startswith(('Desconocid', 'Falso_Positivo', 'Ignorar', 'Persona Nueva', '⏳', '📋', '❓', '⚠️')))
+                confirmed_target = list(manual_confirmed_idents)[0] if manual_confirmed_idents else (clean_ident if is_file_confirmed else None)
+
                 for f in faces_in_file:
                     f_raw = f.get('identity', '')
                     if not f_raw:
                         continue
                     f_clean = f_raw.replace('IA (Pendiente): ', '').replace('IA: ', '').strip()
-                    if f_clean and not f_clean.startswith('Desconocid') and not f_clean.startswith('Falso_Positivo') and not f_clean.startswith('Ignorar') and not f_clean.startswith('Persona Nueva'):
-                        f_cat = ident_to_cat_map.get(f_clean)
-                        if not f_cat:
-                            if f_clean.startswith('C. ') or f_clean.startswith('C '):
-                                f_cat = 'Conocidos'
-                            elif f_clean.startswith('F. ') or f_clean.startswith('F '):
-                                f_cat = 'Familia'
-                            elif f_clean == 'YO':
-                                f_cat = 'YO'
-                            elif f_clean.startswith('P. '):
-                                f_cat = 'Profesores'
-                            else:
-                                f_cat = 'Conocidos'
-                        
-                        item_face = dict(item_apple)
-                        is_pend = f_raw.startswith('IA (Pendiente):') or f.get('review_required') or f.get('status') == 'Dudoso'
-                        is_conf = f.get('is_manual') or f.get('confidence') == 100.0 or 'Manual' in str(f.get('confidence', '')) or (not is_pend and float(f.get('confidence') or 0.0) >= 65.0)
-                        if is_conf:
-                            item_face['album_section'] = 'official'
-                            item_face['is_dudoso'] = False
-                        elif is_pend:
-                            item_face['album_section'] = 'review'
-                            item_face['is_dudoso'] = True
-                            item_face['needs_confirmation'] = True
+                    f_clean_sanitized = sanitize_display_name(f_clean)
+                    if not f_clean_sanitized or f_clean_sanitized.startswith(('Desconocid', 'Falso_Positivo', 'Ignorar', 'Persona Nueva')):
+                        continue
+                    if f_clean_sanitized.lower() in excluded_idents:
+                        continue
+                    if is_file_confirmed and confirmed_target and f_clean_sanitized != confirmed_target:
+                        if num_f <= 1:
+                            continue
+                        if f_raw.startswith('IA (Pendiente):') or f.get('review_required') or f.get('status') == 'Dudoso':
+                            continue
+
+                    f_cat = ident_to_cat_map.get(f_clean)
+                    if not f_cat:
+                        if f_clean.startswith('C. ') or f_clean.startswith('C '):
+                            f_cat = 'Conocidos'
+                        elif f_clean.startswith('F. ') or f_clean.startswith('F '):
+                            f_cat = 'Familia'
+                        elif f_clean == 'YO':
+                            f_cat = 'YO'
+                        elif f_clean.startswith('P. '):
+                            f_cat = 'Profesores'
                         else:
-                            item_face['album_section'] = 'suggestion'
-                            item_face['is_dudoso'] = False
-                        add_to_gallery(f_cat, sanitize_display_name(f_clean), item_face)
+                            f_cat = 'Conocidos'
+                    
+                    item_face = dict(item_apple)
+                    is_pend = f_raw.startswith('IA (Pendiente):') or f.get('review_required') or f.get('status') == 'Dudoso'
+                    is_conf = f.get('is_manual') or f.get('confidence') == 100.0 or 'Manual' in str(f.get('confidence', '')) or (not is_pend and float(f.get('confidence') or 0.0) >= 65.0)
+                    if is_conf:
+                        item_face['album_section'] = 'official'
+                        item_face['is_dudoso'] = False
+                    elif is_pend:
+                        item_face['album_section'] = 'review'
+                        item_face['is_dudoso'] = True
+                        item_face['needs_confirmation'] = True
+                    else:
+                        item_face['album_section'] = 'suggestion'
+                        item_face['is_dudoso'] = False
+                    add_to_gallery(f_cat, f_clean_sanitized, item_face)
 
                 albums = group_albums(faces_in_file, ident_to_cat_map)
                 for group_cat, group_ident in albums:

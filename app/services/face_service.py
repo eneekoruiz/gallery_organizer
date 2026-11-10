@@ -540,8 +540,16 @@ def api_analyze():
 
             file_key = get_file_key(filepath)
 
-            found_ov = get_override_for_file(filepath) or overrides.get(file_key, [])
-            file_overrides = [ov for ov in found_ov if ov.get('provenance') == HUMAN]
+            ov_res = get_override_for_file(filepath, overrides=overrides)
+            if isinstance(ov_res, tuple) and len(ov_res) == 2:
+                found_ov = ov_res[1]
+            elif isinstance(ov_res, list):
+                found_ov = ov_res
+            else:
+                found_ov = overrides.get(file_key, [])
+            if not isinstance(found_ov, list):
+                found_ov = [found_ov] if isinstance(found_ov, dict) else []
+            file_overrides = [ov for ov in found_ov if isinstance(ov, dict) and (ov.get('provenance') == HUMAN or ov.get('is_manual') is True)]
 
             claimed_identities = set()
 
@@ -549,7 +557,7 @@ def api_analyze():
 
                 ov_id = ov.get('identity')
 
-                if ov_id and ov_id not in ("Desconocido", "Ignorar_Irrelevante", "Falso_Positivo"):
+                if ov_id and ov_id not in ("Desconocido", "Ignorar_Irrelevante", "Falso_Positivo", "Excluido"):
 
                     claimed_identities.add(ov_id)
 
@@ -1433,6 +1441,10 @@ def api_analyze():
         return jsonify({"faces": faces_data, "content_sha256": sha256, "analysis_reused": analysis_reused})
 
     except Exception as e:
+
+        import traceback
+
+        traceback.print_exc()
 
         print(f"[API_ANALYZE] Error analizando {filepath}: {e}")
 
