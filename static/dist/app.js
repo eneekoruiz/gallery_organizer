@@ -12575,6 +12575,36 @@ async function executeDeleteApi(deleteMode) {
 
 
 
+function isPersonAlbum(cat, ident) {
+    if (!ident) return false;
+    const s = String(ident).trim();
+    const l = s.toLowerCase();
+    // Non-person / review / system folders
+    if (l.includes('dudoso') || l.includes('desconocid') || l.includes('sin rostro') ||
+        l.includes('pendiente') || l.includes('grupos por confirmar') || l.includes('caras aisladas') ||
+        l.includes('excluid') || l.includes('falso_positivo') || l.includes('ignorar') ||
+        l.includes('baja confianza') || l.includes('por identificar') || l.includes('por organizar')) {
+        return false;
+    }
+    if (cat) {
+        const catL = String(cat).toLowerCase();
+        if (catL.includes('eventos') || catL.includes('lugares') || catL.includes('recuerdos') ||
+            catL.includes('objetos') || catL.includes('frases') || catL.includes('revisión') ||
+            catL.includes('organizar') || catL.includes('dudoso')) {
+            return false;
+        }
+    }
+    const knownPersonCats = ['Conocidos', 'Familia', 'YO', 'Profesores', 'Mascotas'];
+    if (cat && knownPersonCats.includes(cat)) {
+        return true;
+    }
+    if (s.startsWith('C.') || s.startsWith('F.') || s.startsWith('P.') || s.startsWith('M.') || s === 'YO') {
+        return true;
+    }
+    return false;
+}
+window.isPersonAlbum = isPersonAlbum;
+
 async function openLightbox(item) {
 
 
@@ -13293,9 +13323,20 @@ async function openLightbox(item) {
 
         if (cardsContainer) {
 
+            const isPerson = typeof isPersonAlbum === 'function' ? isPersonAlbum(currentCat, currentIdent) : false;
 
+            const hasManualEdit = Boolean(
+                currentFileObj && (
+                    currentFileObj.is_manual ||
+                    (currentFileObj.source && currentFileObj.source.includes('Manual')) ||
+                    (currentFileObj.status === 'Clasificado' && !currentFileObj.is_dudoso)
+                )
+            );
 
-            const isDudosoVid = Boolean(currentFileObj && (currentFileObj.is_dudoso || currentFileObj.status === 'Dudoso' || (currentFileObj.source && currentFileObj.source.includes('Por Confirmar'))));
+            const isDudosoVid = Boolean(
+                isPerson && !hasManualEdit &&
+                currentFileObj && (currentFileObj.is_dudoso || currentFileObj.status === 'Dudoso' || currentFileObj.album_section === 'review' || (currentFileObj.source && currentFileObj.source.includes('Por Confirmar')))
+            );
 
 
 
@@ -13657,7 +13698,14 @@ async function runAnalysis(force=false) {
 
 
 
-            if (currentFileObj && (currentFileObj.is_dudoso || currentFileObj.status === 'Dudoso' || (currentFileObj.source && currentFileObj.source.includes('Por Confirmar')))) {
+            const isPerson = typeof isPersonAlbum === 'function' ? isPersonAlbum(currentCat, currentIdent) : false;
+
+            const hasManualEdit = Boolean(
+                (currentFileObj && (currentFileObj.is_manual || (currentFileObj.source && currentFileObj.source.includes('Manual')))) ||
+                (data && data.faces && data.faces.some(f => f.is_manual || (f.identity === currentIdent && f.confidence >= 0.99)))
+            );
+
+            if (isPerson && !hasManualEdit && currentFileObj && (currentFileObj.is_dudoso || currentFileObj.status === 'Dudoso' || currentFileObj.album_section === 'review' || (currentFileObj.source && currentFileObj.source.includes('Por Confirmar')))) {
 
 
 
@@ -24803,9 +24851,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
 window.confirmDudosoPhoto = async function(isConfirm) {
 
-
-
     if (!currentFileObj || !currentCat || !currentIdent) return;
+
+    if (typeof isPersonAlbum === 'function' && !isPersonAlbum(currentCat, currentIdent)) {
+        console.warn('[CONFIRM] Ignored confirmDudosoPhoto for non-person folder:', currentIdent);
+        return;
+    }
 
 
 

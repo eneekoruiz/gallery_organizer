@@ -380,7 +380,12 @@ def get_gallery(force_reload=False):
 
             # 3-Tier Classification for Person Albums
             p_norm = p_l.replace('\\', '/')
-            is_dud = (
+            is_manual_human = (
+                bool(item.get('is_manual'))
+                or ('Manual' in str(item.get('source', '')))
+                or (item.get('status') == 'Clasificado' and item.get('source') == 'Manual')
+            )
+            is_dud = not is_manual_human and (
                 item.get('is_dudoso') 
                 or item.get('status') == 'Dudoso' 
                 or item.get('needs_confirmation')
@@ -389,10 +394,9 @@ def get_gallery(force_reload=False):
                 or (cat == "📋 Revisión / Por Organizar" and 'dudoso' in ident_l)
             )
             is_official = (
-                item.get('is_dataset')
-                or item.get('is_manual')
+                is_manual_human
+                or item.get('is_dataset')
                 or 'Dataset' in str(item.get('source', ''))
-                or 'Manual' in str(item.get('source', ''))
                 or (item.get('status') == 'Clasificado' and not is_dud and float(item.get('confidence') or 0.0) >= 0.55)
             )
             if is_official and not is_dud:
@@ -1518,6 +1522,16 @@ def api_remove_from_folder():
     
     if not filepath or not ident:
         return jsonify({"error": "Faltan parámetros"}), 400
+
+    ident_str = str(ident).strip()
+    ident_low = ident_str.lower()
+    non_person_keywords = [
+        'dudoso', 'desconocid', 'sin rostro', 'sin_rostro', 'pendiente',
+        'grupos por confirmar', 'caras aisladas', 'baja confianza',
+        'por identificar', 'por organizar', 'falso_positivo', 'ignorar', 'excluid'
+    ]
+    if any(k in ident_low for k in non_person_keywords):
+        return jsonify({"error": f"'{ident_str}' no es una persona individual, no se puede excluir de una carpeta de revisión del sistema"}), 400
         
     try:
         p_obj = Path(filepath)
