@@ -630,30 +630,24 @@ let currentItemIndex = 0;
 
 
 
-window.openMergeModal = function() {
-
-
+window.openMergeModal = function(e) {
+    if (e) {
+        try { e.stopPropagation(); e.preventDefault(); } catch(err){}
+    }
+    const headerMenu = document.getElementById('header-options-dropdown');
+    if (headerMenu) headerMenu.style.display = 'none';
+    const headerBtn = document.getElementById('btn-header-more');
+    if (headerBtn) headerBtn.classList.remove('active');
 
     const modal = document.getElementById('modal-merge');
-
-
-
     if (modal) {
-
-
+        modal.classList.remove('hidden');
+        modal.style.display = 'flex';
+        modal.style.zIndex = '100000';
 
         const countSpan = document.getElementById('merge-count-span');
-
-
-
         const groupNameSpan = document.getElementById('merge-group-name');
-
-
-
         if (countSpan && currentFolderItems) countSpan.textContent = currentFolderItems.length;
-
-
-
         if (groupNameSpan) groupNameSpan.textContent = currentIdent || '';
 
 
@@ -1086,34 +1080,34 @@ window.openMergeModal = function() {
 
 
 
+        modal.classList.remove('hidden');
         modal.style.display = 'flex';
-
-
-
+        modal.style.zIndex = '100000';
     }
-
-
-
 };
 
-
-
-
-
-
-
 window.closeMergeModal = function() {
-
-
-
     const modal = document.getElementById('modal-merge');
+    if (modal) {
+        modal.style.display = 'none';
+        modal.classList.add('hidden');
+    }
+};
 
-
-
-    if (modal) modal.style.display = 'none';
-
-
-
+window.renameCurrentGroup = function(e) {
+    if (e) {
+        try { e.stopPropagation(); e.preventDefault(); } catch(err){}
+    }
+    if (typeof window.openMergeModal === 'function') {
+        window.openMergeModal(e);
+    }
+    setTimeout(() => {
+        const inp = document.getElementById('merge-new-input');
+        if (inp) {
+            inp.focus();
+            inp.select();
+        }
+    }, 120);
 };
 
 
@@ -7416,12 +7410,12 @@ async function filterTimeline(year) {
                 }
 
                 console.warn("Aviso en carga progresiva:", err);
-
             }
-
-
-
         }
+
+        window.loadGallery = loadGallery;
+        window.loadGalleryData = loadGallery;
+        window.refreshGallery = loadGallery;
 
 
 
@@ -8004,38 +7998,43 @@ async function filterTimeline(year) {
                     const r = await fetch('/api/gallery?cat=' + encodeURIComponent(cat) + '&ident=' + encodeURIComponent(ident));
 
                     if (r.ok) {
-
                         const albumData = await r.json();
-
                         fullGallery = fullGallery || {};
-
                         fullGallery[cat] = fullGallery[cat] || {};
-
-                        fullGallery[cat][ident] = (albumData[cat] && albumData[cat][ident]) ? albumData[cat][ident] : [];
-
+                        let fetchedItems = null;
+                        if (albumData[cat] && Array.isArray(albumData[cat][ident])) {
+                            fetchedItems = albumData[cat][ident];
+                        } else {
+                            for (const cK in albumData) {
+                                if (albumData[cK] && typeof albumData[cK] === 'object') {
+                                    for (const iK in albumData[cK]) {
+                                        if (Array.isArray(albumData[cK][iK])) {
+                                            fetchedItems = albumData[cK][iK];
+                                            break;
+                                        }
+                                    }
+                                }
+                                if (fetchedItems) break;
+                            }
+                        }
+                        fullGallery[cat][ident] = fetchedItems || [];
                     }
-
                 } catch (e) {
-
                     console.error("Error fetching album items:", e);
-
                 }
-
             }
 
-
-
-            if (!fullGallery || !fullGallery[cat] || !Array.isArray(fullGallery[cat][ident])) {
-
-                return;
-
+            fullGallery = fullGallery || {};
+            fullGallery[cat] = fullGallery[cat] || {};
+            if (!Array.isArray(fullGallery[cat][ident])) {
+                fullGallery[cat][ident] = [];
             }
-
-            currentFolderItems = fullGallery[cat][ident] || [];
-
-
-
+            currentFolderItems = fullGallery[cat][ident];
             window.currentFolderItems = currentFolderItems;
+            currentCat = cat;
+            currentIdent = ident;
+            window.currentCat = cat;
+            window.currentIdent = ident;
 
 
 
@@ -8541,27 +8540,28 @@ async function filterTimeline(year) {
 
 
 
-            const showMerge = showRevisionControls && ident && ident !== '⚠️ Dudosos / Baja Confianza' && ident !== '⏳ Pendientes de Analizar';
+            const isSystemCollection = (
+                !ident ||
+                ident === 'Todas las Fotos' ||
+                ident.includes('Dudosos / Baja Confianza') ||
+                ident.includes('Pendientes de Analizar') ||
+                ident.includes('Pendientes de Organizar') ||
+                ident.includes('Vídeos Sin Rostro') ||
+                ident.includes('Fotos Sin Rostro') ||
+                ident === 'Favoritos' ||
+                ident === 'Papelera'
+            );
 
-
+            const showMerge = !isSystemCollection;
+            const showRename = !isSystemCollection;
+            const showDelete = !isSystemCollection;
+            const showIgnore = !isSystemCollection && isUnnamedOrNew;
 
             if (mergeBtn)  mergeBtn.style.display  = showMerge ? 'inline-flex' : 'none';
-
-
-
-            if (renameBtn) renameBtn.style.display  = showMerge ? 'inline-flex' : 'none';
-
-
-
-            if (deleteBtn) deleteBtn.style.display  = showMerge ? 'inline-flex' : 'none';
-
-
-
+            if (renameBtn) renameBtn.style.display  = showRename ? 'inline-flex' : 'none';
+            if (deleteBtn) deleteBtn.style.display  = showDelete ? 'inline-flex' : 'none';
             if (trashAlbumBtn) trashAlbumBtn.style.display = (ident && ident !== 'Todas las Fotos') ? 'inline-flex' : 'none';
-
-
-
-            if (ignoreBtn) ignoreBtn.style.display  = showMerge ? 'inline-flex' : 'none';
+            if (ignoreBtn) ignoreBtn.style.display  = showIgnore ? 'inline-flex' : 'none';
 
 
 
@@ -10955,6 +10955,12 @@ async function filterTimeline(year) {
                 window._isSubmittingMerge = false;
             }
         }
+
+        window.deleteCurrentGroup = deleteCurrentGroup;
+        window.ignoreCurrentGroup = ignoreCurrentGroup;
+        window.submitMergeGroup = submitMergeGroup;
+        window.closeMergeModal = closeMergeModal;
+        window.resetGalleryView = resetGalleryView;
 
         document.addEventListener('keydown', async (e) => {
 

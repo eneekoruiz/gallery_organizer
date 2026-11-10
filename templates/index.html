@@ -182,19 +182,19 @@
 
                             <div style="height:1px; background:rgba(255,255,255,0.08); margin:6px 0;"></div>
 
-                            <button id="btn-rename-group" class="menu-action-item" onclick="renameCurrentGroup(); toggleHeaderOptionsMenu();" style="display:none;">
+                            <button id="btn-rename-group" class="menu-action-item" onclick="renameCurrentGroup(event);" style="display:none;">
                                 <span>✏️ Renombrar persona</span>
                             </button>
-                            <button id="btn-merge-group" class="menu-action-item" onclick="openMergeModal(); toggleHeaderOptionsMenu();" style="display:none;">
+                            <button id="btn-merge-group" class="menu-action-item" onclick="openMergeModal(event);" style="display:none;">
                                 <span>🤝 Fusionar con otra persona</span>
                             </button>
-                            <button id="btn-delete-group" class="menu-action-item menu-action-danger" onclick="deleteCurrentGroup(); toggleHeaderOptionsMenu();" style="display:none;">
+                            <button id="btn-delete-group" class="menu-action-item menu-action-danger" onclick="deleteCurrentGroup(event);" style="display:none;">
                                 <span>🗑️ Disolver grupo</span>
                             </button>
-                            <button id="btn-trash-album-photos" class="menu-action-item menu-action-danger" onclick="trashCurrentAlbumPhotos(); toggleHeaderOptionsMenu();" style="display:none;">
+                            <button id="btn-trash-album-photos" class="menu-action-item menu-action-danger" onclick="trashCurrentAlbumPhotos(event);" style="display:none;">
                                 <span>🗑️ Eliminar todas las fotos (Papelera)</span>
                             </button>
-                            <button id="btn-ignore-group" class="menu-action-item" onclick="ignoreCurrentGroup(); toggleHeaderOptionsMenu();" style="display:none;">
+                            <button id="btn-ignore-group" class="menu-action-item" onclick="ignoreCurrentGroup(event);" style="display:none;">
                                 <span>🚫 Ignorar (Falso positivo)</span>
                             </button>
                             <button id="btn-export-zip" class="menu-action-item" onclick="exportCurrentAlbumZip(); toggleHeaderOptionsMenu();">
@@ -426,6 +426,6 @@
     </div>
 
     <!-- Load modules -->
-    <script src="{{ url_for('static', filename='dist/app.js') }}?v=20261110_v58_ultralight_instant_load"></script>
+    <script src="{{ url_for('static', filename='dist/app.js') }}?v=20261110_v59_modal_merge_fix"></script>
 
 {% endblock %}

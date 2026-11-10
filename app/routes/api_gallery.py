@@ -1,7 +1,16 @@
+import unicodedata
+import re
 from flask import Blueprint, jsonify, request, Response, send_file
 from app.services.gallery_service import get_gallery, api_identities, api_metadata, api_stats, api_person_avatar, api_thumbnail, api_timeline, api_person_evolution, api_map_locations, api_events_timeline
 
 api_gallery_bp = Blueprint('api_gallery', __name__)
+
+def _norm_str(s):
+    if not s:
+        return ''
+    s = ''.join(c for c in unicodedata.normalize('NFD', str(s)) if unicodedata.category(c) != 'Mn')
+    chars = [c for c in s if c.isalnum() or c.isspace() or c in '#_-/']
+    return re.sub(r'\s+', ' ', ''.join(chars)).strip().lower()
 
 @api_gallery_bp.route('/identities')
 def api_identities_route():
@@ -17,8 +26,25 @@ def get_gallery_route():
         if cache is None:
             get_gallery()
             cache = get_gallery_cache()
-        if cache and cat in cache and ident in cache[cat]:
-            return jsonify({cat: {ident: cache[cat][ident]}})
+        if cache:
+            # 1. Exact match
+            if cat in cache and ident in cache[cat]:
+                return jsonify({cat: {ident: cache[cat][ident]}})
+            
+            # 2. Normalized match (handles emoji stripped, accent stripped, case-insensitive)
+            norm_cat = _norm_str(cat)
+            matched_cat = next((k for k in cache if _norm_str(k) == norm_cat or norm_cat in _norm_str(k) or _norm_str(k) in norm_cat), None)
+            matched_ident = None
+            if matched_cat and matched_cat in cache:
+                norm_ident = _norm_str(ident)
+                matched_ident = next((k for k in cache[matched_cat] if _norm_str(k) == norm_ident or norm_ident in _norm_str(k) or _norm_str(k) in norm_ident), None)
+            
+            if matched_cat and matched_ident and matched_cat in cache and matched_ident in cache[matched_cat]:
+                items = cache[matched_cat][matched_ident]
+                res = {}
+                res.setdefault(cat, {})[ident] = items
+                res.setdefault(matched_cat, {})[matched_ident] = items
+                return jsonify(res)
         return jsonify({cat: {ident: []}})
     return get_gallery()
 
