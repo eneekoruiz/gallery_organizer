@@ -5619,18 +5619,25 @@ def api_suggest_merges():
         
 
         filter_ident = request.args.get("ident")
-
         if filter_ident:
-
             clean_f = filter_ident.replace('👤', '').strip().lower()
-
             new_persons = [id_info for id_info in idents if clean_f == id_info["identidad"].replace('👤', '').strip().lower() or clean_f in id_info["identidad"].lower()]
-
         else:
-
             new_persons = [id_info for id_info in idents if "persona nueva" in id_info["identidad"].lower() or "persona #" in id_info["identidad"].lower()]
 
-        known_persons = [id_info for id_info in idents if id_info not in new_persons and id_info["identidad"] not in {"Desconocido", "Ignorar"}]
+        # Strictly filter known_persons to CONFIRMED persons only.
+        # NEVER suggest another Persona Nueva, triage, or unconfirmed group!
+        CONFIRMED_CATEGORIES = {'Conocidos', 'Familia', 'YO', 'Profesores', 'Mascotas'}
+        def is_confirmed_person(info):
+            name = str(info.get("identidad", "")).lower()
+            cat = str(info.get("categoria", "")).replace('👥', '').replace('🧑', '').replace('👧', '').replace('👦', '').strip()
+            if any(term in name for term in ["persona nueva", "persona #", "persona_", "desconocid", "sin rostro", "ignorar", "falso_positivo", "dudoso", "baja confianza", "caras aisladas"]):
+                return False
+            if any(term in cat.lower() for term in ["revisión", "organizar", "sin nombre", "ignorar"]):
+                return False
+            return cat in CONFIRMED_CATEGORIES or name.startswith(('c. ', 'f. ', 'p. ', 'm. '))
+
+        known_persons = [id_info for id_info in idents if is_confirmed_person(id_info) and id_info not in new_persons]
 
         
 
@@ -5686,7 +5693,7 @@ def api_suggest_merges():
 
                     
 
-            if best_target and best_sim >= 0.60:
+            if best_target and best_sim >= 0.72:
 
                 src_cat = np_info.get('categoria', 'Personas Sin Nombre')
 

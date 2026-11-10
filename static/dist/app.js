@@ -8528,10 +8528,7 @@ async function filterTimeline(year) {
 
 
             if (avatar) {
-
-
-
-                avatar.src = `/api/person_avatar?cat=${encodeURIComponent(cat)}&ident=${encodeURIComponent(ident)}`;
+                avatar.src = `/api/person_avatar?cat=${encodeURIComponent(cat)}&ident=${encodeURIComponent(ident)}&t=${Date.now()}`;
 
 
 
@@ -10860,11 +10857,13 @@ async function filterTimeline(year) {
 
 
         async function submitMergeGroup() {
+            if (window._isSubmittingMerge) return;
             if (!currentCat || !currentIdent) {
                 alert("Por favor, selecciona una carpeta o persona antes de intentar fusionar.");
                 closeMergeModal();
                 return;
             }
+            window._isSubmittingMerge = true;
 
             const existingNameJSON = document.getElementById('merge-selected-value') ? document.getElementById('merge-selected-value').value : '';
             const newNameInput = document.getElementById('merge-new-input');
@@ -11034,9 +11033,13 @@ async function filterTimeline(year) {
                 .catch(e => {
                     console.error("Error en sincronización de fusión:", e);
                     showToast("Error de conexión durante la fusión en segundo plano.", true);
+                })
+                .finally(() => {
+                    window._isSubmittingMerge = false;
                 });
             } catch (err) {
                 console.error("Error iniciando fusión:", err);
+                window._isSubmittingMerge = false;
             }
         }
 
@@ -24849,133 +24852,66 @@ window.checkAndDisplaySmartMergeSuggestion = function(cat, ident) {
 
 
 window.executeQuickMerge = function(source, target, targetCat) {
-
-
+    if (window._isQuickMerging) return;
+    window._isQuickMerging = true;
 
     const btn = document.getElementById('btn-quick-merge-exec');
-
-
-
     if (btn) {
-
-
-
         btn.textContent = '⏳ Fusionando...';
-
-
-
         btn.style.pointerEvents = 'none';
-
-
-
     }
 
-
-
-
-
-
-
     fetch('/api/rename_group', {
-
-
-
         method: 'POST',
-
-
-
         headers: {'Content-Type': 'application/json'},
-
-
-
-        body: JSON.stringify({ old_name: source, new_name: target })
-
-
-
+        body: JSON.stringify({
+            cat: currentCat || '📋 Revisión / Por Organizar',
+            ident: source,
+            new_name: target,
+            new_cat: targetCat || 'Conocidos'
+        })
     })
-
-
-
     .then(r => r.json())
-
-
-
-    .then(data => {
-
-
-
+    .then(async data => {
         const b = document.getElementById('smart-merge-banner');
-
-
-
         if (b) b.remove();
 
-
-
         if (typeof showToast === 'function') {
-
-
-
-            showToast(`✓ Fusionado con éxito en ${target}`);
-
-
-
+            showToast(`🎉 ¡Fusión con '${target}' completada con éxito!`);
         } else {
-
-
-
             alert(`✓ Fusionado con éxito en ${target}`);
-
-
-
         }
 
+        const av = document.getElementById('gallery-avatar');
+        if (av) {
+            av.src = `/api/person_avatar?cat=${encodeURIComponent(targetCat || 'Conocidos')}&ident=${encodeURIComponent(target)}&t=${Date.now()}`;
+        }
 
+        if (typeof loadIdentities === 'function') {
+            loadIdentities().catch(() => {});
+        }
 
-        loadGalleryData(false, () => {
-
-
-
-            renderGrid(targetCat || 'Conocidos', target);
-
-
-
-        });
-
-
-
+        if (typeof renderGrid === 'function') {
+            await renderGrid(targetCat || 'Conocidos', target);
+        } else if (typeof loadAlbumsHome === 'function') {
+            loadAlbumsHome();
+        }
     })
-
-
-
     .catch(err => {
-
-
-
-        alert('Error en fusión: ' + err);
-
-
-
-        if (btn) {
-
-
-
-            btn.textContent = '✓ Fusionar con 1 Clic';
-
-
-
-            btn.style.pointerEvents = 'auto';
-
-
-
+        console.error("Error en executeQuickMerge:", err);
+        if (typeof showToast === 'function') {
+            showToast('Error en fusión: ' + err, true);
+        } else {
+            alert('Error en fusión: ' + err);
         }
-
-
-
+        if (btn) {
+            btn.textContent = '✓ Fusionar con 1 Clic';
+            btn.style.pointerEvents = '';
+        }
+    })
+    .finally(() => {
+        window._isQuickMerging = false;
     });
-
-
-
 };
 
 

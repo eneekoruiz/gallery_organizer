@@ -1050,7 +1050,7 @@ def api_person_avatar():
                 avatar_cache_file = folder_dir / f"av_{c_cand}_{i_cand}.webp"
                 if avatar_cache_file.exists() and avatar_cache_file.stat().st_size > 200:
                     res = send_file(str(avatar_cache_file), mimetype='image/webp')
-                    res.headers['Cache-Control'] = 'public, max-age=3600, must-revalidate'
+                    res.headers['Cache-Control'] = 'no-cache, must-revalidate'
                     return res
 
     default_svg = '''<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 24 24" fill="#666"><circle cx="12" cy="8" r="4"/><path d="M12 14c-6.1 0-8 4-8 4v2h16v-2s-1.9-4-8-4z"/></svg>'''
@@ -1209,7 +1209,7 @@ def api_person_avatar():
                     except Exception: pass
                     _, buf = cv2.imencode('.webp', avatar_img, [cv2.IMWRITE_WEBP_QUALITY, 92])
                     res = Response(buf.tobytes(), mimetype='image/webp')
-                    res.headers['Cache-Control'] = 'public, max-age=3600, must-revalidate'
+                    res.headers['Cache-Control'] = 'no-cache, must-revalidate'
                     return res
 
         # Load centroids from centroids.pkl
@@ -1326,7 +1326,7 @@ def api_person_avatar():
                             except Exception: pass
                         _, buf = cv2.imencode('.webp', avatar_img, [cv2.IMWRITE_WEBP_QUALITY, 92])
                         res = Response(buf.tobytes(), mimetype='image/webp')
-                        res.headers['Cache-Control'] = 'public, max-age=3600, must-revalidate'
+                        res.headers['Cache-Control'] = 'no-cache, must-revalidate'
                         return res
         except Exception:
             pass
