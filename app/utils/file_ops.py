@@ -5,6 +5,12 @@ import gc
 import time
 from app.globals import PENDING_DELETIONS_FILE
 
+def is_icloud_file(filepath):
+    if not filepath:
+        return False
+    s = str(filepath).replace('\\', '/').lower()
+    return 'icloud photos' in s or ('pictures/icloud' in s) or ('apple' in s and 'icloud' in s)
+
 def process_pending_deletions():
     if not PENDING_DELETIONS_FILE.exists(): return
     try:
@@ -13,6 +19,9 @@ def process_pending_deletions():
         remaining = []
         for p in paths:
             if not p.strip(): continue
+            if is_icloud_file(p):
+                # Never delete iCloud files via pending deletions
+                continue
             if os.path.exists(p):
                 try:
                     os.remove(p)
@@ -37,7 +46,7 @@ def safe_move_file(src, dst):
     if os.path.exists(dst):
         try:
             if os.path.samefile(src, dst):
-                if src != dst:
+                if src != dst and not is_icloud_file(src):
                     os.unlink(src)
                 return True
         except (OSError, ValueError):
@@ -48,6 +57,18 @@ def safe_move_file(src, dst):
             p_dst = p_dst.parent / f"{p_dst.stem}_{counter}{p_dst.suffix}"
             counter += 1
         dst = str(p_dst)
+
+    # CRITICAL ZERO-LOSS ICLOUD SHIELD:
+    # Files residing in iCloud Photos must NEVER be unlinked or moved out of iCloud!
+    # Moving/unlinking causes iCloud for Windows to detect deletion and send items to Trash.
+    # We copy them non-destructively so the iCloud source stays intact.
+    if is_icloud_file(src):
+        try:
+            shutil.copy2(src, dst)
+            return True
+        except Exception as e:
+            print(f"[iCloud Safety] Error copying {src} -> {dst}: {e}")
+            return False
 
     try:
         os.link(src, dst)
@@ -72,6 +93,9 @@ def safe_remove_file(filepath):
     f_str = str(filepath)
     if not os.path.exists(f_str):
         return False
+    if is_icloud_file(f_str):
+        print(f"[iCloud Protection] Intercepted safe_remove_file for iCloud path: {f_str} (file preserved)")
+        return True
     # 1. Fast path: Direct removal
     try:
         os.remove(f_str)

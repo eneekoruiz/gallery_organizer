@@ -5,8 +5,12 @@ from pydantic import BaseModel
 
 try:
     from a2wsgi import WSGIMiddleware
-except ImportError:
-    from starlette.middleware.wsgi import WSGIMiddleware
+except Exception:
+    try:
+        from starlette.middleware.wsgi import WSGIMiddleware
+    except Exception as e:
+        print("[WSGI] Warning: a2wsgi / starlette.middleware.wsgi not available:", e)
+        WSGIMiddleware = None
 
 try:
     from app.utils.storage_adapters import get_adapter
@@ -79,7 +83,10 @@ async def trigger_delta_sync(background_tasks: BackgroundTasks):
 
 # Mount full Flask application at root via modern a2wsgi WSGIMiddleware
 # This ensures 100% route coverage, perfect template rendering, url_for resolution, and zero 404s!
-app.mount("/", WSGIMiddleware(flask_app))
+if WSGIMiddleware is not None:
+    app.mount("/", WSGIMiddleware(flask_app))
+else:
+    print("[WSGI] Warning: Running FastAPI without WSGI mount (a2wsgi missing)")
 
 if __name__ == "__main__":
     import uvicorn
