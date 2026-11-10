@@ -1196,13 +1196,80 @@ def api_correct():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+
+def update_gallery_cache_for_rename(old_cat, old_ident, new_cat, new_ident):
+    try:
+        from app.globals import get_gallery_cache, set_gallery_cache
+        cache = get_gallery_cache()
+        if cache is None:
+            return
+        
+        clean_old_id = re.sub(r'^[👤📋📁❓🔍✨📸⚡🎉🏷️👥🧑👧👦\s]+', '', str(old_ident)).strip()
+        clean_new_id = re.sub(r'^[👤📋📁❓🔍✨📸⚡🎉🏷️👥🧑👧👦\s]+', '', str(new_ident)).strip()
+        clean_old_cat = re.sub(r'^[👤📋📁❓🔍✨📸⚡🎉🏷️👥🧑👧👦\s]+', '', str(old_cat)).strip()
+        clean_new_cat = re.sub(r'^[👤📋📁❓🔍✨📸⚡🎉🏷️👥🧑👧👦\s]+', '', str(new_cat)).strip()
+
+        items_to_move = []
+        for c_key in list(cache.keys()):
+            clean_c = re.sub(r'^[👤📋📁❓🔍✨📸⚡🎉🏷️👥🧑👧👦\s]+', '', str(c_key)).strip()
+            if clean_c == clean_old_cat or not old_cat or clean_old_cat in clean_c:
+                for id_key in list(cache[c_key].keys()):
+                    clean_i = re.sub(r'^[👤📋📁❓🔍✨📸⚡🎉🏷️👥🧑👧👦\s]+', '', str(id_key)).strip()
+                    if clean_i == clean_old_id:
+                        items_to_move.extend(cache[c_key].pop(id_key, []))
+
+        if not items_to_move:
+            for c_key in list(cache.keys()):
+                for id_key in list(cache[c_key].keys()):
+                    clean_i = re.sub(r'^[👤📋📁❓🔍✨📸⚡🎉🏷️👥🧑👧👦\s]+', '', str(id_key)).strip()
+                    if clean_i == clean_old_id:
+                        items_to_move.extend(cache[c_key].pop(id_key, []))
+
+        target_cat_key = new_cat
+        for c_key in cache.keys():
+            if re.sub(r'^[👤📋📁❓🔍✨📸⚡🎉🏷️👥🧑👧👦\s]+', '', str(c_key)).strip() == clean_new_cat:
+                target_cat_key = c_key
+                break
+        if target_cat_key not in cache:
+            cache[target_cat_key] = {}
+
+        target_ident_key = new_ident
+        for id_key in cache[target_cat_key].keys():
+            if re.sub(r'^[👤📋📁❓🔍✨📸⚡🎉🏷️👥🧑👧👦\s]+', '', str(id_key)).strip() == clean_new_id:
+                target_ident_key = id_key
+                break
+        if target_ident_key not in cache[target_cat_key]:
+            if any(k.startswith('👤 ') for k in cache[target_cat_key].keys()):
+                target_ident_key = f'👤 {clean_new_id}'
+            cache[target_cat_key][target_ident_key] = []
+
+        for itm in items_to_move:
+            itm['category'] = target_cat_key
+            itm['identity'] = clean_new_id
+
+        cache[target_cat_key][target_ident_key].extend(items_to_move)
+        set_gallery_cache(cache)
+    except Exception as e_cache:
+        print(f"[RENAME] Error updating gallery cache in-place: {e_cache}")
+
 def api_rename_group():
     try:
         data = request.json or {}
         cat = data.get('cat')
-        ident = data.get('ident')
-        new_name = data.get('new_name') or data.get('new_ident') or data.get('name')
-        new_cat = data.get('new_cat')
+        ident = data.get('ident') or data.get('old_name') or data.get('old_ident')
+        new_name = data.get('new_name') or data.get('new_ident') or data.get('name') or data.get('target')
+        new_cat = data.get('new_cat') or data.get('target_cat')
+
+        if not cat and ident:
+            from app.globals import get_gallery_cache
+            g_c = get_gallery_cache()
+            if g_c:
+                for c_k, id_map in g_c.items():
+                    if ident in id_map or f"👤 {ident}" in id_map:
+                        cat = c_k
+                        break
+            if not cat:
+                cat = "📋 Revisión / Por Organizar" 
         
         if not cat or not ident or not new_name:
             return jsonify({"error": "Parametros insuficientes: falta el nuevo nombre"}), 400
@@ -1376,7 +1443,7 @@ def api_rename_group():
                         except Exception:
                             pass
             elif apple_count > 0:
-                clear_gallery_cache()
+                update_gallery_cache_for_rename(cat, ident, c_new_cat, c_new_name)
                 try:
                     from app.utils.faces import clear_identities_cache
                     clear_identities_cache()
@@ -1444,7 +1511,7 @@ def api_rename_group():
         except Exception:
             pass
 
-        clear_gallery_cache()
+        update_gallery_cache_for_rename(cat, ident, c_new_cat, c_new_name)
         try:
             from app.utils.faces import clear_identities_cache
             clear_identities_cache()

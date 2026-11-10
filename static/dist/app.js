@@ -5436,136 +5436,142 @@ async function filterTimeline(year) {
 
 
 
-        async function submitMergeGroup() {
-
-            if (!currentCat || !currentIdent) {
-
-                alert("Por favor, selecciona una carpeta o persona antes de intentar fusionar.");
-
-                closeMergeModal();
-
-                return;
-
-            }
-
-            const existingNameJSON = document.getElementById('merge-selected-value').value;
-
-            const newName = document.getElementById('merge-new-input').value.trim();
-
-            
-
-            let targetName = "";
-
-            let targetCat = "Conocidos";
-
-            
-
-            if (existingNameJSON) {
-
-                const parsed = JSON.parse(existingNameJSON);
-
-                targetName = parsed.ident;
-
-                targetCat = parsed.cat;
-
-            } else if (newName) {
-
-                targetName = newName;
-
-            } else {
-
-                alert("Por favor, selecciona una persona existente o introduce un nombre nuevo.");
-
-                return;
-
-            }
-
-            
-
-            // LOCK UI
-
-            const btn = document.getElementById('btn-submit-merge') || (document.getElementById('modal-merge') && document.getElementById('modal-merge').querySelector('button[style*="#30d158"]'));
-
-            if(btn) {
-
-                if (btn.disabled || btn.dataset.busy === 'true') return;
-
-                btn.disabled = true;
-
-                btn.dataset.busy = 'true';
-
-                btn.textContent = "⏳ Fusionando...";
-
-            }
-
-            
-
-            showToast(`⏳ Fusionando ${currentFolderItems.length} fotos con '${targetName}' y reentrenando IA...`);
-
-            
-
-            try {
-
-            const res = await fetch('/api/rename_group', {
-
-                method: 'POST',
-
-                headers: {'Content-Type': 'application/json'},
-
-                body: JSON.stringify({
-
-                    cat: currentCat,
-
-                    ident: currentIdent,
-
-                    new_name: targetName,
-
-                    new_cat: targetCat
-
-                })
-
-            });
-
-            const data = await res.json();
-
-            if (data.success) {
-
-                showToast(`🎉 ¡Fusionado con éxito! Se unieron ${data.count} fotos a '${targetCat} / ${targetName}'.`);
-
-                closeMergeModal();
-
-                await loadIdentities();
-
-                await loadGallery();
-
-                renderGrid(null, null);
-
-            } else {
-
-                showToast(data.error || "No se pudo fusionar el grupo.", true);
-
-            }
-
-            } catch (e) {
-
-                showToast("Error de conexión durante la fusión.", true);
-
-            } finally {
-
-                if(btn) { btn.disabled = false; btn.dataset.busy = 'false'; btn.innerHTML = "🚀 Aplicar Fusión / Guardar"; }
-
-                closeMergeModal();
-
-            }
-
-        }
-
-
-
-
-
-
-
+        async function submitMergeGroup() {
+            if (!currentCat || !currentIdent) {
+                alert("Por favor, selecciona una carpeta o persona antes de intentar fusionar.");
+                closeMergeModal();
+                return;
+            }
+
+            const existingNameJSON = document.getElementById('merge-selected-value') ? document.getElementById('merge-selected-value').value : '';
+            const newNameInput = document.getElementById('merge-new-input');
+            const newName = newNameInput ? newNameInput.value.trim() : '';
+
+            let targetName = "";
+            let targetCat = "Conocidos";
+
+            if (existingNameJSON) {
+                try {
+                    const parsed = JSON.parse(existingNameJSON);
+                    targetName = parsed.ident;
+                    targetCat = parsed.cat || "Conocidos";
+                } catch (e) {
+                    targetName = existingNameJSON;
+                }
+            } else if (newName) {
+                targetName = newName;
+                if (targetName.startsWith('F. ') || targetName.startsWith('F_')) targetCat = 'Familia';
+                else if (targetName.startsWith('P. ') || targetName.startsWith('P_')) targetCat = 'Profesores';
+                else if (targetName.startsWith('M. ') || targetName.startsWith('M_')) targetCat = 'Mascotas';
+                else if (targetName === 'YO') targetCat = 'YO';
+                else targetCat = 'Conocidos';
+            } else {
+                alert("Por favor, selecciona una persona existente o introduce un nombre nuevo.");
+                return;
+            }
+
+            // 1. CAPTURAR CONTEXTO PREVIO
+            const oldIdent = currentIdent;
+            const oldCat = currentCat;
+            const oldItems = Array.isArray(currentFolderItems) ? [...currentFolderItems] : [];
+
+            // 2. CERRAR MODAL DE INMEDIATO (Cero bloqueo: el usuario puede navegar libremente)
+            closeMergeModal();
+
+            // 3. ACTUALIZACIÓN OPTIMISTA INMEDIATA (Título, cabecera, migas de pan y sidebar)
+            currentIdent = targetName;
+            currentCat = targetCat;
+
+            const titleEl = document.getElementById('gallery-title');
+            if (titleEl) {
+                if (targetCat === 'YO' && targetName === 'YO') {
+                    titleEl.innerHTML = `<span style="color:#fff;">👤 YO</span>`;
+                } else if (targetCat === targetName) {
+                    titleEl.innerHTML = `<span style="color:#fff;">${targetName}</span>`;
+                } else {
+                    titleEl.innerHTML = `${targetCat} <span style="color:rgba(255,255,255,0.35); margin:0 5px; font-weight:400; font-size:0.9em;">›</span> <span style="color:#fff;">${targetName}</span>`;
+                }
+            }
+
+            const avatarEl = document.getElementById('gallery-avatar');
+            if (avatarEl) {
+                avatarEl.src = `/api/person_avatar?cat=${encodeURIComponent(targetCat)}&ident=${encodeURIComponent(targetName)}`;
+            }
+
+            // Actualizar metadatos de los elementos en memoria
+            oldItems.forEach(it => {
+                it.category = targetCat;
+                it.identity = targetName;
+            });
+
+            // Actualizar fullGallery en memoria
+            if (window.fullGallery) {
+                if (window.fullGallery[oldCat] && window.fullGallery[oldCat][oldIdent]) {
+                    delete window.fullGallery[oldCat][oldIdent];
+                }
+                window.fullGallery[targetCat] = window.fullGallery[targetCat] || {};
+                window.fullGallery[targetCat][targetName] = window.fullGallery[targetCat][targetName] || [];
+                const existPaths = new Set(window.fullGallery[targetCat][targetName].map(p => p.path));
+                oldItems.forEach(it => {
+                    if (!existPaths.has(it.path)) {
+                        window.fullGallery[targetCat][targetName].push(it);
+                    }
+                });
+            }
+
+            // Actualizar galleryStructure en memoria
+            if (window.galleryStructure) {
+                if (window.galleryStructure[oldCat] && window.galleryStructure[oldCat][oldIdent] !== undefined) {
+                    delete window.galleryStructure[oldCat][oldIdent];
+                }
+                window.galleryStructure[targetCat] = window.galleryStructure[targetCat] || {};
+                window.galleryStructure[targetCat][targetName] = (window.galleryStructure[targetCat][targetName] || 0) + oldItems.length;
+            }
+
+            // Actualizar filas de drilldown del sidebar inmediatamente
+            const cleanOldLower = oldIdent.toLowerCase().replace(/^[👤📋📁❓🔍✨📸⚡🎉🏷️👥🧑👧👦\s]+/, '').trim();
+            document.querySelectorAll('.drilldown-identity-row').forEach(row => {
+                const rowName = (row.dataset.identName || '').toLowerCase().replace(/^[👤📋📁❓🔍✨📸⚡🎉🏷️👥🧑👧👦\s]+/, '').trim();
+                if (rowName === cleanOldLower) {
+                    row.remove();
+                }
+            });
+
+            // 4. NOTIFICACIÓN FLOTANTE NO BLOQUEANTE (Sincronización en segundo plano)
+            showToast(`🔄 Fusionando '${oldIdent}' con '${targetName}' en segundo plano...`);
+
+            // 5. SINCRONIZACIÓN ASÍNCRONA EN SEGUNDO PLANO
+            try {
+                fetch('/api/rename_group', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        cat: oldCat,
+                        ident: oldIdent,
+                        new_name: targetName,
+                        new_cat: targetCat
+                    })
+                })
+                .then(res => res.json())
+                .then(data => {
+                    if (data && data.success) {
+                        showToast(`🎉 ¡Fusión con '${targetName}' completada con éxito!`);
+                        if (typeof loadIdentities === 'function') {
+                            loadIdentities().catch(() => {});
+                        }
+                    } else {
+                        showToast((data && data.error) || "No se pudo fusionar en el servidor.", true);
+                    }
+                })
+                .catch(e => {
+                    console.error("Error en sincronización de fusión:", e);
+                    showToast("Error de conexión durante la fusión en segundo plano.", true);
+                });
+            } catch (err) {
+                console.error("Error iniciando fusión:", err);
+            }
+        }
+
         document.addEventListener('keydown', async (e) => {
 
             if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
