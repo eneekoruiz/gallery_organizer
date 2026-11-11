@@ -8047,6 +8047,9 @@ async function filterTimeline(year) {
 
 
             const items = currentFolderItems;
+            const cleanCat = (cat || '').replace(/^[👥🧑👧👦👤📋📁❓🔍✨📸⚡🎉🏷️\s]+/, '').trim();
+            const cleanIdent = (ident || '').replace(/^[👥🧑👧👦👤📋📁❓🔍✨📸⚡🎉🏷️\s]+/, '').trim().toLowerCase();
+            const isPersonAlbum = ['Conocidos', 'Familia', 'YO', 'Profesores', 'Mascotas'].includes(cleanCat) && !cleanIdent.includes('conmigo') && !cleanIdent.includes('sin mí') && !cleanIdent.includes('grupal');
 
 
 
@@ -8182,7 +8185,7 @@ async function filterTimeline(year) {
 
 
 
-            if (dudosoCount > 0) {
+            if (dudosoCount > 0 && isPersonAlbum) {
 
 
 
@@ -8234,7 +8237,7 @@ async function filterTimeline(year) {
 
             if (dudosoBtn) {
 
-                if (dudosoCount > 0) {
+                if (dudosoCount > 0 && isPersonAlbum) {
 
                     dudosoBtn.style.display = 'inline-flex';
 
@@ -8273,9 +8276,6 @@ async function filterTimeline(year) {
             const tierFilterContainer = document.getElementById('person-tier-filter-container');
             const presenceMenuWrapper = document.getElementById('person-presence-menu-wrapper');
             const presenceDivider = document.getElementById('presence-divider');
-            const cleanCat = (cat || '').replace(/^[👥🧑👧👦👤📋📁❓🔍✨📸⚡🎉🏷️\s]+/, '').trim();
-            const cleanIdent = (ident || '').replace(/^[👥🧑👧👦👤📋📁❓🔍✨📸⚡🎉🏷️\s]+/, '').trim().toLowerCase();
-            const isPersonAlbum = ['Conocidos', 'Familia', 'YO', 'Profesores', 'Mascotas'].includes(cleanCat) && !cleanIdent.includes('conmigo') && !cleanIdent.includes('sin mí') && !cleanIdent.includes('grupal');
 
             if (presenceMenuWrapper) {
                 if (isPersonAlbum) {
@@ -8440,37 +8440,26 @@ async function filterTimeline(year) {
 
 
             if (avatar) {
-                avatar.src = `/api/person_avatar?cat=${encodeURIComponent(cat)}&ident=${encodeURIComponent(ident)}&t=${Date.now()}`;
-
-
-
-                avatar.onload = () => {
-
-
-
-                    avatar.style.display = 'block';
-
-
-
-                    avatar.style.border = '2px solid rgba(48,209,88,0.7)';
-
-
-
-                };
-
-
-
-                avatar.onerror = () => {
-
-
-
+                const isNonPersonCollection = !isPersonAlbum && (!cleanIdent.startsWith('persona nueva'));
+                if (isNonPersonCollection || cleanIdent.includes('sin rostro') || cleanIdent.includes('sin_rostro')) {
                     avatar.style.display = 'none';
+                } else {
+                    avatar.src = `/api/person_avatar?cat=${encodeURIComponent(cat)}&ident=${encodeURIComponent(ident)}&t=${Date.now()}`;
 
+                    avatar.onload = () => {
 
+                        avatar.style.display = 'block';
 
-                };
+                        avatar.style.border = '2px solid rgba(48,209,88,0.7)';
 
+                    };
 
+                    avatar.onerror = () => {
+
+                        avatar.style.display = 'none';
+
+                    };
+                }
 
             }
 
@@ -9031,7 +9020,7 @@ async function filterTimeline(year) {
 
 
 
-                if (item.is_dudoso || item.status === 'Dudoso' || (item.source && item.source.includes('Por Confirmar'))) {
+                if (isPersonAlbum && (item.is_dudoso || item.status === 'Dudoso' || (item.source && item.source.includes('Por Confirmar')))) {
 
 
 
@@ -9099,9 +9088,9 @@ async function filterTimeline(year) {
 
 
 
-                // Inline Quick Action Bar for Review / Por Confirmar cards
+                // Inline Quick Action Bar for Review / Por Confirmar cards (ONLY in genuine person albums)
 
-                if (itemTier === 'review' || item.is_dudoso) {
+                if (isPersonAlbum && (itemTier === 'review' || item.is_dudoso)) {
 
                     const inlineBar = document.createElement('div');
 
@@ -24599,6 +24588,8 @@ window.checkAndDisplaySmartMergeSuggestion = function(cat, ident) {
 
 
             if (!sug || sug.similarity < 0.55) return;
+            const targetLower = (sug.target || '').toLowerCase();
+            if (targetLower.includes('persona nueva') || targetLower.includes('persona #') || targetLower.includes('desconocid')) return;
 
 
 

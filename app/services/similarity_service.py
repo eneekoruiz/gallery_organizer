@@ -106,26 +106,7 @@ def api_suggest_merges():
                 "source_count":  src_cnt,
                 "target_count":  tgt_cnt
             })
-    pnames = list(persona_centroids.keys())
-    for i in range(len(pnames)):
-        for j in range(i + 1, len(pnames)):
-            n1, n2 = pnames[i], pnames[j]
-            sim = get_cosine_sim(persona_centroids[n1], persona_centroids[n2])
-            if sim >= threshold_new:
-                src_avatar, src_cnt = find_sample_for_identity(gallery, n1)
-                tgt_avatar, tgt_cnt = find_sample_for_identity(gallery, n2)
-                suggestions.append({
-                    "type":          "persona_nueva_merge",
-                    "source":        n1,
-                    "target":        n2,
-                    "similarity":    round(sim, 4),
-                    "label":         f"{n1} y {n2} podrian ser la misma persona",
-                    "confidence":    "alta" if sim >= 0.55 else "media",
-                    "source_avatar": src_avatar,
-                    "target_avatar": tgt_avatar,
-                    "source_count":  src_cnt,
-                    "target_count":  tgt_cnt
-                })
+    # Se omiten sugerencias persona_nueva a persona_nueva: la IA solo debe sugerir fusionar con personas confirmadas
     suggestions.sort(key=lambda x: x["similarity"], reverse=True)
     suggestions = suggestions[:40]
     result = {

@@ -155,6 +155,11 @@ def get_gallery(force_reload=False):
     ident_to_cat_map = {id_info["identidad"]: id_info["categoria"] for id_info in get_all_identities()}
     classified_filenames = set()
 
+    fc_by_basename = {}
+    for fc_k, fc_v in faces_cache.items():
+        if fc_v and len(fc_v) > 0:
+            fc_by_basename[os.path.basename(fc_k).lower()] = fc_v
+
     for filepath, is_orig_dataset, base_dir in all_file_targets:
         try:
             abs_p = filepath
@@ -164,7 +169,8 @@ def get_gallery(force_reload=False):
             parts = rel_path.parts
             
             # Detectar subcarpeta _Dudosos específica de persona: e.g. ('Conocidos', 'C. Pablo Luque', '_Dudosos', 'IMG_001.JPG')
-            folder_dudoso = any(p.lower() in ('_dudosos', 'dudoso', 'dudosos', 'revision_interactiva') for p in parts[:-1])
+            # Sin_Rostro NUNCA es carpeta dudosa
+            folder_dudoso = any(p.lower() in ('_dudosos', 'dudoso', 'dudosos') for p in parts[:-1]) or (any(p.lower() == 'revision_interactiva' for p in parts[:-1]) and not any('sin_rostro' in p.lower() for p in parts[:-1]))
             is_in_person_dudosos = (len(parts) >= 4 and parts[0] in KNOWN_CATEGORIES and parts[2].lower() in ('_dudosos', 'dudoso', 'dudosos'))
             
             if is_in_person_dudosos:
@@ -204,8 +210,23 @@ def get_gallery(force_reload=False):
                 cat = "📋 Revisión / Por Organizar"
                 ident = "⚠️ Dudosos / Baja Confianza"
             elif "sin_rostro" in abs_p_l or "sin_rostro" in folder_l or "sin_rostro" in subfolder_l:
-                cat = "📋 Revisión / Por Organizar"
-                ident = "🎬 Vídeos Sin Rostro" if ext in [".mp4", ".mov", ".avi"] else "📷 Fotos Sin Rostro"
+                # Auditoría rigurosa: verificar si el archivo tiene caras detectadas o cacheadas
+                f_name_check = path_obj.name.lower()
+                cached_faces = overrides.get(abs_p) or faces_cache.get(abs_p) or fc_by_basename.get(f_name_check, [])
+                if cached_faces:
+                    valid_ids = [f_e.get('identity') for f_e in cached_faces if f_e.get('identity') and not str(f_e.get('identity')).startswith(('Desconocid', 'Falso_Positivo', 'Excluid', 'Ignorar'))]
+                    if valid_ids:
+                        target_id = valid_ids[0]
+                        ident = target_id
+                        cat = ident_to_cat_map.get(target_id) or ('Conocidos' if target_id.startswith(('C.', 'C ')) else 'Familia' if target_id.startswith(('F.', 'F ')) else 'YO' if target_id == 'YO' else 'Profesores' if target_id.startswith('P.') else 'Mascotas' if target_id.startswith('M.') else 'Conocidos')
+                    else:
+                        cat = "📋 Revisión / Por Organizar"
+                        ident = "❓ Desconocidos (Por Identificar)"
+                    is_dudoso = False
+                else:
+                    cat = "📋 Revisión / Por Organizar"
+                    ident = "🎬 Vídeos Sin Rostro" if ext in [".mp4", ".mov", ".avi"] else "📷 Fotos Sin Rostro"
+                    is_dudoso = False
             elif folder == "Personas Sin Nombre" or "desconocid" in folder_l or "desconocid" in subfolder_l:
                 cat = "📋 Revisión / Por Organizar"
                 if "persona nueva" in subfolder_l or "persona #" in subfolder_l:
@@ -222,7 +243,10 @@ def get_gallery(force_reload=False):
             if not is_icloud_file and not is_dudoso and cat != "📋 Revisión / Por Organizar":
                 classified_filenames.add(file_name.lower())
             key = (cat, ident, file_name)
-            is_dudoso = is_dudoso or folder_dudoso
+            if "sin_rostro" in abs_p_l or "sin_rostro" in folder_l or "sin_rostro" in subfolder_l:
+                is_dudoso = False
+            else:
+                is_dudoso = is_dudoso or folder_dudoso
             
             st = os.stat(abs_p)
             file_key = f"{file_name}_{st.st_size}_{int(st.st_mtime)}"
@@ -288,12 +312,30 @@ def get_gallery(force_reload=False):
                     existing["source"] = f"{existing['source']} + {label}"
             else:
                 faces_in_file = faces_cache.get(get_file_key(abs_p), [])
+                if not faces_in_file:
+                    faces_in_file = faces_cache.get(abs_p, []) or fc_by_basename.get(file_name.lower(), [])
                 if file_key in overrides:
                     faces_in_file = overrides[file_key]
                     
                 ids_in_file = [f_e.get('identity') for f_e in faces_in_file if f_e.get('identity')]
-                num_f = len(ids_in_file) if len(ids_in_file) > 0 else len(faces_cache.get(get_file_key(abs_p), []))
+                num_f = len(ids_in_file) if len(ids_in_file) > 0 else len(faces_in_file)
                 has_yo = ('YO' in ids_in_file) or any(str(x).upper() == 'YO' for x in ids_in_file)
+                
+                # Dynamic reclassification for Sin Rostro if faces are present
+                if ident in ('📷 Fotos Sin Rostro', '🎬 Vídeos Sin Rostro') and (num_f > 0 or len(faces_in_file) > 0):
+                    valid_ids = [i for i in ids_in_file if not str(i).startswith(('Desconocid', 'Falso_Positivo', 'Excluid', 'Ignorar'))]
+                    if valid_ids:
+                        target_id = valid_ids[0]
+                        ident = target_id
+                        cat = ident_to_cat_map.get(target_id) or ('Conocidos' if target_id.startswith(('C.', 'C ')) else 'Familia' if target_id.startswith(('F.', 'F ')) else 'YO' if target_id == 'YO' else 'Profesores' if target_id.startswith('P.') else 'Mascotas' if target_id.startswith('M.') else 'Conocidos')
+                    else:
+                        cat = "📋 Revisión / Por Organizar"
+                        ident = "❓ Desconocidos (Por Identificar)"
+                    is_dudoso = False
+                    key = (cat, ident, file_name)
+
+                if "sin_rostro" in abs_p_l:
+                    is_dudoso = False
                 
                 item = {
                     "path": abs_p,
@@ -433,11 +475,38 @@ def get_gallery(force_reload=False):
                 cat = "📋 Revisión / Por Organizar"
                 ident = "⚠️ Dudosos / Baja Confianza"
             elif 'sin_rostro' in cat_l or 'sin_rostro' in ident_l or 'sin_rostro' in p_l:
-                cat = "📋 Revisión / Por Organizar"
-                ident = "🎬 Vídeos Sin Rostro" if item.get('type') == 'video' else "📷 Fotos Sin Rostro"
+                # Si el item realmente tiene caras detectadas o asociadas, redirigir fuera de Sin Rostro
+                item_faces = item.get('faces') or []
+                item_ids = item.get('identities') or []
+                if item.get('num_faces', 0) > 0 or len(item_faces) > 0 or len(item_ids) > 0:
+                    valid_ids = [i for i in item_ids if not str(i).startswith(('Desconocid', 'Falso_Positivo', 'Excluid', 'Ignorar'))]
+                    if not valid_ids:
+                        valid_ids = [f.get('identity') for f in item_faces if f.get('identity') and not str(f.get('identity')).startswith(('Desconocid', 'Falso_Positivo', 'Excluid', 'Ignorar'))]
+                    if valid_ids:
+                        target = valid_ids[0]
+                        ident = target
+                        cat = ident_to_cat_map.get(target) or ('Conocidos' if target.startswith(('C.', 'C ')) else 'Familia' if target.startswith(('F.', 'F ')) else 'YO' if target == 'YO' else 'Profesores' if target.startswith('P.') else 'Mascotas' if target.startswith('M.') else 'Conocidos')
+                    else:
+                        cat = "📋 Revisión / Por Organizar"
+                        ident = "❓ Desconocidos (Por Identificar)"
+                else:
+                    cat = "📋 Revisión / Por Organizar"
+                    ident = "🎬 Vídeos Sin Rostro" if item.get('type') == 'video' else "📷 Fotos Sin Rostro"
+                item['is_dudoso'] = False
+                item['needs_confirmation'] = False
             elif 'aislada' in ident_l or 'ocasiona' in ident_l:
-                cat = "📋 Revisión / Por Organizar"
-                ident = "👥 Caras Aisladas / Ocasionales"
+                item_faces = item.get('faces') or []
+                item_ids = item.get('identities') or []
+                valid_ids = [i for i in item_ids if not str(i).startswith(('Desconocid', 'Falso_Positivo', 'Excluid', 'Ignorar'))]
+                if not valid_ids:
+                    valid_ids = [f.get('identity') for f in item_faces if f.get('identity') and not str(f.get('identity')).startswith(('Desconocid', 'Falso_Positivo', 'Excluid', 'Ignorar'))]
+                if valid_ids:
+                    target = valid_ids[0]
+                    ident = f"👤 {target}" if target.startswith('Persona Nueva') else target
+                    cat = ident_to_cat_map.get(target) or ('Conocidos' if target.startswith(('C.', 'C ')) else 'Familia' if target.startswith(('F.', 'F ')) else 'YO' if target == 'YO' else 'Profesores' if target.startswith('P.') else 'Mascotas' if target.startswith('M.') else ('📋 Revisión / Por Organizar' if target.startswith('Persona Nueva') else 'Conocidos'))
+                else:
+                    cat = "📋 Revisión / Por Organizar"
+                    ident = "👥 Caras Aisladas / Ocasionales"
             elif cat == 'Personas Sin Nombre' or 'desconocid' in cat_l or 'desconocid' in ident_l or 'persona' in ident_l or 'mascota nueva' in ident_l:
                 cat = "📋 Revisión / Por Organizar"
                 if 'persona nueva' in ident_l or 'persona #' in ident_l:
@@ -677,7 +746,7 @@ def get_gallery(force_reload=False):
                         continue
                     f_clean = f_raw.replace('IA (Pendiente): ', '').replace('IA: ', '').strip()
                     f_clean_sanitized = sanitize_display_name(f_clean)
-                    if not f_clean_sanitized or f_clean_sanitized.startswith(('Desconocid', 'Falso_Positivo', 'Ignorar', 'Persona Nueva')):
+                    if not f_clean_sanitized or f_clean_sanitized.startswith(('Desconocid', 'Falso_Positivo', 'Excluid', 'Ignorar')):
                         continue
                     if f_clean_sanitized.lower() in excluded_idents:
                         continue
@@ -697,6 +766,9 @@ def get_gallery(force_reload=False):
                             f_cat = 'YO'
                         elif f_clean.startswith('P. '):
                             f_cat = 'Profesores'
+                        elif f_clean.startswith('Persona Nueva'):
+                            f_cat = '📋 Revisión / Por Organizar'
+                            f_clean_sanitized = f"👤 {f_clean}" if not f_clean.startswith('👤') else f_clean
                         else:
                             f_cat = 'Conocidos'
                     
@@ -1098,6 +1170,12 @@ def api_person_avatar():
     ident = request.args.get('ident')
     if not cat or not ident:
         return "Missing params", 400
+
+    # Colecciones de sistema y no-personas NUNCA tienen avatar de persona
+    non_person_idents = {'📷 fotos sin rostro', '🎬 vídeos sin rostro', 'fotos sin rostro', 'vídeos sin rostro', '⏳ pendientes de organizar', '⚠️ dudosos / baja confianza', '❓ desconocidos (por identificar)'}
+    default_svg = '''<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 24 24" fill="#666"><circle cx="12" cy="8" r="4"/><path d="M12 14c-6.1 0-8 4-8 4v2h16v-2s-1.9-4-8-4z"/></svg>'''
+    if str(ident).lower().strip() in non_person_idents or 'sin rostro' in str(ident).lower() or 'sin_rostro' in str(ident).lower():
+        return Response(default_svg, mimetype='image/svg+xml')
 
     clean_ident = ident.replace('👤', '').lstrip('?').strip()
     ident_clean = re.sub(r'[^a-zA-Z0-9_\-]', '_', str(ident))
