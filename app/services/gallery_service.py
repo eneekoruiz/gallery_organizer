@@ -615,6 +615,22 @@ def get_gallery(force_reload=False):
                 cat = info.get('category', '📋 Revisión / Por Organizar')
                 ident = info.get('identity', '❓ Desconocidos (Por Identificar)')
 
+                if ident == '📷 Fotos Sin Rostro':
+                    bname_lower = fname.lower()
+                    cached_f = info.get('faces') or faces_cache.get(p_str) or fc_by_basename.get(bname_lower)
+                    if cached_f and len(cached_f) > 0:
+                        valid_ids = [
+                            f.get('identity') for f in cached_f
+                            if f.get('identity') and not str(f.get('identity')).startswith(('Desconocid', 'Falso_Positivo', 'Excluid', 'Ignorar', 'Sin_Rostro'))
+                        ]
+                        if valid_ids:
+                            target_id = valid_ids[0]
+                            ident = target_id
+                            cat = ident_to_cat_map.get(target_id) or ('Conocidos' if target_id.startswith(('C.', 'C ')) else 'Familia' if target_id.startswith(('F.', 'F ')) else 'YO' if target_id == 'YO' else 'Profesores' if target_id.startswith('P.') else 'Mascotas' if target_id.startswith('M.') else 'Conocidos')
+                        else:
+                            cat = "📋 Revisión / Por Organizar"
+                            ident = "❓ Desconocidos (Por Identificar)"
+
                 ov_res = get_override_for_file(p_str, overrides=overrides)
                 if isinstance(ov_res, tuple) and len(ov_res) == 2:
                     file_ovs = ov_res[1]
